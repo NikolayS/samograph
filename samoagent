@@ -22,7 +22,7 @@ RECALL_BASE = "https://us-east-1.recall.ai/api/v1"
 STATE_FILE = Path.home() / ".samoagent" / "state.json"
 DICT_DIR = Path(__file__).parent / "dictionaries"
 
-AVATAR_URL = "https://raw.githack.com/NikolayS/samoagent/main/avatar.html"
+AVATAR_URL = "https://nikolays.github.io/samoagent/avatar.html"
 
 
 # -- helpers -------------------------------------------------------------------
