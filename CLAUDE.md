@@ -24,11 +24,14 @@ When you join a call with `samoagent join`, the output will include an **AGENT I
 3. **React** to what is said — respond **in your agent session output** (not in the meeting chat).
    Use `samoagent chat` only when explicitly asked to send a message into the call.
    Meeting chat messages are ephemeral and easy to miss — prefer keeping responses in the agent session.
-4. **Take a screenshot** on demand when someone says to look at something:
+4. **Capture the call view** on demand when someone says to look at what's on screen:
    ```
-   python3 samoagent screenshot
+   python3 samoagent frame
    ```
-   Then use the Read tool on `screenshot.png` to analyze what's on screen
+   This attempts to get a frame from inside the call via recall.ai.
+   If it exits with `FRAME_UNAVAILABLE` (recall.ai doesn't expose live frames yet),
+   use your browser tools to screenshot the Meet/Zoom tab directly — the URL is printed in the error.
+   `samoagent screenshot` captures the local Mac screen (use only as last resort).
 5. **Leave** when told:
    ```
    python3 samoagent leave

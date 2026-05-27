@@ -362,6 +362,34 @@ def cmd_chat(args) -> None:
     print(f"Sent: {args.message}")
 
 
+def cmd_frame(args) -> None:
+    """Capture a frame from inside the call (what the bot sees), via recall.ai API."""
+    import requests
+    out = Path(getattr(args, "out", None) or "frame.png")
+    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
+
+    # Try recall.ai screenshot endpoint
+    resp = requests.get(
+        f"{RECALL_BASE}/bot/{bid}/screenshot/",
+        headers=headers(),
+        timeout=15,
+        allow_redirects=True,
+    )
+    if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+        out.write_bytes(resp.content)
+        print(str(out.resolve()))
+        return
+
+    # Not available live — tell the agent how to proceed
+    state = load_state()
+    meeting_url = state.get("meeting_url", "")
+    print(f"FRAME_UNAVAILABLE: recall.ai live frame not available during call.", file=sys.stderr)
+    print(f"To capture the call view, use your browser tools to screenshot this tab:", file=sys.stderr)
+    print(f"  {meeting_url}", file=sys.stderr)
+    print(f"(After the call ends, the full recording will be available via: samoagent transcript)", file=sys.stderr)
+    sys.exit(1)
+
+
 def cmd_watch(args) -> None:
     """Stream transcript lines to stdout as they arrive. Use with Monitor tool (persistent=true)."""
     state = load_state()
@@ -459,6 +487,10 @@ def main() -> None:
 
     sub.add_parser("watch", help="Stream live transcript lines to stdout (use with Monitor tool)")
 
+    p_frame = sub.add_parser("frame", help="Capture a frame from inside the call (bot's view)")
+    p_frame.add_argument("--out", default="frame.png", help="Output file")
+    p_frame.add_argument("bot_id", nargs="?")
+
     # internal subcommand -- hidden
     p_serve = sub.add_parser("_serve")
     p_serve.add_argument("--port", type=int, default=8080)
@@ -473,6 +505,7 @@ def main() -> None:
         "screenshot": cmd_screenshot,
         "transcript": cmd_transcript,
         "dicts": cmd_dicts,
+        "frame": cmd_frame,
         "chat": cmd_chat,
         "watch": cmd_watch,
         "_serve": cmd_serve,
