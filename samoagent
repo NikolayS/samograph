@@ -212,9 +212,15 @@ def cmd_join(args) -> None:
     print(f"Dict:     {args.dict or 'none'} ({len(keyterms)} terms)")
     print(f"Transcript -> {transcript_file}")
     print(f"\nThe agent will appear in the call within ~15 seconds.")
-    print(f"Read transcript:  cat {transcript_file}")
-    print(f"Screenshot:       samoagent screenshot")
-    print(f"Stop:             samoagent leave")
+    print(f"\n--- AGENT INSTRUCTIONS ---")
+    print(f"IMPORTANT: You must now monitor the live transcript for the duration of the call.")
+    print(f"Run this command with your Monitor tool (persistent=true):")
+    print(f"  python3 samoagent watch")
+    print(f"Each line you receive is a new utterance: [timestamp] Speaker: text")
+    print(f"React to what is said. If someone addresses you or asks a question, respond in chat.")
+    print(f"To capture what's on screen:  python3 samoagent screenshot  (then Read screenshot.png)")
+    print(f"To stop:                      python3 samoagent leave")
+    print(f"--------------------------")
 
 
 def cmd_leave(args) -> None:
@@ -306,6 +312,17 @@ def _print_local_transcript() -> None:
         print(f"Transcript not found at {tf}")
 
 
+def cmd_watch(args) -> None:
+    """Stream transcript lines to stdout as they arrive. Use with Monitor tool (persistent=true)."""
+    state = load_state()
+    tf = Path(state.get("transcript_file", Path.home() / ".samoagent" / "transcript.txt"))
+    if not tf.exists():
+        tf.parent.mkdir(parents=True, exist_ok=True)
+        tf.write_text("")
+    # exec tail -f so signals propagate cleanly
+    os.execvp("tail", ["tail", "-f", str(tf)])
+
+
 def cmd_dicts(args) -> None:
     if not DICT_DIR.exists():
         print("No dictionaries directory found.")
@@ -385,6 +402,8 @@ def main() -> None:
 
     sub.add_parser("dicts", help="List available dictionaries")
 
+    sub.add_parser("watch", help="Stream live transcript lines to stdout (use with Monitor tool)")
+
     # internal subcommand -- hidden
     p_serve = sub.add_parser("_serve")
     p_serve.add_argument("--port", type=int, default=8080)
@@ -399,6 +418,7 @@ def main() -> None:
         "screenshot": cmd_screenshot,
         "transcript": cmd_transcript,
         "dicts": cmd_dicts,
+        "watch": cmd_watch,
         "_serve": cmd_serve,
     }
     dispatch[args.command](args)

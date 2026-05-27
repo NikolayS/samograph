@@ -11,6 +11,29 @@ pip install -r requirements.txt
 export RECALL_API_KEY=your_key
 ```
 
+## Agent workflow (read this first)
+
+When you join a call with `samoagent join`, the output will include an **AGENT INSTRUCTIONS** block. Follow it exactly:
+
+1. **Join** the call — the bot appears in ~15 seconds
+2. **Start monitoring** the live transcript immediately using your Monitor tool (persistent=true):
+   ```
+   python3 samoagent watch
+   ```
+   Each line you receive: `[timestamp] Speaker: utterance`
+3. **React** to what is said — if someone addresses you or asks a question, respond in chat
+4. **Take a screenshot** on demand when someone says to look at something:
+   ```
+   python3 samoagent screenshot
+   ```
+   Then use the Read tool on `screenshot.png` to analyze what's on screen
+5. **Leave** when told:
+   ```
+   python3 samoagent leave
+   ```
+
+Keep the monitor running for the entire duration of the call. Do not stop it unless explicitly asked.
+
 ## Commands
 
 ### Join a call
@@ -20,19 +43,22 @@ python3 samoagent join "https://zoom.us/j/123456" --name TARS --dict postgresfm
 - `--name` sets bot display name: "TARS 🔴 (samoagent)"
 - `--dict` loads keyword dictionary from `dictionaries/` for Deepgram transcription accuracy
 - `--port` sets local webhook port (default 8080)
+- `--transcript-dir` sets where transcript.txt is written (default: ~/.samoagent/)
 - Starts ngrok tunnel + local Flask webhook server automatically
 - Bot appears in call within ~15 seconds
+
+### Watch live transcript (stream to stdout)
+```
+python3 samoagent watch
+```
+Streams transcript lines as they arrive. Use this with your Monitor tool (persistent=true) to follow the call in real time.
 
 ### Check status
 ```
 python3 samoagent status
 ```
 
-### Read transcript
-```
-cat transcript.txt
-```
-The transcript file is appended in real time. Each line: `[timestamp] Speaker: text`. Read it directly with `cat` or the Read tool. For the full post-call transcript from recall.ai:
+### Read full transcript (post-call, from recall.ai)
 ```
 python3 samoagent transcript
 ```
@@ -56,7 +82,9 @@ python3 samoagent dicts
 
 ## State management
 
-Active bot state is stored in `.samoagent.json` (gitignored). Contains bot_id, PIDs for server/ngrok, webhook URL. Cleaned up on `leave`. If state file exists, commands like `status`, `leave`, `transcript` use it automatically -- no need to pass bot_id.
+Active bot state is stored in `~/.samoagent/state.json`. Contains bot_id, PIDs for server/ngrok, webhook URL, transcript file path. Cleaned up on `leave`. Commands like `status`, `leave`, `transcript`, `watch` use it automatically — no need to pass bot_id.
+
+Transcript is written to `~/.samoagent/transcript.txt` by default (never in the repo directory).
 
 ## Dictionaries
 
@@ -66,14 +94,14 @@ Place `.txt` files in `dictionaries/` with one term per line (max 100 terms). Th
 
 ```
 # Join a postgres.ai team call
-python3 samoagent join "https://zoom.us/j/123456789" --name "pgai agent" --dict postgresfm
+python3 samoagent join "https://zoom.us/j/123456789" --name TARS --dict postgresfm
 
-# Monitor transcript as it grows
-cat transcript.txt
+# IMMEDIATELY after join — start monitoring (use Monitor tool, persistent=true):
+python3 samoagent watch
 
-# Take a screenshot to see what's on screen
+# On demand — take a screenshot and analyze it
 python3 samoagent screenshot
-# Then use the Read tool on screenshot.png to analyze it
+# Read tool: Read screenshot.png
 
 # Check bot status
 python3 samoagent status
@@ -84,8 +112,8 @@ python3 samoagent leave
 
 ## Files
 
-- `samoagent` -- main executable script
-- `dictionaries/` -- keyword dictionaries for Deepgram
-- `transcript.txt` -- live transcript output (gitignored)
-- `.samoagent.json` -- runtime state (gitignored)
-- `logo.svg` -- bot avatar shown in calls
+- `samoagent` — main executable script
+- `dictionaries/` — keyword dictionaries for Deepgram
+- `avatar.html` / `avatar.png` — bot video feed (elephant + animated recording dot)
+- `~/.samoagent/transcript.txt` — live transcript (outside repo, never committed)
+- `~/.samoagent/state.json` — runtime state (outside repo, never committed)
