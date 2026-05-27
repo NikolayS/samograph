@@ -218,6 +218,7 @@ def cmd_join(args) -> None:
     print(f"  python3 samoagent watch")
     print(f"Each line you receive is a new utterance: [timestamp] Speaker: text")
     print(f"React to what is said. If someone addresses you or asks a question, respond in chat.")
+    print(f"To send a message in the meeting chat: python3 samoagent chat 'your message'")
     print(f"To capture what's on screen:  python3 samoagent screenshot  (then Read screenshot.png)")
     print(f"To stop:                      python3 samoagent leave")
     print(f"--------------------------")
@@ -267,8 +268,44 @@ def cmd_status(args) -> None:
 
 def cmd_screenshot(args) -> None:
     out = Path(getattr(args, "out", None) or "screenshot.png")
+    state = load_state()
+    meeting_url = state.get("meeting_url", "")
+
+    # Bring the Google Meet / Zoom tab to the front before screencapturing
+    if "meet.google.com" in meeting_url or "zoom.us" in meeting_url:
+        _focus_meeting_tab(meeting_url)
+        time.sleep(1)
+
     subprocess.run(["screencapture", "-x", str(out)], check=True)
     print(str(out.resolve()))
+
+
+def _focus_meeting_tab(meeting_url: str) -> None:
+    domain = "meet.google.com" if "meet.google.com" in meeting_url else "zoom.us"
+    script = f'''
+tell application "Google Chrome"
+    set found to false
+    repeat with w in windows
+        set tabIdx to 0
+        repeat with t in tabs of w
+            set tabIdx to tabIdx + 1
+            if URL of t contains "{domain}" then
+                set active tab index of w to tabIdx
+                set index of w to 1
+                set found to true
+                exit repeat
+            end if
+        end repeat
+        if found then exit repeat
+    end repeat
+end tell
+tell application "Google Chrome" to activate
+'''
+    try:
+        subprocess.run(["osascript", "-e", script], timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def cmd_transcript(args) -> None:
@@ -310,6 +347,19 @@ def _print_local_transcript() -> None:
             print(f"{tf} is empty -- call may not have started yet.")
     else:
         print(f"Transcript not found at {tf}")
+
+
+def cmd_chat(args) -> None:
+    import requests
+    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
+    resp = requests.post(
+        f"{RECALL_BASE}/bot/{bid}/send_chat_message/",
+        headers=headers(),
+        json={"message": args.message},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    print(f"Sent: {args.message}")
 
 
 def cmd_watch(args) -> None:
@@ -394,8 +444,13 @@ def main() -> None:
     p_status = sub.add_parser("status", help="Show agent status")
     p_status.add_argument("bot_id", nargs="?", help="Bot ID (optional)")
 
-    p_shot = sub.add_parser("screenshot", help="Capture full-screen screenshot")
+    p_shot = sub.add_parser("screenshot", help="Capture screenshot from bot's view in the call")
     p_shot.add_argument("--out", default="screenshot.png", help="Output file")
+    p_shot.add_argument("bot_id", nargs="?", help="Bot ID (optional)")
+
+    p_chat = sub.add_parser("chat", help="Send a message in the meeting chat")
+    p_chat.add_argument("message", help="Message to send")
+    p_chat.add_argument("--bot-id", help="Bot ID (optional)")
 
     p_tx = sub.add_parser("transcript", help="Show transcript")
     p_tx.add_argument("bot_id", nargs="?", help="Bot ID (optional)")
@@ -418,6 +473,7 @@ def main() -> None:
         "screenshot": cmd_screenshot,
         "transcript": cmd_transcript,
         "dicts": cmd_dicts,
+        "chat": cmd_chat,
         "watch": cmd_watch,
         "_serve": cmd_serve,
     }
