@@ -1,0 +1,97 @@
+PostgreSQL
+Postgres
+MVCC
+WAL
+autovacuum
+vacuum
+VACUUM FULL
+VACUUM ANALYZE
+checkpoint
+checkpointer
+bgwriter
+walwriter
+toast
+bloat
+dead tuples
+fillfactor
+shared_buffers
+work_mem
+maintenance_work_mem
+effective_cache_size
+wal_buffers
+max_connections
+max_wal_size
+min_wal_size
+random_page_cost
+seq_page_cost
+log_checkpoints
+log_autovacuum_min_duration
+wal_level
+synchronous_commit
+pg_stat_statements
+pg_stat_activity
+pg_stat_bgwriter
+pg_locks
+pg_hba.conf
+postgresql.conf
+pgBouncer
+pgpool
+connection pooling
+connection pool
+pgBackRest
+WAL archiving
+streaming replication
+logical replication
+Patroni
+repmgr
+pg_basebackup
+hot standby
+synchronous replication
+failover
+switchover
+pgvector
+PostGIS
+TimescaleDB
+Citus
+Hydra
+pg_upgrade
+pg_dump
+pg_restore
+pg_dumpall
+pgBadger
+pg_activity
+pganalyze
+pgAdmin
+postgres.ai
+Database Lab
+pgai
+DLE
+Database Lab Engine
+Nikolay Samokhvalov
+Joe Bot
+jsonb
+timestamptz
+uuid
+int4
+int8
+bigint
+varchar
+numeric
+bytea
+hstore
+EXPLAIN ANALYZE
+query plan
+index scan
+seq scan
+bitmap heap scan
+nested loop
+hash join
+merge join
+index bloat
+table bloat
+cache hit rate
+query optimization
+high availability
+read replica
+primary
+standby

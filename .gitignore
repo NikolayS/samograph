@@ -1,0 +1,7 @@
+.env
+transcript.txt
+screenshot.png
+__pycache__/
+*.pyc
+.samoagent.json
+*.png

@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""samoagent — AI meeting agent for Zoom & Google Meet.
+
+Joins calls, transcribes live (Russian+English mixed), identifies speakers,
+and delivers screenshots on demand to Claude Code or OpenClaw agents.
+
+Setup: export RECALL_API_KEY=your_key
+"""
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+RECALL_BASE = "https://us-east-1.recall.ai/api/v1"
+STATE_FILE = Path(".samoagent.json")
+TRANSCRIPT_FILE = Path("transcript.txt")
+DICT_DIR = Path(__file__).parent / "dictionaries"
+
+BOT_IMAGE_URL = "https://raw.githubusercontent.com/postgres-ai/samoagent/main/logo.svg"
+
+
+# -- helpers -------------------------------------------------------------------
+
+def api_key() -> str:
+    k = os.environ.get("RECALL_API_KEY", "")
+    if not k:
+        print("Error: RECALL_API_KEY not set", file=sys.stderr)
+        sys.exit(1)
+    return k
+
+
+def headers() -> dict:
+    return {"Authorization": f"Token {api_key()}", "Content-Type": "application/json"}
+
+
+def load_state() -> dict:
+    if STATE_FILE.exists():
+        return json.loads(STATE_FILE.read_text())
+    return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def bot_id_from_args_or_state(args_bot_id: Optional[str]) -> str:
+    if args_bot_id:
+        return args_bot_id
+    state = load_state()
+    bid = state.get("bot_id")
+    if not bid:
+        print("Error: no active bot. Pass BOT_ID or run 'samoagent join' first.", file=sys.stderr)
+        sys.exit(1)
+    return bid
+
+
+def load_dict(name: Optional[str]) -> list:
+    if not name or name.lower() == "none":
+        return []
+    path = DICT_DIR / f"{name}.txt"
+    if not path.exists():
+        print(f"Warning: dictionary '{name}' not found at {path}, continuing without it.")
+        return []
+    terms = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    return terms[:100]  # Deepgram limit
+
+
+def bot_name(agent_name: Optional[str]) -> str:
+    if agent_name:
+        base = f"{agent_name} \U0001f534 (samoagent)"
+    else:
+        base = "samoagent \U0001f534"
+    return base[:100]  # recall.ai limit
+
+
+def wait_for_ngrok(port: int, timeout: int = 15) -> Optional[str]:
+    import urllib.request
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://localhost:4040/api/tunnels", timeout=2) as r:
+                data = json.loads(r.read())
+                tunnels = data.get("tunnels", [])
+                for t in tunnels:
+                    if str(port) in t.get("config", {}).get("addr", ""):
+                        return t["public_url"]
+                if tunnels:
+                    return tunnels[0]["public_url"]
+        except Exception:
+            pass
+        time.sleep(1)
+    return None
+
+
+# -- commands ------------------------------------------------------------------
+
+def cmd_join(args) -> None:
+    import requests
+
+    # clear transcript for new session
+    TRANSCRIPT_FILE.write_text("")
+
+    keyterms = load_dict(args.dict)
+    name = bot_name(args.name)
+    port = args.port or 8080
+
+    # kill any old processes
+    state = load_state()
+    for pid_key in ("server_pid", "ngrok_pid"):
+        pid = state.get(pid_key)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    # start webhook server (spawns self with _serve subcommand)
+    server = subprocess.Popen(
+        [sys.executable, __file__, "_serve", "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # start ngrok
+    ngrok = subprocess.Popen(
+        ["ngrok", "http", str(port), "--log=stdout"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    print(f"Starting ngrok tunnel on port {port}...")
+    webhook_url = wait_for_ngrok(port)
+    if not webhook_url:
+        print("Error: could not get ngrok URL. Is ngrok installed and authenticated?", file=sys.stderr)
+        server.terminate()
+        ngrok.terminate()
+        sys.exit(1)
+    webhook_url = webhook_url.rstrip("/") + "/webhook"
+
+    print(f"Webhook: {webhook_url}")
+    print(f"Joining: {args.url}")
+
+    deepgram_config = {
+        "model": "nova-3",
+        "language": "multi",
+        "mip_opt_out": True,
+    }
+    if keyterms:
+        deepgram_config["keyterms"] = keyterms
+
+    payload = {
+        "meeting_url": args.url,
+        "bot_name": name,
+        "bot_image": BOT_IMAGE_URL,
+        "recording_config": {
+            "transcript": {
+                "provider": {"deepgram_streaming": deepgram_config},
+                "diarization": {"use_separate_streams_when_available": True},
+            },
+            "realtime_endpoints": [
+                {
+                    "type": "webhook",
+                    "url": webhook_url,
+                    "events": ["transcript.data"],
+                }
+            ],
+        },
+    }
+
+    resp = requests.post(f"{RECALL_BASE}/bot/", headers=headers(), json=payload, timeout=30)
+    resp.raise_for_status()
+    bot = resp.json()
+
+    bid = bot["id"]
+    save_state({
+        "bot_id": bid,
+        "agent_name": args.name or "samoagent",
+        "bot_name": name,
+        "webhook_url": webhook_url,
+        "server_pid": server.pid,
+        "ngrok_pid": ngrok.pid,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "dict": args.dict,
+        "meeting_url": args.url,
+    })
+
+    print(f"Bot ID:   {bid}")
+    print(f"Bot name: {name}")
+    print(f"Dict:     {args.dict or 'none'} ({len(keyterms)} terms)")
+    print(f"Transcript -> {TRANSCRIPT_FILE.resolve()}")
+    print(f"\nThe agent will appear in the call within ~15 seconds.")
+    print(f"Read transcript:  cat {TRANSCRIPT_FILE.resolve()}")
+    print(f"Screenshot:       samoagent screenshot")
+    print(f"Stop:             samoagent leave")
+
+
+def cmd_leave(args) -> None:
+    import requests
+    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
+    try:
+        requests.post(f"{RECALL_BASE}/bot/{bid}/leave_call/", headers=headers(), timeout=10)
+        print(f"Bot {bid} left the call.")
+    except Exception as e:
+        print(f"Warning: {e}")
+
+    state = load_state()
+    for pid_key in ("server_pid", "ngrok_pid"):
+        pid = state.get(pid_key)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                print(f"Stopped {pid_key.replace('_pid', '')} (pid {pid})")
+            except ProcessLookupError:
+                pass
+
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
+    print("Done.")
+
+
+def cmd_status(args) -> None:
+    import requests
+    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
+    bot = requests.get(f"{RECALL_BASE}/bot/{bid}/", headers=headers(), timeout=10).json()
+    changes = bot.get("status_changes", [])
+    status = changes[-1].get("code", "unknown") if changes else "joining"
+    name = bot.get("bot_name", "?")
+    print(f"Bot:    {bid}")
+    print(f"Name:   {name}")
+    print(f"Status: {status}")
+    if TRANSCRIPT_FILE.exists():
+        lines = [l for l in TRANSCRIPT_FILE.read_text().splitlines() if l.strip()]
+        print(f"Transcript lines so far: {len(lines)}")
+
+
+def cmd_screenshot(args) -> None:
+    out = Path(getattr(args, "out", None) or "screenshot.png")
+    subprocess.run(["screencapture", "-x", str(out)], check=True)
+    print(str(out.resolve()))
+
+
+def cmd_transcript(args) -> None:
+    import requests
+    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
+    bot = requests.get(f"{RECALL_BASE}/bot/{bid}/", headers=headers(), timeout=10).json()
+    recordings = bot.get("recordings", [])
+    if not recordings:
+        print("No recordings yet.")
+        _print_local_transcript()
+        return
+
+    media = recordings[0].get("media_shortcuts", {}).get("transcript", {})
+    status_code = media.get("status", {}).get("code", "?")
+    download_url = media.get("data", {}).get("download_url")
+
+    if download_url:
+        data = requests.get(download_url, timeout=30).json()
+        for entry in data:
+            words = " ".join(w["text"] for w in entry.get("words", []))
+            speaker = entry.get("speaker", "?")
+            start = entry.get("words", [{}])[0].get("start_time", 0)
+            print(f"[{start:.1f}s] {speaker}: {words}")
+    else:
+        print(f"Transcript status: {status_code}")
+        _print_local_transcript()
+
+
+def _print_local_transcript() -> None:
+    if TRANSCRIPT_FILE.exists():
+        lines = [l for l in TRANSCRIPT_FILE.read_text().splitlines() if l.strip()]
+        if lines:
+            print(f"\n--- last {min(20, len(lines))} lines from transcript.txt ---")
+            for line in lines[-20:]:
+                print(line)
+        else:
+            print("transcript.txt is empty -- call may not have started yet.")
+    else:
+        print("transcript.txt not found.")
+
+
+def cmd_dicts(args) -> None:
+    if not DICT_DIR.exists():
+        print("No dictionaries directory found.")
+        return
+    files = list(DICT_DIR.glob("*.txt"))
+    if not files:
+        print("No dictionaries found.")
+        return
+    print("Available dictionaries:")
+    for f in sorted(files):
+        terms = [l.strip() for l in f.read_text().splitlines() if l.strip()]
+        print(f"  {f.stem} ({len(terms)} terms)")
+
+
+def cmd_serve(args) -> None:
+    """Internal: run Flask webhook server."""
+    port = args.port or 8080
+    transcript_path = TRANSCRIPT_FILE.resolve()
+
+    try:
+        from flask import Flask, request, jsonify
+    except ImportError:
+        print("flask not installed. Run: pip install flask", file=sys.stderr)
+        sys.exit(1)
+
+    app = Flask(__name__)
+
+    @app.route("/webhook", methods=["POST"])
+    def webhook():
+        payload = request.json or {}
+        if payload.get("event") == "transcript.data":
+            outer = payload.get("data", {})
+            inner = outer.get("data", {})
+            words = inner.get("words", [])
+            if words:
+                text = " ".join(w.get("text", "") for w in words)
+                speaker = inner.get("participant", {}).get("name", "?")
+                ts = words[0].get("start_timestamp", {}).get("absolute", "")[:19].replace("T", " ")
+                line = f"[{ts}] {speaker}: {text}"
+                with open(transcript_path, "a") as f:
+                    f.write(line + "\n")
+        return jsonify({"ok": True})
+
+    import logging
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.ERROR)
+    app.run(host="0.0.0.0", port=port)
+
+
+# -- main ---------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="samoagent",
+        description="AI meeting agent for Zoom & Google Meet",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_join = sub.add_parser("join", help="Join a Zoom or Google Meet call")
+    p_join.add_argument("url", help="Meeting URL")
+    p_join.add_argument("--name", help="Agent name (e.g. TARS). Bot appears as 'NAME (samoagent)'")
+    p_join.add_argument("--dict", help="Dictionary name from dictionaries/ folder (e.g. postgresfm)")
+    p_join.add_argument("--port", type=int, default=8080, help="Local webhook port (default: 8080)")
+
+    p_leave = sub.add_parser("leave", help="Remove agent from call")
+    p_leave.add_argument("bot_id", nargs="?", help="Bot ID (optional, reads from state if omitted)")
+
+    p_status = sub.add_parser("status", help="Show agent status")
+    p_status.add_argument("bot_id", nargs="?", help="Bot ID (optional)")
+
+    p_shot = sub.add_parser("screenshot", help="Capture full-screen screenshot")
+    p_shot.add_argument("--out", default="screenshot.png", help="Output file")
+
+    p_tx = sub.add_parser("transcript", help="Show transcript")
+    p_tx.add_argument("bot_id", nargs="?", help="Bot ID (optional)")
+
+    sub.add_parser("dicts", help="List available dictionaries")
+
+    # internal subcommand -- hidden
+    p_serve = sub.add_parser("_serve")
+    p_serve.add_argument("--port", type=int, default=8080)
+
+    args = parser.parse_args()
+
+    dispatch = {
+        "join": cmd_join,
+        "leave": cmd_leave,
+        "status": cmd_status,
+        "screenshot": cmd_screenshot,
+        "transcript": cmd_transcript,
+        "dicts": cmd_dicts,
+        "_serve": cmd_serve,
+    }
+    dispatch[args.command](args)
+
+
+if __name__ == "__main__":
+    main()
