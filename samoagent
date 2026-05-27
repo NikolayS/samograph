@@ -23,7 +23,7 @@ STATE_FILE = Path(".samoagent.json")
 TRANSCRIPT_FILE = Path("transcript.txt")
 DICT_DIR = Path(__file__).parent / "dictionaries"
 
-BOT_IMAGE_URL = "https://raw.githubusercontent.com/postgres-ai/samoagent/main/logo.svg"
+BOT_IMAGE_URL = "https://raw.githubusercontent.com/NikolayS/samoagent/main/avatar.gif"
 
 
 # -- helpers -------------------------------------------------------------------
