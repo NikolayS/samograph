@@ -179,6 +179,7 @@ def cmd_join(args) -> None:
                 "provider": {"deepgram_streaming": deepgram_config},
                 "diarization": {"use_separate_streams_when_available": True},
             },
+            "screenshot": {},
             "realtime_endpoints": [
                 {
                     "type": "webhook",
