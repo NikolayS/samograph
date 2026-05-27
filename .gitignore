@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .samoagent.json
 *.png
+!avatar.png
