@@ -21,7 +21,9 @@ When you join a call with `samoagent join`, the output will include an **AGENT I
    python3 samoagent watch
    ```
    Each line you receive: `[timestamp] Speaker: utterance`
-3. **React** to what is said — if someone addresses you or asks a question, respond in chat
+3. **React** to what is said — respond **in your agent session output** (not in the meeting chat).
+   Use `samoagent chat` only when explicitly asked to send a message into the call.
+   Meeting chat messages are ephemeral and easy to miss — prefer keeping responses in the agent session.
 4. **Take a screenshot** on demand when someone says to look at something:
    ```
    python3 samoagent screenshot
