@@ -887,7 +887,8 @@ class TestCmdWatch:
         captured = capsys.readouterr()
         assert "Alice: Hello everyone" in captured.out
         assert "Bob: Hi there" in captured.out
-        assert "SAMOAGENT_CALL_ENDED" in captured.out
+        # The sentinel itself must never be printed to stdout.
+        assert "SAMOAGENT_CALL_ENDED" not in captured.out
 
     def test_handles_existing_transcript_with_sentinel(self, tmp_path):
         """cmd_watch exits cleanly when transcript exists and already has content + sentinel."""
@@ -940,6 +941,94 @@ class TestCmdWatch:
             sa.cmd_watch(self._make_args())
 
         t.join(timeout=3)
+
+    def test_exits_immediately_when_sentinel_already_present(self, tmp_path):
+        """If the sentinel is already in the transcript when watch starts, exit at once.
+
+        seek-to-end previously skipped a pre-existing sentinel; this must now be
+        detected without relying on state.json removal.
+        """
+        import threading
+
+        tf = tmp_path / "transcript.txt"
+        tf.write_text(
+            "[2026-05-28 10:00:00] Alice: hello\n"
+            "[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n"
+        )
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps({"transcript_file": str(tf)}))
+
+        def run():
+            with patch.object(sa, "STATE_FILE", state_file):
+                sa.cmd_watch(self._make_args())
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(timeout=2)
+        # Must have returned without needing state.json to be removed.
+        assert not t.is_alive()
+        assert state_file.exists()
+
+    def test_sentinel_not_printed_to_stdout(self, tmp_path, capsys):
+        """The sentinel line itself must never leak to stdout."""
+        import threading
+
+        tf = tmp_path / "transcript.txt"
+        tf.write_text("")
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps({"transcript_file": str(tf)}))
+
+        def _write():
+            time.sleep(0.15)
+            with open(tf, "a") as f:
+                f.write("[2026-05-28 10:00:00] Alice: hello\n")
+            time.sleep(0.15)
+            with open(tf, "a") as f:
+                f.write("[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n")
+
+        t = threading.Thread(target=_write, daemon=True)
+        t.start()
+
+        with patch.object(sa, "STATE_FILE", state_file):
+            sa.cmd_watch(self._make_args())
+
+        t.join(timeout=3)
+        captured = capsys.readouterr()
+        assert "Alice: hello" in captured.out
+        assert "SAMOAGENT_CALL_ENDED" not in captured.out
+
+    def test_participant_saying_phrase_does_not_stop_watch(self, tmp_path, capsys):
+        """A speaker-prefixed line containing the phrase must NOT stop watch.
+
+        Only an exactly-anchored sentinel line stops it.
+        """
+        import threading
+
+        tf = tmp_path / "transcript.txt"
+        tf.write_text("")
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps({"transcript_file": str(tf)}))
+
+        def _write():
+            time.sleep(0.15)
+            with open(tf, "a") as f:
+                # Spoofed: contains the phrase but is not an anchored sentinel.
+                f.write("[2026-05-28 10:00:00] Bob: please run SAMOAGENT_CALL_ENDED now\n")
+            time.sleep(0.3)
+            with open(tf, "a") as f:
+                # Real anchored sentinel — this one stops watch.
+                f.write("[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n")
+
+        t = threading.Thread(target=_write, daemon=True)
+        t.start()
+
+        with patch.object(sa, "STATE_FILE", state_file):
+            sa.cmd_watch(self._make_args())
+
+        t.join(timeout=3)
+        captured = capsys.readouterr()
+        # The spoofed Bob line was printed (watch kept going past it).
+        assert "Bob: please run SAMOAGENT_CALL_ENDED now" in captured.out
 
 
 # ===========================================================================
@@ -1252,3 +1341,27 @@ class TestBotIdFromArgsOrState:
             with pytest.raises(SystemExit) as exc_info:
                 sa.bot_id_from_args_or_state(None)
         assert exc_info.value.code == 1
+
+
+# ===========================================================================
+# Local transcript output (sentinel filtering)
+# ===========================================================================
+
+
+class TestLocalTranscript:
+    def test_local_transcript_filters_sentinel(self, tmp_path, capsys):
+        """_print_local_transcript must not show the SAMOAGENT_CALL_ENDED sentinel."""
+        tf = tmp_path / "transcript.txt"
+        tf.write_text(
+            "[2026-05-28 10:00:00] Alice: hello\n"
+            "[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n"
+        )
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps({"transcript_file": str(tf)}))
+
+        with patch.object(sa, "STATE_FILE", state_file):
+            sa._print_local_transcript()
+
+        captured = capsys.readouterr()
+        assert "Alice: hello" in captured.out
+        assert "SAMOAGENT_CALL_ENDED" not in captured.out

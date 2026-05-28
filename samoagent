@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -22,6 +23,7 @@ from typing import Optional
 
 RECALL_BASE = "https://us-east-1.recall.ai/api/v1"
 STATE_FILE = Path.home() / ".samoagent" / "state.json"
+SENTINEL_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SAMOAGENT_CALL_ENDED$")
 DICT_DIR = Path(__file__).parent / "dictionaries"
 
 AVATAR_URL = "https://nikolays.github.io/samoagent/avatar.html"
@@ -495,7 +497,7 @@ def cmd_status(args) -> None:
     state = load_state()
     tf = Path(state.get("transcript_file", Path.home() / ".samoagent" / "transcript.txt"))
     if tf.exists():
-        lines = [l for l in tf.read_text().splitlines() if l.strip()]
+        lines = [l for l in tf.read_text().splitlines() if l.strip() and not SENTINEL_RE.match(l)]
         print(f"Transcript lines so far: {len(lines)}")
         print(f"Transcript file: {tf}")
 
@@ -572,7 +574,7 @@ def _print_local_transcript() -> None:
     state = load_state()
     tf = Path(state.get("transcript_file", Path.home() / ".samoagent" / "transcript.txt"))
     if tf.exists():
-        lines = [l for l in tf.read_text().splitlines() if l.strip()]
+        lines = [l for l in tf.read_text().splitlines() if l.strip() and not SENTINEL_RE.match(l)]
         if lines:
             print(f"\n--- last {min(20, len(lines))} lines from {tf.name} ---")
             for line in lines[-20:]:
@@ -668,15 +670,23 @@ def cmd_watch(args) -> None:
             tf.write_text("")
             break
 
+    # If the call already ended before watch started, exit immediately.
+    # (seek-to-end below would otherwise skip an already-written sentinel.)
+    if not STATE_FILE.exists():
+        return
+    for existing in tf.read_text().splitlines():
+        if SENTINEL_RE.match(existing.rstrip("\n")):
+            return
+
     with open(tf, "r") as f:
         f.seek(0, 2)  # seek to end — only show new lines from here
         _poll_counter = 0
         while True:
             line = f.readline()
             if line:
-                print(line, end="", flush=True)
-                if "SAMOAGENT_CALL_ENDED" in line:
+                if SENTINEL_RE.match(line.rstrip("\n")):
                     break
+                print(line, end="", flush=True)
             else:
                 _poll_counter += 1
                 time.sleep(0.1)
