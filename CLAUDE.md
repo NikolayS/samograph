@@ -28,15 +28,18 @@ When you join a call with `samoagent join`, the output will include an **AGENT I
    ```
    python3 samoagent frame
    ```
-   If joined with `--rtmp-url`, this grabs a live frame via ffmpeg from the local mediamtx RTMP stream.
+   If joined with `--rtmp` or `--rtmp-url`, this grabs a live frame via ffmpeg from the mediamtx RTMP stream.
    If `FRAME_UNAVAILABLE` (no RTMP configured), use browser tools to screenshot the Meet/Zoom tab — URL is printed.
    `samoagent screenshot` captures the local Mac screen (last resort, macOS only).
 5. **Leave** when told:
    ```
    python3 samoagent leave
    ```
+   `samoagent leave` writes a `SAMOAGENT_CALL_ENDED` sentinel to the transcript file, which
+   causes `samoagent watch` to exit automatically — no need to stop the monitor manually.
 
-Keep the monitor running for the entire duration of the call. Do not stop it unless explicitly asked.
+The monitor exits on its own when `samoagent leave` is run. Keep it running for the entire call;
+it will stop itself cleanly when the call ends.
 
 ## Commands
 
@@ -48,7 +51,13 @@ python3 samoagent join "https://zoom.us/j/123456" --name TARS --dict postgresfm
 - `--dict` loads keyword dictionary from `dictionaries/` for Deepgram transcription accuracy
 - `--port` sets local webhook port (default 8080)
 - `--transcript-dir` sets where transcript.txt is written (default: ~/.samoagent/)
-- `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enables live frame capture via RTMP:
+- `--rtmp` — enables live frame capture via RTMP **without a cloud VM** (recommended):
+  - Auto-starts mediamtx locally on port 1935
+  - Opens a ngrok TCP tunnel so recall.ai can push RTMP to this machine
+  - recall.ai → ngrok TCP → local mediamtx → `samoagent frame` reads from localhost
+  - **Requires a credit/debit card on file at ngrok.com** (free plan — card NOT charged)
+    If no card: prints error with link https://dashboard.ngrok.com/settings#id-verification
+- `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enables live frame capture via explicit RTMP URL:
   - recall.ai streams the mixed call video to this public URL
   - **If the host is `localhost`/`127.0.0.1`**: mediamtx RTMP server starts locally on
     port 1935 to receive the stream; `samoagent frame` reads from `rtmp://localhost:1935/…`.
@@ -56,7 +65,7 @@ python3 samoagent join "https://zoom.us/j/123456" --name TARS --dict postgresfm
   - **If the host is a remote IP/hostname**: no local mediamtx is started; `samoagent frame`
     reads directly from the remote mediamtx at that URL via ffmpeg.
     Use this when samoagent runs on macOS but a Hetzner/cloud VM hosts mediamtx.
-  - On macOS without a remote VM, omit `--rtmp-url` entirely.
+  - On macOS without a cloud VM, use `--rtmp` or omit entirely.
 - Starts ngrok tunnel + local Flask webhook server automatically
 - Bot appears in call within ~15 seconds
 
@@ -64,7 +73,9 @@ python3 samoagent join "https://zoom.us/j/123456" --name TARS --dict postgresfm
 ```
 python3 samoagent watch
 ```
-Streams transcript lines as they arrive. Use this with your Monitor tool (persistent=true) to follow the call in real time.
+Streams transcript lines as they arrive. Use this with your Monitor tool (persistent=true) to follow
+the call in real time. Exits automatically when `samoagent leave` is run (sentinel line detected)
+or when state.json disappears.
 
 ### Check status
 ```
