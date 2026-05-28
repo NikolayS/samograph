@@ -503,9 +503,9 @@ def cmd_frame(args) -> None:
             ffmpeg = "ffmpeg"
         cmd = [
             ffmpeg, "-y",
-            "-rtsp_transport", "tcp",
             "-i", rtmp_local_url,
             "-vframes", "1",
+            "-update", "1",
             "-q:v", "2",
             str(out),
         ]
