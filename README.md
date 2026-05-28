@@ -6,8 +6,9 @@ CLI meeting AI agent. Joins Zoom and Google Meet calls via [recall.ai](https://r
 
 - Python 3.9+
 - `RECALL_API_KEY` env var (recall.ai account)
-- `ngrok` installed and authenticated (free tier works)
-- For RTMP frame capture: a cloud VM with a public IP (mediamtx is auto-downloaded on first use)
+- `ngrok` installed and authenticated (free tier works for HTTP webhooks)
+- For RTMP frame capture via `--rtmp`: ngrok free tier with a credit/debit card on file at [ngrok.com](https://dashboard.ngrok.com/settings#id-verification) (card is NOT charged — required by ngrok to enable TCP tunnels on free accounts). No cloud VM needed.
+- For RTMP frame capture via `--rtmp-url`: a cloud VM with a public IP (mediamtx is auto-downloaded on first use)
 
 ## Setup
 
@@ -52,7 +53,8 @@ The bot appears in the call within ~15 seconds of `join`.
 
 - `--name TARS` — bot display name shown in the call (appended with " 🔴 (samoagent)")
 - `--dict postgresfm` — load a keyword dictionary from `dictionaries/` for Deepgram transcription accuracy
-- `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enable live frame capture via RTMP (requires cloud VM)
+- `--rtmp` — enable live frame capture via RTMP **without a cloud VM**: auto-starts mediamtx locally and opens a ngrok TCP tunnel so recall.ai can stream the call video back to this machine. Requires a credit/debit card on file at ngrok.com (free plan — card is NOT charged). See [ngrok identity verification](https://dashboard.ngrok.com/settings#id-verification).
+- `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enable live frame capture via RTMP with an explicit public URL (cloud VM with mediamtx, or `localhost` if running on the VM itself)
 - `--transcript-dir /path/to/dir` — where to write `transcript.txt` (default: `~/.samoagent/`)
 - `--port 8080` — local webhook port (default: 8080)
 
@@ -68,15 +70,33 @@ State (bot ID, PIDs, paths) lives in `~/.samoagent/state.json`. All stateful com
 
 ## Frame capture
 
-`samoagent frame` requires a cloud VM with a public IP:
+There are two ways to enable `samoagent frame` (live frame capture from inside the call):
+
+### Option A: `--rtmp` — no cloud VM needed (recommended for local use)
 
 ```bash
-# On the VM: mediamtx is auto-downloaded on first use
-# Join with RTMP URL pointing to your VM
+python3 samoagent join "https://zoom.us/j/..." --rtmp
+```
+
+This automatically:
+1. Downloads and starts mediamtx locally on port 1935
+2. Opens a ngrok TCP tunnel so recall.ai can reach your local machine
+3. Passes the ngrok public RTMP URL to recall.ai
+
+**Requirement:** A credit/debit card must be on file at [ngrok.com](https://dashboard.ngrok.com/settings#id-verification) (free plan — the card is NOT charged). ngrok requires this to enable TCP tunnels on free accounts (to prevent abuse). If no card is on file, `join --rtmp` prints a clear error with the link to add one.
+
+### Option B: `--rtmp-url` — cloud VM with public IP
+
+```bash
+# mediamtx is auto-downloaded on the VM on first use
 python3 samoagent join "https://zoom.us/j/..." --rtmp-url rtmp://YOUR_VM_IP:1935/live/call
 ```
 
-Without `--rtmp-url`, `samoagent frame` prints `FRAME_UNAVAILABLE`. On macOS without a cloud VM, use `samoagent screenshot` (local screen capture) or browser tools to capture the Meet/Zoom tab.
+### Without RTMP
+
+`samoagent frame` prints `FRAME_UNAVAILABLE`. Alternatives:
+- `samoagent screenshot` — captures the local Mac screen (last resort, macOS only)
+- Browser tools — screenshot the Meet/Zoom tab directly
 
 ## Dictionaries
 
