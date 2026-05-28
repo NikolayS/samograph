@@ -50,9 +50,13 @@ python3 samoagent join "https://zoom.us/j/123456" --name TARS --dict postgresfm
 - `--transcript-dir` sets where transcript.txt is written (default: ~/.samoagent/)
 - `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enables live frame capture via RTMP:
   - recall.ai streams the mixed call video to this public URL
-  - mediamtx RTMP server starts locally on port 1935 to receive it
-  - `samoagent frame` then grabs frames via ffmpeg from the local stream
-  - Requires a public IP (VM). On macOS without paid ngrok, omit this flag.
+  - **If the host is `localhost`/`127.0.0.1`**: mediamtx RTMP server starts locally on
+    port 1935 to receive the stream; `samoagent frame` reads from `rtmp://localhost:1935/…`.
+    Use this when samoagent runs directly on the VM (public IP = the VM's own address).
+  - **If the host is a remote IP/hostname**: no local mediamtx is started; `samoagent frame`
+    reads directly from the remote mediamtx at that URL via ffmpeg.
+    Use this when samoagent runs on macOS but a Hetzner/cloud VM hosts mediamtx.
+  - On macOS without a remote VM, omit `--rtmp-url` entirely.
 - Starts ngrok tunnel + local Flask webhook server automatically
 - Bot appears in call within ~15 seconds
 

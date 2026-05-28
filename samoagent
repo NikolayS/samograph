@@ -198,20 +198,34 @@ def cmd_join(args) -> None:
     rtmp_local_url = None
 
     if rtmp_url:
-        print(f"Starting mediamtx RTMP server...")
-        mediamtx_proc = _start_mediamtx()
-        if not mediamtx_proc:
-            print("Warning: mediamtx failed to start — RTMP frame capture disabled.", file=sys.stderr)
-            rtmp_url = None
+        from urllib.parse import urlparse as _urlparse
+        _rtmp_host = _urlparse(rtmp_url).hostname or ""
+        _rtmp_is_local = _rtmp_host in ("localhost", "127.0.0.1")
+
+        if _rtmp_is_local:
+            print(f"Starting mediamtx RTMP server...")
+            mediamtx_proc = _start_mediamtx()
+            if not mediamtx_proc:
+                print("Warning: mediamtx failed to start — RTMP frame capture disabled.", file=sys.stderr)
+                rtmp_url = None
+            else:
+                stream_path = _rtmp_stream_path(rtmp_url)
+                rtmp_local_url = f"rtmp://localhost:1935/{stream_path}"
+                realtime_endpoints.append({
+                    "type": "rtmp",
+                    "url": rtmp_url,
+                    "events": [],
+                })
+                print(f"RTMP: recall.ai → {rtmp_url} → mediamtx (local) → {rtmp_local_url}")
         else:
-            stream_path = _rtmp_stream_path(rtmp_url)
-            rtmp_local_url = f"rtmp://localhost:1935/{stream_path}"
+            # Remote RTMP server — recall.ai streams directly to it; ffmpeg reads from there
+            rtmp_local_url = rtmp_url
             realtime_endpoints.append({
                 "type": "rtmp",
                 "url": rtmp_url,
                 "events": [],
             })
-            print(f"RTMP: recall.ai → {rtmp_url} → mediamtx → {rtmp_local_url}")
+            print(f"RTMP: recall.ai → {rtmp_url} (remote mediamtx; ffmpeg reads directly)")
 
     payload = {
         "meeting_url": args.url,
