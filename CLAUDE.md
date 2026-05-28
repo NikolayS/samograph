@@ -28,10 +28,9 @@ When you join a call with `samoagent join`, the output will include an **AGENT I
    ```
    python3 samoagent frame
    ```
-   This attempts to get a frame from inside the call via recall.ai.
-   If it exits with `FRAME_UNAVAILABLE` (recall.ai doesn't expose live frames yet),
-   use your browser tools to screenshot the Meet/Zoom tab directly — the URL is printed in the error.
-   `samoagent screenshot` captures the local Mac screen (use only as last resort).
+   If joined with `--rtmp-url`, this grabs a live frame via ffmpeg from the local mediamtx RTMP stream.
+   If `FRAME_UNAVAILABLE` (no RTMP configured), use browser tools to screenshot the Meet/Zoom tab — URL is printed.
+   `samoagent screenshot` captures the local Mac screen (last resort, macOS only).
 5. **Leave** when told:
    ```
    python3 samoagent leave
@@ -49,6 +48,11 @@ python3 samoagent join "https://zoom.us/j/123456" --name TARS --dict postgresfm
 - `--dict` loads keyword dictionary from `dictionaries/` for Deepgram transcription accuracy
 - `--port` sets local webhook port (default 8080)
 - `--transcript-dir` sets where transcript.txt is written (default: ~/.samoagent/)
+- `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enables live frame capture via RTMP:
+  - recall.ai streams the mixed call video to this public URL
+  - mediamtx RTMP server starts locally on port 1935 to receive it
+  - `samoagent frame` then grabs frames via ffmpeg from the local stream
+  - Requires a public IP (VM). On macOS without paid ngrok, omit this flag.
 - Starts ngrok tunnel + local Flask webhook server automatically
 - Bot appears in call within ~15 seconds
 

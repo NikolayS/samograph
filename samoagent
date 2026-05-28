@@ -110,6 +110,26 @@ def wait_for_ngrok(port: int, timeout: int = 15) -> Optional[str]:
 
 # -- commands ------------------------------------------------------------------
 
+def _rtmp_stream_path(rtmp_url: str) -> str:
+    """Extract path component from rtmp://host:port/path → path."""
+    from urllib.parse import urlparse
+    parsed = urlparse(rtmp_url)
+    return parsed.path.lstrip("/")
+
+
+def _start_mediamtx() -> Optional[subprocess.Popen]:
+    """Start mediamtx RTMP server on port 1935. Returns the process or None on failure."""
+    mediamtx = subprocess.Popen(
+        ["mediamtx"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1.5)  # wait for mediamtx to bind
+    if mediamtx.poll() is not None:
+        return None
+    return mediamtx
+
+
 def cmd_join(args) -> None:
     import requests
 
@@ -119,10 +139,11 @@ def cmd_join(args) -> None:
     keyterms = load_dict(args.dict)
     name = bot_name(args.name)
     port = args.port or 8080
+    rtmp_url = getattr(args, "rtmp_url", None)
 
     # kill any old processes
     state = load_state()
-    for pid_key in ("server_pid", "ngrok_pid"):
+    for pid_key in ("server_pid", "ngrok_pid", "mediamtx_pid"):
         pid = state.get(pid_key)
         if pid:
             try:
@@ -165,6 +186,33 @@ def cmd_join(args) -> None:
     if keyterms:
         deepgram_config["keyterms"] = keyterms
 
+    realtime_endpoints = [
+        {
+            "type": "webhook",
+            "url": webhook_url,
+            "events": ["transcript.data"],
+        }
+    ]
+
+    mediamtx_proc = None
+    rtmp_local_url = None
+
+    if rtmp_url:
+        print(f"Starting mediamtx RTMP server...")
+        mediamtx_proc = _start_mediamtx()
+        if not mediamtx_proc:
+            print("Warning: mediamtx failed to start — RTMP frame capture disabled.", file=sys.stderr)
+            rtmp_url = None
+        else:
+            stream_path = _rtmp_stream_path(rtmp_url)
+            rtmp_local_url = f"rtmp://localhost:1935/{stream_path}"
+            realtime_endpoints.append({
+                "type": "rtmp",
+                "url": rtmp_url,
+                "events": [],
+            })
+            print(f"RTMP: recall.ai → {rtmp_url} → mediamtx → {rtmp_local_url}")
+
     payload = {
         "meeting_url": args.url,
         "bot_name": name,
@@ -180,13 +228,7 @@ def cmd_join(args) -> None:
                 "diarization": {"use_separate_streams_when_available": True},
             },
             "screenshot": {},
-            "realtime_endpoints": [
-                {
-                    "type": "webhook",
-                    "url": webhook_url,
-                    "events": ["transcript.data"],
-                }
-            ],
+            "realtime_endpoints": realtime_endpoints,
         },
     }
 
@@ -195,7 +237,7 @@ def cmd_join(args) -> None:
     bot = resp.json()
 
     bid = bot["id"]
-    save_state({
+    new_state = {
         "bot_id": bid,
         "agent_name": args.name or "samoagent",
         "bot_name": name,
@@ -206,7 +248,12 @@ def cmd_join(args) -> None:
         "dict": args.dict,
         "meeting_url": args.url,
         "transcript_file": str(transcript_file),
-    })
+    }
+    if mediamtx_proc:
+        new_state["mediamtx_pid"] = mediamtx_proc.pid
+    if rtmp_local_url:
+        new_state["rtmp_local_url"] = rtmp_local_url
+    save_state(new_state)
 
     print(f"Bot ID:   {bid}")
     print(f"Bot name: {name}")
@@ -220,7 +267,10 @@ def cmd_join(args) -> None:
     print(f"Each line you receive is a new utterance: [timestamp] Speaker: text")
     print(f"React to what is said. If someone addresses you or asks a question, respond in chat.")
     print(f"To send a message in the meeting chat: python3 samoagent chat 'your message'")
-    print(f"To capture what's on screen:  python3 samoagent screenshot  (then Read screenshot.png)")
+    if rtmp_local_url:
+        print(f"To capture call frame:        python3 samoagent frame  (ffmpeg from RTMP stream)")
+    else:
+        print(f"To capture what's on screen:  python3 samoagent screenshot  (then Read screenshot.png)")
     print(f"To stop:                      python3 samoagent leave")
     print(f"--------------------------")
 
@@ -235,7 +285,7 @@ def cmd_leave(args) -> None:
         print(f"Warning: {e}")
 
     state = load_state()
-    for pid_key in ("server_pid", "ngrok_pid"):
+    for pid_key in ("server_pid", "ngrok_pid", "mediamtx_pid"):
         pid = state.get(pid_key)
         if pid:
             try:
@@ -364,12 +414,36 @@ def cmd_chat(args) -> None:
 
 
 def cmd_frame(args) -> None:
-    """Capture a frame from inside the call (what the bot sees), via recall.ai API."""
+    """Capture a frame from inside the call (what the bot sees)."""
     import requests
     out = Path(getattr(args, "out", None) or "frame.png")
-    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
+
+    state = load_state()
+    rtmp_local_url = state.get("rtmp_local_url")
+
+    # If RTMP stream is configured, grab a frame with ffmpeg
+    if rtmp_local_url:
+        ffmpeg = "/opt/homebrew/bin/ffmpeg"
+        if not Path(ffmpeg).exists():
+            ffmpeg = "ffmpeg"
+        cmd = [
+            ffmpeg, "-y",
+            "-rtsp_transport", "tcp",
+            "-i", rtmp_local_url,
+            "-vframes", "1",
+            "-q:v", "2",
+            str(out),
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=15)
+        if result.returncode == 0 and out.exists():
+            print(str(out.resolve()))
+            return
+        print(f"FRAME_ERROR: ffmpeg failed to grab frame from {rtmp_local_url}", file=sys.stderr)
+        print(result.stderr.decode(errors="replace")[-500:], file=sys.stderr)
+        sys.exit(1)
 
     # Try recall.ai screenshot endpoint
+    bid = bot_id_from_args_or_state(getattr(args, "bot_id", None))
     resp = requests.get(
         f"{RECALL_BASE}/bot/{bid}/screenshot/",
         headers=headers(),
@@ -381,13 +455,13 @@ def cmd_frame(args) -> None:
         print(str(out.resolve()))
         return
 
-    # Not available live — tell the agent how to proceed
-    state = load_state()
+    # Not available — tell the agent how to proceed
     meeting_url = state.get("meeting_url", "")
-    print(f"FRAME_UNAVAILABLE: recall.ai live frame not available during call.", file=sys.stderr)
-    print(f"To capture the call view, use your browser tools to screenshot this tab:", file=sys.stderr)
-    print(f"  {meeting_url}", file=sys.stderr)
-    print(f"(After the call ends, the full recording will be available via: samoagent transcript)", file=sys.stderr)
+    print(f"FRAME_UNAVAILABLE: no RTMP stream configured and recall.ai live frame not available.", file=sys.stderr)
+    print(f"Options:", file=sys.stderr)
+    print(f"  1. Rejoin with --rtmp-url rtmp://PUBLIC_IP:1935/live/call to enable RTMP frames", file=sys.stderr)
+    print(f"  2. Use browser tools to screenshot: {meeting_url}", file=sys.stderr)
+    print(f"  3. After call ends: samoagent transcript", file=sys.stderr)
     sys.exit(1)
 
 
@@ -466,6 +540,9 @@ def main() -> None:
     p_join.add_argument("--dict", help="Dictionary name from dictionaries/ folder (e.g. postgresfm)")
     p_join.add_argument("--port", type=int, default=8080, help="Local webhook port (default: 8080)")
     p_join.add_argument("--transcript-dir", help="Directory for transcript.txt (default: ~/.samoagent)")
+    p_join.add_argument("--rtmp-url", dest="rtmp_url",
+                        help="Public RTMP URL for frame capture (e.g. rtmp://VM_IP:1935/live/call). "
+                             "recall.ai streams the call video here; 'samoagent frame' then grabs frames via ffmpeg.")
 
     p_leave = sub.add_parser("leave", help="Remove agent from call")
     p_leave.add_argument("bot_id", nargs="?", help="Bot ID (optional, reads from state if omitted)")
@@ -488,7 +565,7 @@ def main() -> None:
 
     sub.add_parser("watch", help="Stream live transcript lines to stdout (use with Monitor tool)")
 
-    p_frame = sub.add_parser("frame", help="Capture a frame from inside the call (bot's view)")
+    p_frame = sub.add_parser("frame", help="Capture a frame from inside the call (bot's view via RTMP)")
     p_frame.add_argument("--out", default="frame.png", help="Output file")
     p_frame.add_argument("bot_id", nargs="?")
 
