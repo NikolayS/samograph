@@ -91,12 +91,25 @@ def bot_name(agent_name: Optional[str]) -> str:
     return base[:100]  # recall.ai limit
 
 
+def _ngrok_api_port() -> int:
+    """Return the port where the ngrok local API is listening (4040 or 4042)."""
+    import urllib.request
+    for p in (4040, 4041, 4042, 4043):
+        try:
+            urllib.request.urlopen(f"http://localhost:{p}/api/tunnels", timeout=1).close()
+            return p
+        except Exception:
+            pass
+    return 4040  # default, may fail later
+
+
 def wait_for_ngrok(port: int, timeout: int = 15) -> Optional[str]:
     import urllib.request
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://localhost:4040/api/tunnels", timeout=2) as r:
+            api_port = _ngrok_api_port()
+            with urllib.request.urlopen(f"http://localhost:{api_port}/api/tunnels", timeout=2) as r:
                 data = json.loads(r.read())
                 tunnels = data.get("tunnels", [])
                 for t in tunnels:
@@ -108,6 +121,51 @@ def wait_for_ngrok(port: int, timeout: int = 15) -> Optional[str]:
             pass
         time.sleep(1)
     return None
+
+
+def _start_ngrok_tcp_tunnel(local_port: int, timeout: int = 20) -> Optional[str]:
+    """Start a ngrok TCP tunnel to local_port via the ngrok REST API.
+
+    Returns the public TCP URL (e.g. tcp://0.tcp.ngrok.io:12345) on success,
+    or None on failure.
+
+    ngrok TCP tunnels require a credit card on file (free plan, not charged).
+    If no card is on file, ngrok returns ERR_NGROK_8013 and this function
+    prints a clear error and returns None.
+    """
+    import urllib.request
+    import urllib.error
+
+    api_port = _ngrok_api_port()
+
+    # POST to ngrok API to start a TCP tunnel
+    payload = json.dumps({"addr": str(local_port), "proto": "tcp", "name": "rtmp"}).encode()
+    req = urllib.request.Request(
+        f"http://localhost:{api_port}/api/tunnels",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+            return data.get("public_url")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        if "ERR_NGROK_8013" in body or "credit or debit card" in body:
+            print(
+                "Error: ngrok TCP tunnels require a credit/debit card on file "
+                "(free plan — your card will NOT be charged).\n"
+                "Add a card at: https://dashboard.ngrok.com/settings#id-verification\n"
+                "Then retry with --rtmp.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error starting ngrok TCP tunnel: {body[:500]}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Error starting ngrok TCP tunnel: {e}", file=sys.stderr)
+        return None
 
 
 # -- commands ------------------------------------------------------------------
@@ -197,6 +255,7 @@ def cmd_join(args) -> None:
     name = bot_name(args.name)
     port = args.port or 8080
     rtmp_url = getattr(args, "rtmp_url", None)
+    use_rtmp_auto = getattr(args, "rtmp", False)
 
     # kill any old processes
     state = load_state()
@@ -233,6 +292,29 @@ def cmd_join(args) -> None:
     webhook_url = webhook_url.rstrip("/") + "/webhook"
 
     print(f"Webhook: {webhook_url}")
+
+    # --rtmp: auto-start mediamtx + open ngrok TCP tunnel → build RTMP URL automatically
+    if use_rtmp_auto and not rtmp_url:
+        print("Starting mediamtx RTMP server for --rtmp...")
+        _mediamtx_early = _start_mediamtx()
+        if not _mediamtx_early:
+            print("Warning: mediamtx failed to start — RTMP frame capture disabled.", file=sys.stderr)
+        else:
+            print("Opening ngrok TCP tunnel to port 1935...")
+            _tcp_public = _start_ngrok_tcp_tunnel(1935)
+            if _tcp_public is None:
+                # Error already printed by _start_ngrok_tcp_tunnel
+                print("Warning: ngrok TCP tunnel failed — RTMP frame capture disabled.", file=sys.stderr)
+                _mediamtx_early.terminate()
+            else:
+                # tcp://0.tcp.ngrok.io:PORT → rtmp://0.tcp.ngrok.io:PORT/live/call
+                rtmp_url = _tcp_public.replace("tcp://", "rtmp://", 1) + "/live/call"
+                print(f"ngrok TCP tunnel: {_tcp_public}")
+                print(f"RTMP URL for recall.ai: {rtmp_url}")
+                # Store mediamtx PID — will be picked up later in the if rtmp_url block
+                # We need to pass this process object through; stash on args namespace
+                args._mediamtx_proc_auto = _mediamtx_early
+
     print(f"Joining: {args.url}")
 
     deepgram_config = {
@@ -258,6 +340,8 @@ def cmd_join(args) -> None:
         from urllib.parse import urlparse as _urlparse
         _rtmp_host = _urlparse(rtmp_url).hostname or ""
         _rtmp_is_local = _rtmp_host in ("localhost", "127.0.0.1")
+        # --rtmp flag: mediamtx already running locally; URL is the ngrok TCP public address
+        _rtmp_via_ngrok = use_rtmp_auto and hasattr(args, "_mediamtx_proc_auto")
 
         if _rtmp_is_local:
             print(f"Starting mediamtx RTMP server...")
@@ -274,6 +358,17 @@ def cmd_join(args) -> None:
                     "events": ["video_mixed_flv.data"],
                 })
                 print(f"RTMP: recall.ai → {rtmp_url} → mediamtx (local) → {rtmp_local_url}")
+        elif _rtmp_via_ngrok:
+            # --rtmp flag: recall.ai → ngrok TCP → local mediamtx → ffmpeg reads from localhost
+            mediamtx_proc = args._mediamtx_proc_auto
+            stream_path = _rtmp_stream_path(rtmp_url)
+            rtmp_local_url = f"rtmp://localhost:1935/{stream_path}"
+            realtime_endpoints.append({
+                "type": "rtmp",
+                "url": rtmp_url,
+                "events": ["video_mixed_flv.data"],
+            })
+            print(f"RTMP: recall.ai → {rtmp_url} (ngrok TCP) → mediamtx (local) → {rtmp_local_url}")
         else:
             # Remote RTMP server — recall.ai streams directly to it; ffmpeg reads from there
             rtmp_local_url = rtmp_url
@@ -360,6 +455,19 @@ def cmd_leave(args) -> None:
         print(f"Warning: {e}")
 
     state = load_state()
+
+    # Write sentinel line so `samoagent watch` exits cleanly
+    transcript_file = state.get("transcript_file")
+    if transcript_file:
+        tf = Path(transcript_file)
+        if tf.exists():
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                with open(tf, "a") as f:
+                    f.write(f"[{ts}] SAMOAGENT_CALL_ENDED\n")
+            except OSError:
+                pass
+
     for pid_key in ("server_pid", "ngrok_pid", "mediamtx_pid"):
         pid = state.get(pid_key)
         if pid:
@@ -534,21 +642,47 @@ def cmd_frame(args) -> None:
     meeting_url = state.get("meeting_url", "")
     print(f"FRAME_UNAVAILABLE: no RTMP stream configured and recall.ai live frame not available.", file=sys.stderr)
     print(f"Options:", file=sys.stderr)
-    print(f"  1. Rejoin with --rtmp-url rtmp://PUBLIC_IP:1935/live/call to enable RTMP frames", file=sys.stderr)
-    print(f"  2. Use browser tools to screenshot: {meeting_url}", file=sys.stderr)
-    print(f"  3. After call ends: samoagent transcript", file=sys.stderr)
+    print(f"  1. Rejoin with --rtmp to enable RTMP frames via ngrok TCP (no VM needed; requires ngrok card on file)", file=sys.stderr)
+    print(f"  2. Rejoin with --rtmp-url rtmp://PUBLIC_IP:1935/live/call to enable RTMP frames via cloud VM", file=sys.stderr)
+    print(f"  3. Use browser tools to screenshot: {meeting_url}", file=sys.stderr)
+    print(f"  4. After call ends: samoagent transcript", file=sys.stderr)
     sys.exit(1)
 
 
 def cmd_watch(args) -> None:
-    """Stream transcript lines to stdout as they arrive. Use with Monitor tool (persistent=true)."""
+    """Stream transcript lines to stdout as they arrive. Use with Monitor tool (persistent=true).
+
+    Exits automatically when SAMOAGENT_CALL_ENDED sentinel is seen in the transcript
+    (written by `samoagent leave`) or when state.json disappears.
+    """
     state = load_state()
     tf = Path(state.get("transcript_file", Path.home() / ".samoagent" / "transcript.txt"))
-    if not tf.exists():
+
+    # Wait for transcript file to appear (may not exist yet right after join)
+    waited = 0
+    while not tf.exists():
         tf.parent.mkdir(parents=True, exist_ok=True)
-        tf.write_text("")
-    # exec tail -f so signals propagate cleanly
-    os.execvp("tail", ["tail", "-f", str(tf)])
+        time.sleep(0.5)
+        waited += 0.5
+        if waited >= 30:
+            tf.write_text("")
+            break
+
+    with open(tf, "r") as f:
+        f.seek(0, 2)  # seek to end — only show new lines from here
+        _poll_counter = 0
+        while True:
+            line = f.readline()
+            if line:
+                print(line, end="", flush=True)
+                if "SAMOAGENT_CALL_ENDED" in line:
+                    break
+            else:
+                _poll_counter += 1
+                time.sleep(0.1)
+                # Check state.json every ~2 seconds (every 20 polls of 0.1s)
+                if _poll_counter % 20 == 0 and not STATE_FILE.exists():
+                    break
 
 
 def cmd_dicts(args) -> None:
@@ -617,7 +751,13 @@ def main() -> None:
     p_join.add_argument("--transcript-dir", help="Directory for transcript.txt (default: ~/.samoagent)")
     p_join.add_argument("--rtmp-url", dest="rtmp_url",
                         help="Public RTMP URL for frame capture (e.g. rtmp://VM_IP:1935/live/call). "
-                             "recall.ai streams the call video here; 'samoagent frame' then grabs frames via ffmpeg.")
+                             "recall.ai streams the call video here; 'samoagent frame' then grabs frames via ffmpeg. "
+                             "Use --rtmp instead to auto-configure via ngrok TCP tunnel (no VM needed).")
+    p_join.add_argument("--rtmp", action="store_true", default=False,
+                        help="Enable RTMP frame capture without a cloud VM. Auto-starts mediamtx locally and "
+                             "opens a ngrok TCP tunnel so recall.ai can stream the call video back to this machine. "
+                             "Requires a credit/debit card on file at ngrok.com (free plan — card is NOT charged). "
+                             "See: https://dashboard.ngrok.com/settings#id-verification")
 
     p_leave = sub.add_parser("leave", help="Remove agent from call")
     p_leave.add_argument("bot_id", nargs="?", help="Bot ID (optional, reads from state if omitted)")
