@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """samoagent — AI meeting agent for Zoom & Google Meet.
 
-Joins calls, transcribes live (Russian+English mixed), identifies speakers,
+Joins calls, transcribes live, identifies speakers,
 and delivers screenshots on demand to Claude Code or OpenClaw agents.
 
 Setup: export RECALL_API_KEY=your_key

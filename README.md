@@ -1,6 +1,6 @@
 # samoagent
 
-CLI meeting AI agent. Joins Zoom and Google Meet calls via [recall.ai](https://recall.ai), transcribes live speech (Russian+English mixed) using Deepgram Nova-3, and lets AI agents (Claude Code, OpenClaw, etc.) monitor the conversation and react — sending chat messages, capturing live video frames, and eventually speaking back.
+CLI meeting AI agent. Joins Zoom and Google Meet calls via [recall.ai](https://recall.ai), transcribes live speech using Deepgram Nova-3, and lets AI agents (Claude Code, OpenClaw, etc.) monitor the conversation and react — sending chat messages, capturing live video frames, and eventually speaking back.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ The bot appears in the call within ~15 seconds of `join`.
 ## Architecture
 
 1. `samoagent join` starts a local Flask webhook server and an ngrok tunnel, then creates a recall.ai bot with that webhook URL.
-2. The recall.ai bot joins the call. Deepgram Nova-3 transcribes audio in real time (multilingual: Russian + English).
+2. The recall.ai bot joins the call. Deepgram Nova-3 transcribes audio in real time (multilingual).
 3. Transcript words stream to the webhook → appended to `~/.samoagent/transcript.txt`.
 4. `samoagent watch` tails that file and prints new lines to stdout.
 5. For frame capture: recall.ai streams the mixed call video as FLV over RTMP to `--rtmp-url`. A local mediamtx server receives it. `samoagent frame` runs ffmpeg against the local stream and saves a PNG.

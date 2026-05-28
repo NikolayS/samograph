@@ -1,6 +1,6 @@
 # samoagent
 
-CLI meeting AI agent. Joins Zoom/Google Meet calls via recall.ai, transcribes live using Deepgram (Russian+English mixed), and provides screenshots on demand.
+CLI meeting AI agent. Joins Zoom/Google Meet calls via recall.ai, transcribes live using Deepgram (multilingual), and provides screenshots on demand.
 
 ## Setup
 
