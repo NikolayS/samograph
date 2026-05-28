@@ -271,7 +271,7 @@ def cmd_join(args) -> None:
                 realtime_endpoints.append({
                     "type": "rtmp",
                     "url": rtmp_url,
-                    "events": [],
+                    "events": ["video_mixed_flv.data"],
                 })
                 print(f"RTMP: recall.ai → {rtmp_url} → mediamtx (local) → {rtmp_local_url}")
         else:
@@ -280,9 +280,20 @@ def cmd_join(args) -> None:
             realtime_endpoints.append({
                 "type": "rtmp",
                 "url": rtmp_url,
-                "events": [],
+                "events": ["video_mixed_flv.data"],
             })
             print(f"RTMP: recall.ai → {rtmp_url} (remote mediamtx; ffmpeg reads directly)")
+
+    recording_config = {
+        "transcript": {
+            "provider": {"deepgram_streaming": deepgram_config},
+            "diarization": {"use_separate_streams_when_available": True},
+        },
+        "screenshot": {},
+        "realtime_endpoints": realtime_endpoints,
+    }
+    if rtmp_url:
+        recording_config["video_mixed_flv"] = {}
 
     payload = {
         "meeting_url": args.url,
@@ -293,14 +304,7 @@ def cmd_join(args) -> None:
                 "config": {"url": AVATAR_URL},
             }
         },
-        "recording_config": {
-            "transcript": {
-                "provider": {"deepgram_streaming": deepgram_config},
-                "diarization": {"use_separate_streams_when_available": True},
-            },
-            "screenshot": {},
-            "realtime_endpoints": realtime_endpoints,
-        },
+        "recording_config": recording_config,
     }
 
     resp = requests.post(f"{RECALL_BASE}/bot/", headers=headers(), json=payload, timeout=30)
