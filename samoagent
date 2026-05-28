@@ -10,6 +10,8 @@ Setup: export RECALL_API_KEY=your_key
 import argparse
 import json
 import os
+import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -117,10 +119,65 @@ def _rtmp_stream_path(rtmp_url: str) -> str:
     return parsed.path.lstrip("/")
 
 
+def _ensure_mediamtx() -> str:
+    """Return path to mediamtx binary, downloading it if necessary."""
+    # 1. Check PATH
+    in_path = shutil.which("mediamtx")
+    if in_path:
+        return in_path
+
+    # 2. Check ~/.samoagent/bin/mediamtx
+    local_bin = Path.home() / ".samoagent" / "bin" / "mediamtx"
+    if local_bin.exists():
+        return str(local_bin)
+
+    # 3. Auto-download from GitHub releases
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        arch = "arm64"
+    else:
+        arch = "amd64"
+
+    plat = sys.platform  # "darwin" or "linux"
+    if plat not in ("darwin", "linux"):
+        raise RuntimeError(f"Unsupported platform for mediamtx auto-download: {plat}")
+
+    version = "v1.9.1"
+    filename = f"mediamtx_{version}_{plat}_{arch}.tar.gz"
+    url = f"https://github.com/bluenviron/mediamtx/releases/download/{version}/{filename}"
+
+    print(f"Downloading mediamtx {version}...")
+
+    import tarfile
+    import tempfile
+    import urllib.request
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        archive_path = os.path.join(tmpdir, filename)
+        urllib.request.urlretrieve(url, archive_path)
+        with tarfile.open(archive_path, "r:gz") as tar:
+            # Extract only the mediamtx binary
+            member = next(
+                (m for m in tar.getmembers() if m.name == "mediamtx" or m.name.endswith("/mediamtx")),
+                None,
+            )
+            if member is None:
+                raise RuntimeError("mediamtx binary not found in downloaded archive")
+            tar.extract(member, tmpdir)
+            extracted = os.path.join(tmpdir, member.name)
+
+        local_bin.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(extracted, str(local_bin))
+
+    os.chmod(str(local_bin), 0o755)
+    return str(local_bin)
+
+
 def _start_mediamtx() -> Optional[subprocess.Popen]:
     """Start mediamtx RTMP server on port 1935. Returns the process or None on failure."""
+    mediamtx_bin = _ensure_mediamtx()
     mediamtx = subprocess.Popen(
-        ["mediamtx"],
+        [mediamtx_bin],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
