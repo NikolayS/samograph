@@ -218,7 +218,13 @@ async function main(): Promise<void> {
     if (e instanceof ExitError) {
       process.exit(e.code);
     }
-    throw e;
+    // Any other throw (recall HTTP errors from createBot/sendChat, a non-JSON
+    // response surfacing as a SyntaxError, etc.) — emit a single clean line to
+    // stderr instead of dumping a Bun stack trace.
+    process.stderr.write(
+      `samoagent: error: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    process.exit(1);
   }
 }
 

@@ -14,9 +14,28 @@ import {
   startMediamtx,
 } from "../rtmp.ts";
 
+/** Minimal handle for a spawned long-lived process (server / ngrok). */
+export interface SpawnedProc {
+  pid: number;
+  kill(): void;
+}
+
+/**
+ * Injectable seams for cmdJoin. All default to the real implementations so
+ * production behavior is unchanged; tests override them to run hermetically
+ * (no ngrok, no mediamtx, no child processes, no network).
+ */
 export interface JoinDeps {
   recall?: RecallClient;
   kill?: (pid: number, signal: string) => void;
+  /** Spawn a detached process (webhook server / ngrok). */
+  spawn?: (cmd: string[]) => SpawnedProc;
+  /** Poll ngrok's local API for the public webhook base URL. */
+  waitForNgrok?: (port: number) => Promise<string | null>;
+  /** Start a local mediamtx RTMP server. */
+  startMediamtx?: () => Promise<SpawnedProc | null>;
+  /** Open a ngrok TCP tunnel to a local port; returns the public tcp:// URL. */
+  startNgrokTcpTunnel?: (localPort: number) => Promise<string | null>;
 }
 
 function defaultKill(pid: number, signal: string): void {
@@ -27,12 +46,28 @@ function defaultKill(pid: number, signal: string): void {
   }
 }
 
+function defaultSpawn(cmd: string[]): SpawnedProc {
+  const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+  return {
+    get pid() {
+      return proc.pid;
+    },
+    kill() {
+      proc.kill();
+    },
+  };
+}
+
 export async function cmdJoin(
   args: ParsedArgs,
   deps: JoinDeps = {},
 ): Promise<void> {
   const recall = deps.recall ?? makeRecallClient();
   const kill = deps.kill ?? defaultKill;
+  const spawn = deps.spawn ?? defaultSpawn;
+  const waitForNgrokFn = deps.waitForNgrok ?? waitForNgrok;
+  const startMediamtxFn = deps.startMediamtx ?? startMediamtx;
+  const startNgrokTcpTunnelFn = deps.startNgrokTcpTunnel ?? startNgrokTcpTunnel;
 
   const transcriptFile = resolveTranscriptFile(args.transcript_dir);
   writeFileSync(transcriptFile, ""); // clear for new session
@@ -56,27 +91,21 @@ export async function cmdJoin(
   const selfPath = fileURLToPath(import.meta.url);
   // resolve cli entrypoint: this module is src/commands/join.ts → cli is src/cli.ts
   const cliPath = selfPath.replace(/commands\/join\.ts$/, "cli.ts");
-  const server = Bun.spawn(
-    [
-      process.execPath,
-      cliPath,
-      "_serve",
-      "--port",
-      String(port),
-      "--transcript-file",
-      transcriptFile,
-    ],
-    { stdout: "ignore", stderr: "ignore" },
-  );
+  const server = spawn([
+    process.execPath,
+    cliPath,
+    "_serve",
+    "--port",
+    String(port),
+    "--transcript-file",
+    transcriptFile,
+  ]);
 
   // start ngrok
-  const ngrok = Bun.spawn(["ngrok", "http", String(port), "--log=stdout"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  const ngrok = spawn(["ngrok", "http", String(port), "--log=stdout"]);
 
   process.stdout.write(`Starting ngrok tunnel on port ${port}...\n`);
-  let webhookUrl = await waitForNgrok(port);
+  let webhookUrl = await waitForNgrokFn(port);
   if (!webhookUrl) {
     process.stderr.write(
       "Error: could not get ngrok URL. Is ngrok installed and authenticated?\n",
@@ -88,20 +117,20 @@ export async function cmdJoin(
   webhookUrl = webhookUrl.replace(/\/+$/, "") + "/webhook";
   process.stdout.write(`Webhook: ${webhookUrl}\n`);
 
-  let mediamtxAuto: Bun.Subprocess | null = null;
+  let mediamtxAuto: SpawnedProc | null = null;
   let rtmpViaNgrok = false;
 
   // --rtmp: auto-start mediamtx + open ngrok TCP tunnel → build RTMP URL automatically
   if (useRtmpAuto && !rtmpUrl) {
     process.stdout.write("Starting mediamtx RTMP server for --rtmp...\n");
-    const mediamtxEarly = await startMediamtx();
+    const mediamtxEarly = await startMediamtxFn();
     if (!mediamtxEarly) {
       process.stderr.write(
         "Warning: mediamtx failed to start — RTMP frame capture disabled.\n",
       );
     } else {
       process.stdout.write("Opening ngrok TCP tunnel to port 1935...\n");
-      const tcpPublic = await startNgrokTcpTunnel(1935);
+      const tcpPublic = await startNgrokTcpTunnelFn(1935);
       if (tcpPublic === null) {
         process.stderr.write(
           "Warning: ngrok TCP tunnel failed — RTMP frame capture disabled.\n",
@@ -136,7 +165,7 @@ export async function cmdJoin(
     },
   ];
 
-  let mediamtxProc: Bun.Subprocess | null = null;
+  let mediamtxProc: SpawnedProc | null = null;
   let rtmpLocalUrl: string | null = null;
 
   if (rtmpUrl) {
@@ -145,7 +174,7 @@ export async function cmdJoin(
 
     if (rtmpIsLocal) {
       process.stdout.write("Starting mediamtx RTMP server...\n");
-      mediamtxProc = await startMediamtx();
+      mediamtxProc = await startMediamtxFn();
       if (!mediamtxProc) {
         process.stderr.write(
           "Warning: mediamtx failed to start — RTMP frame capture disabled.\n",

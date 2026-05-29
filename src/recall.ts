@@ -26,7 +26,15 @@ export function makeRecallClient(fetchFn: FetchFn = fetch): RecallClient {
         headers: headers(),
         signal: AbortSignal.timeout(10000),
       });
-      return r.json();
+      if (!r.ok) {
+        const body = await r.text().catch(() => "");
+        throw new Error(`get bot failed: ${r.status} ${body}`);
+      }
+      try {
+        return await r.json();
+      } catch {
+        throw new Error("get bot failed: invalid JSON response");
+      }
     },
 
     async sendChat(botId: string, message: string): Promise<Response> {

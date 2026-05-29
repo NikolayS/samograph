@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { StringDecoder } from "node:string_decoder";
 import {
   defaultTranscriptFile,
   samoagentDir,
@@ -157,9 +158,21 @@ export async function watch(opts: WatchOpts = {}): Promise<void> {
     let pollCounter = 0;
     let buffer = "";
     const chunk = Buffer.alloc(64 * 1024);
+    // One decoder for the whole tail session so a multibyte char split across
+    // a 64KB chunk boundary — or across two separate polls — is reassembled,
+    // not corrupted to U+FFFD. This is a multilingual transcript tool.
+    let decoder = new StringDecoder("utf-8");
 
     while (true) {
       const size = Bun.file(tf).size;
+      if (size < pos) {
+        // File was truncated/rotated (e.g. a new join cleared it) — re-sync
+        // from the start. Reset the read position, the line buffer, and the
+        // decoder (any partial-byte state belongs to the old file contents).
+        pos = 0;
+        buffer = "";
+        decoder = new StringDecoder("utf-8");
+      }
       if (size > pos) {
         const toRead = size - pos;
         let remaining = toRead;
@@ -174,7 +187,7 @@ export async function watch(opts: WatchOpts = {}): Promise<void> {
             offset,
           );
           if (n <= 0) break;
-          data += chunk.toString("utf-8", 0, n);
+          data += decoder.write(chunk.subarray(0, n));
           offset += n;
           remaining -= n;
         }
