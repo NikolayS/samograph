@@ -1,10 +1,16 @@
 # samoagent
 
-Meeting CLI for agents. It joins Zoom or Google Meet through Recall.ai, streams the live transcript, lets the agent send chat messages, and can capture the current call view on demand.
+samoagent is a meeting I/O helper for AI agents.
+
+It is not a full agent by itself. Give this CLI, a meeting URL, and the needed tokens to your AI agent, and the agent can join Zoom or Google Meet through Recall.ai, watch the live transcript, send meeting chat messages, and inspect the current call view on demand. In other words: samoagent gives an AI agent the plumbing it needs to be an active participant in calls.
 
 ## Setup
 
-Requirements: Bun, `RECALL_API_KEY`, and authenticated `ngrok`.
+Requirements for the normal local workflow:
+
+- Bun.
+- `RECALL_API_KEY`.
+- Authenticated `ngrok` HTTP tunnel.
 
 ```bash
 bun install
@@ -13,6 +19,8 @@ bun run build
 ```
 
 During development use `bun run samoagent ...`. After build or package install, use `samoagent ...`.
+
+Why ngrok: Recall.ai needs a public HTTPS/WSS callback URL to deliver live transcripts and WebSocket video frames to the local samoagent server. The current `join` command creates that public callback with `ngrok http`. ngrok TCP is not required for normal `--ws-video` use; it is only needed for the optional RTMP path.
 
 ## Agent Workflow
 
