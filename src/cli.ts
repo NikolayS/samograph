@@ -17,7 +17,7 @@ const USAGE = `usage: samoagent <command> [options]
 AI meeting agent for Zoom & Google Meet
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--ws-video] [--frame-dir DIR]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
@@ -58,7 +58,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--ws-video", "--no-ws-video"]),
+    join: new Set(["--rtmp", "--no-ws-video"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),

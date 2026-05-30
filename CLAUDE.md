@@ -5,7 +5,7 @@ Use samoagent to join a meeting, watch the live transcript, speak in meeting cha
 ## Preferred Flow
 
 ```bash
-samoagent join "https://meet.google.com/..." --ws-video --name Leo --dict postgresfm
+samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
 samoagent frame
 samoagent leave
@@ -25,7 +25,7 @@ samoagent chat "Short message to the meeting"
 
 ## Looking At The Call
 
-Prefer `join --ws-video`. It receives Recall `video_separate_png.data` frames over the normal ngrok HTTPS/WSS tunnel. Frames stay in server memory. Disk writes happen only when the agent asks:
+Frame capture is on by default. Recall sends `video_separate_png.data` frames over the ngrok HTTPS/WSS tunnel. Frames stay in server memory; disk writes happen only when the agent calls:
 
 ```bash
 samoagent frame
