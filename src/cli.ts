@@ -58,7 +58,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--ws-video", "--no-ws-video"]),
+    join: new Set(["--rtmp", "--no-ws-video"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),

@@ -73,7 +73,7 @@ Run `watch` immediately after `join` and keep it running for the whole call. It 
 [2026-05-30 15:42:10] Speaker Name: words spoken in the meeting
 ```
 
-`watch` exits automatically when `leave` is run. If there is no active session, it exits immediately with no output.
+`watch` exits automatically when `leave` is run. If there is no active session, it prints `No active session.` to stderr and exits.
 
 Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session.
 
