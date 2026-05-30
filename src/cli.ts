@@ -17,7 +17,7 @@ const USAGE = `usage: samoagent <command> [options]
 AI meeting agent for Zoom & Google Meet
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--ws-video] [--frame-dir DIR]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]

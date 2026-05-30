@@ -56,7 +56,7 @@ Webhook and frame routes are token-protected, and default runtime files stay und
 ## Agent Workflow
 
 ```bash
-samoagent join "https://meet.google.com/..." --ws-video --name Leo --dict postgresfm
+samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
 samoagent frame
 samoagent chat "I can see the screen now."
@@ -73,7 +73,7 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Frames
 
-Use `join --ws-video` for normal agent use. Recall sends separate low-rate PNG frames over WebSocket. samoagent keeps the latest frame in memory; it does not write every frame to disk.
+Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samoagent keeps the latest in memory and only writes to disk when you call `frame`.
 
 ```bash
 samoagent frame
@@ -97,7 +97,7 @@ Archive filenames include bot id, UTC timestamp, source type, and participant id
 
 ## Important Flags
 
-- `join --ws-video` - preferred no-TCP frame path for agents.
+- `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
 - `join --transcript-dir DIR` - transcript location, default `~/.samoagent/`.
