@@ -1,12 +1,21 @@
-import { existsSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { ExitError } from "../config.ts";
 import { loadState, botIdFromArgsOrState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
+import {
+  archiveExistingFrame,
+  archiveFrameBytes,
+  frameMetadataPath,
+  resolveFrameOutput,
+  writeFrameFiles,
+  type VideoFrameMetadata,
+} from "../frameStore.ts";
 
 export interface FrameDeps {
   recall?: RecallClient;
+  fetchFn?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   /** Run ffmpeg-like command, returning exit code. */
   run?: (cmd: string[]) => { returncode: number; stderr: Uint8Array };
 }
@@ -21,10 +30,12 @@ export async function cmdFrame(
   deps: FrameDeps = {},
 ): Promise<void> {
   const recall = deps.recall ?? makeRecallClient();
+  const fetchFn = deps.fetchFn ?? fetch;
   const run = deps.run ?? defaultRun;
-  const out = args.out || "frame.png";
 
   const state = loadState();
+  const archive = args.archive ?? false;
+  const out = resolveFrameOutput(args.out, state);
   const rtmpLocalUrl = state.rtmp_local_url;
 
   // If RTMP stream is configured, grab a frame with ffmpeg.
@@ -57,6 +68,64 @@ export async function cmdFrame(
     const errText = Buffer.from(result.stderr).toString("utf-8");
     process.stderr.write(errText.slice(-500) + "\n");
     throw new ExitError(1);
+  }
+
+  const localFrameUrl = state.local_frame_url;
+  if (typeof localFrameUrl === "string" && localFrameUrl) {
+    const headers: Record<string, string> = {};
+    if (typeof state.frame_token === "string" && state.frame_token) {
+      headers["X-Samoagent-Frame-Token"] = state.frame_token;
+    }
+    let resp: Response;
+    try {
+      resp = await fetchFn(localFrameUrl, { headers });
+    } catch (e) {
+      process.stderr.write(
+        `FRAME_UNAVAILABLE: local WebSocket frame server is not reachable: ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+      throw new ExitError(1);
+    }
+    const contentType = resp.headers.get("content-type") ?? "";
+    if (resp.status === 200 && contentType.startsWith("image/")) {
+      let metadata: VideoFrameMetadata = {};
+      const metadataUrl = state.local_frame_metadata_url;
+      if (typeof metadataUrl === "string" && metadataUrl) {
+        try {
+          const metaResp = await fetchFn(metadataUrl, { headers });
+          if (metaResp.status === 200) {
+            metadata = (await metaResp.json()) as VideoFrameMetadata;
+          }
+        } catch {
+          metadata = {};
+        }
+      }
+      const raw = new Uint8Array(await resp.arrayBuffer());
+      const output = archive && !args.out
+        ? archiveFrameBytes(String(state.video_frame_dir ?? dirname(out)), raw, metadata)
+        : out;
+      if (!(archive && !args.out)) {
+        writeFrameFiles(output, raw, metadata);
+      }
+      process.stdout.write(resolve(output) + "\n");
+      return;
+    }
+    process.stderr.write("FRAME_UNAVAILABLE: no WebSocket video frame received yet.\n");
+    process.stderr.write("Wait for Recall to deliver video_separate_png.data, then retry.\n");
+    throw new ExitError(1);
+  }
+
+  const legacyFrameFile = state.video_frame_file;
+  if (typeof legacyFrameFile === "string" && legacyFrameFile && existsSync(legacyFrameFile)) {
+    const output = archive && !args.out ? archiveExistingFrame(legacyFrameFile) : out;
+    if (!(archive && !args.out)) {
+      writeFileSync(output, readFileSync(legacyFrameFile));
+      const metadataFile = frameMetadataPath(legacyFrameFile);
+      if (existsSync(metadataFile)) {
+        writeFileSync(frameMetadataPath(output), readFileSync(metadataFile));
+      }
+    }
+    process.stdout.write(resolve(output) + "\n");
+    return;
   }
 
   // Try recall.ai screenshot endpoint.

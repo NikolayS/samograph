@@ -200,6 +200,30 @@ describe("cmdJoin payload + saved state", () => {
     expect(state.rtmp_local_url).toBe(RTMP);
   });
 
+  it("--ws-video adds websocket video endpoint and safe frame state", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ ws_video: true, frame_dir: join(tmp, "frames") }), makeDeps(captured));
+
+    const rc = captured.payload.recording_config;
+    expect(rc.video_separate_png).toEqual({});
+    const wsEp = rc.realtime_endpoints.find((e: any) =>
+      Array.isArray(e.events) && e.events.includes("video_separate_png.data"),
+    );
+    expect(wsEp).toBeDefined();
+    expect(wsEp.type).toBe("websocket");
+    expect(wsEp.url).toStartWith("wss://ngrok.example/video-ws?token=");
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(wsEp.url).toContain(encodeURIComponent(state.frame_token));
+    expect(state.ws_video_url).toBeUndefined();
+    expect(state.local_frame_url).toBe("http://127.0.0.1:8080/frame");
+    expect(state.local_frame_metadata_url).toBe("http://127.0.0.1:8080/frame.json");
+    expect(typeof state.frame_token).toBe("string");
+    expect(state.video_frame_dir).toBe(join(tmp, "frames"));
+    expect(state.video_frame_file).toBe(join(tmp, "frames", "latest.png"));
+    expect(existsSync(join(tmp, "frames"))).toBe(false);
+  });
+
   it("cleans up server and ngrok when recall createBot fails before state is saved", async () => {
     const killed: number[] = [];
     const captured: { payload?: any; rejectCreateBot?: boolean } = { rejectCreateBot: true };

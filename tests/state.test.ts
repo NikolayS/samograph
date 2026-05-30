@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitError } from "../src/config.ts";
 import { loadState, saveState, botIdFromArgsOrState } from "../src/state.ts";
@@ -66,6 +66,25 @@ describe("saveState", () => {
     expect(JSON.parse(readFileSync(sf, "utf-8"))).toEqual({
       bot_id: "test-bot",
     });
+  });
+
+  it("writes state directory and file owner-only", () => {
+    const sf = join(tmp, "sub", "state.json");
+    process.env.SAMOAGENT_STATE_FILE = sf;
+    saveState({ bot_id: "test-bot" });
+    expect(statSync(join(tmp, "sub")).mode & 0o777).toBe(0o700);
+    expect(statSync(sf).mode & 0o777).toBe(0o600);
+  });
+
+  it("does not chmod an existing explicit state directory", () => {
+    const dir = join(tmp, "explicit");
+    mkdirSync(dir);
+    chmodSync(dir, 0o755);
+    const sf = join(dir, "state.json");
+    process.env.SAMOAGENT_STATE_FILE = sf;
+    saveState({ bot_id: "test-bot" });
+    expect(statSync(dir).mode & 0o777).toBe(0o755);
+    expect(statSync(sf).mode & 0o777).toBe(0o600);
   });
 
   it("creates parent dirs", () => {

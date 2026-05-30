@@ -1,126 +1,87 @@
 # samoagent
 
-CLI meeting AI agent. Joins Zoom and Google Meet calls via [recall.ai](https://recall.ai), transcribes live speech using Deepgram Nova-3, and lets AI agents (Claude Code, OpenClaw, etc.) monitor the conversation and react — sending chat messages, capturing live video frames, and eventually speaking back.
-
-## Requirements
-
-- Python 3.9+
-- `RECALL_API_KEY` env var (recall.ai account)
-- `ngrok` installed and authenticated (free tier works for HTTP webhooks)
-- For RTMP frame capture via `--rtmp`: ngrok free tier with a credit/debit card on file at [ngrok.com](https://dashboard.ngrok.com/settings#id-verification) (card is NOT charged — required by ngrok to enable TCP tunnels on free accounts). No cloud VM needed.
-- For RTMP frame capture via `--rtmp-url`: a cloud VM with a public IP (mediamtx is auto-downloaded on first use)
+Meeting CLI for agents. It joins Zoom or Google Meet through Recall.ai, streams the live transcript, lets the agent send chat messages, and can capture the current call view on demand.
 
 ## Setup
 
-```bash
-pip install -r requirements.txt
-export RECALL_API_KEY=your_key
-```
-
-## Quick start
+Requirements: Bun, `RECALL_API_KEY`, and authenticated `ngrok`.
 
 ```bash
-# Join a call
-python3 samoagent join "https://zoom.us/j/123456789" --name TARS --dict postgresfm
-
-# Stream the live transcript (run this immediately after joining)
-python3 samoagent watch
-
-# Capture a frame from the call (requires --rtmp-url; see Frame capture below)
-python3 samoagent frame
-
-# Leave when done
-python3 samoagent leave
+bun install
+export RECALL_API_KEY=...
+bun run build
 ```
 
-The bot appears in the call within ~15 seconds of `join`.
+During development use `bun run samoagent ...`. After build or package install, use `samoagent ...`.
+
+## Agent Workflow
+
+```bash
+samoagent join "https://meet.google.com/..." --ws-video --name Leo --dict postgresfm
+samoagent watch
+samoagent frame
+samoagent chat "I can see the screen now."
+samoagent leave
+```
+
+Run `watch` immediately after `join` and keep it running for the whole call. It prints one utterance per line:
+
+```text
+[2026-05-30 15:42:10] Speaker Name: words spoken in the meeting
+```
+
+Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session.
+
+## Frames
+
+Use `join --ws-video` for normal agent use. Recall sends separate low-rate PNG frames over WebSocket. samoagent keeps the latest frame in memory; it does not write every frame to disk.
+
+```bash
+samoagent frame
+```
+
+`frame` writes the current frame only when called. By default it writes outside the repo:
+
+```text
+~/.samoagent/frames/latest.png
+~/.samoagent/frames/latest.json
+```
+
+Use `--out` for an explicit export and `--archive` when you want a timestamped file with call/source metadata:
+
+```bash
+samoagent frame --out /tmp/call.png
+samoagent frame --archive
+```
+
+Archive filenames include bot id, UTC timestamp, source type, and participant id.
+
+## Important Flags
+
+- `join --ws-video` - preferred no-TCP frame path for agents.
+- `join --frame-dir DIR` - where on-demand frame files are written.
+- `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
+- `join --transcript-dir DIR` - transcript location, default `~/.samoagent/`.
+- `join --rtmp` - mixed-video RTMP path using ngrok TCP; requires ngrok card verification.
+- `join --rtmp-url rtmp://host:1935/live/call` - explicit mixed-video RTMP receiver.
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `join <url>` | Join a call. Starts ngrok + local webhook server, creates recall.ai bot. |
-| `watch` | Stream live transcript lines to stdout (`[timestamp] Speaker: text`). |
-| `chat <message>` | Send a message into the meeting chat. |
-| `frame` | Capture a frame from the live call video (requires `--rtmp-url`). Prints `FRAME_UNAVAILABLE` if RTMP not configured. |
-| `screenshot` | Capture the local Mac screen via `screencapture` (last resort). |
-| `status` | Show current bot status from recall.ai. |
-| `transcript` | Fetch the full post-call transcript from recall.ai. |
-| `leave` | Remove bot from call, kill ngrok and webhook server, clean up state. |
-| `dicts` | List available keyword dictionaries. |
+- `join <meeting-url>` - start local server, ngrok tunnel, and Recall bot.
+- `watch` - stream live transcript until `leave` writes the end sentinel.
+- `chat <message>` - send meeting chat.
+- `frame [--out FILE] [--archive]` - capture current call frame on demand.
+- `status` - show current Recall bot status.
+- `transcript` - fetch post-call transcript from Recall.
+- `leave` - remove bot, stop local processes, and clean state.
+- `dicts` - list keyword dictionaries.
 
-**Key flags for `join`:**
+## Storage
 
-- `--name TARS` — bot display name shown in the call (appended with " 🔴 (samoagent)")
-- `--dict postgresfm` — load a keyword dictionary from `dictionaries/` for Deepgram transcription accuracy
-- `--rtmp` — enable live frame capture via RTMP **without a cloud VM**: auto-starts mediamtx locally and opens a ngrok TCP tunnel so recall.ai can stream the call video back to this machine. Requires a credit/debit card on file at ngrok.com (free plan — card is NOT charged). See [ngrok identity verification](https://dashboard.ngrok.com/settings#id-verification).
-- `--rtmp-url rtmp://PUBLIC_IP:1935/live/call` — enable live frame capture via RTMP with an explicit public URL (cloud VM with mediamtx, or `localhost` if running on the VM itself)
-- `--transcript-dir /path/to/dir` — where to write `transcript.txt` (default: `~/.samoagent/`)
-- `--port 8080` — local webhook port (default: 8080)
+Runtime files live under `~/.samoagent/` by default:
 
-## Architecture
+- `state.json` - active bot id, process ids, URLs, paths.
+- `transcript.txt` - live transcript.
+- `frames/latest.png` and `frames/latest.json` - written only by `samoagent frame`.
 
-1. `samoagent join` starts a local Flask webhook server and an ngrok tunnel, then creates a recall.ai bot with that webhook URL.
-2. The recall.ai bot joins the call. Deepgram Nova-3 transcribes audio in real time (multilingual).
-3. Transcript words stream to the webhook → appended to `~/.samoagent/transcript.txt`.
-4. `samoagent watch` tails that file and prints new lines to stdout.
-5. For frame capture: recall.ai streams the mixed call video as FLV over RTMP to `--rtmp-url`. A local mediamtx server receives it. `samoagent frame` runs ffmpeg against the local stream and saves a PNG.
-
-State (bot ID, PIDs, paths) lives in `~/.samoagent/state.json`. All stateful commands (`watch`, `leave`, `status`, etc.) read it automatically.
-
-## Frame capture
-
-There are two ways to enable `samoagent frame` (live frame capture from inside the call):
-
-### Option A: `--rtmp` — no cloud VM needed (recommended for local use)
-
-```bash
-python3 samoagent join "https://zoom.us/j/..." --rtmp
-```
-
-This automatically:
-1. Downloads and starts mediamtx locally on port 1935
-2. Opens a ngrok TCP tunnel so recall.ai can reach your local machine
-3. Passes the ngrok public RTMP URL to recall.ai
-
-**Requirement:** A credit/debit card must be on file at [ngrok.com](https://dashboard.ngrok.com/settings#id-verification) (free plan — the card is NOT charged). ngrok requires this to enable TCP tunnels on free accounts (to prevent abuse). If no card is on file, `join --rtmp` prints a clear error with the link to add one.
-
-### Option B: `--rtmp-url` — cloud VM with public IP
-
-```bash
-# mediamtx is auto-downloaded on the VM on first use
-python3 samoagent join "https://zoom.us/j/..." --rtmp-url rtmp://YOUR_VM_IP:1935/live/call
-```
-
-### Without RTMP
-
-`samoagent frame` prints `FRAME_UNAVAILABLE`. Alternatives:
-- `samoagent screenshot` — captures the local Mac screen (last resort, macOS only)
-- Browser tools — screenshot the Meet/Zoom tab directly
-
-## Dictionaries
-
-Place `.txt` files in `dictionaries/` with one term per line (max 100 terms). These are sent to Deepgram as keyterm hints to improve transcription of domain-specific vocabulary. Run `samoagent dicts` to see what's available.
-
-## For AI agents
-
-**Read `CLAUDE.md` first.** It contains the full agent workflow with exact commands, Monitor tool instructions, and how to interpret transcript output.
-
-Short version:
-1. Run `samoagent join` → read the **AGENT INSTRUCTIONS** block it prints.
-2. Immediately start `samoagent watch` via your Monitor tool (`persistent=true`). Each line: `[timestamp] Speaker: utterance`.
-3. React to what is said in your agent session output (not meeting chat, unless explicitly asked).
-4. Use `samoagent frame` on demand when asked to look at the screen.
-5. Run `samoagent leave` when done.
-
-## Files
-
-```
-samoagent          — main CLI executable
-dictionaries/      — Deepgram keyterm hint files (.txt, one term per line)
-specs/             — feature specs (voice output, etc.)
-avatar.html        — bot video feed (robot avatar with animated recording dot)
-avatar.png         — static avatar image
-```
-
-Runtime state and transcripts are written to `~/.samoagent/` (never in the repo).
+Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.

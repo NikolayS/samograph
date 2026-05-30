@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { stateFile, ExitError } from "./config.ts";
 
@@ -14,8 +14,14 @@ export function loadState(): State {
 
 export function saveState(state: State): void {
   const f = stateFile();
-  mkdirSync(dirname(f), { recursive: true });
-  writeFileSync(f, JSON.stringify(state, null, 2));
+  const dir = dirname(f);
+  const dirExisted = existsSync(dir);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!dirExisted || process.env.SAMOAGENT_STATE_FILE === undefined) {
+    chmodSync(dir, 0o700);
+  }
+  writeFileSync(f, JSON.stringify(state, null, 2), { mode: 0o600 });
+  chmodSync(f, 0o600);
 }
 
 export function botIdFromArgsOrState(argBotId?: string | null): string {

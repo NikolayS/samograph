@@ -52,6 +52,16 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--rtmp"]).rtmp).toBe(true);
   });
 
+  it("join ws-video flag set", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--ws-video"]).ws_video).toBe(true);
+  });
+
+  it("join frame-dir parsed", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--frame-dir", "/tmp/frames"]).frame_dir,
+    ).toBe("/tmp/frames");
+  });
+
   it("leave bot_id optional", () => {
     expect(parseArgs(["leave"]).bot_id).toBeNull();
   });
@@ -77,11 +87,15 @@ describe("argParsing", () => {
   });
 
   it("frame default out", () => {
-    expect(parseArgs(["frame"]).out).toBe("frame.png");
+    expect(parseArgs(["frame"]).out).toBeNull();
   });
 
   it("frame custom out", () => {
     expect(parseArgs(["frame", "--out", "myframe.png"]).out).toBe("myframe.png");
+  });
+
+  it("frame archive flag", () => {
+    expect(parseArgs(["frame", "--archive"]).archive).toBe(true);
   });
 
   it("screenshot default out", () => {
@@ -96,6 +110,20 @@ describe("argParsing", () => {
     expect(
       parseArgs(["_serve", "--transcript-file", "/tmp/t.txt"]).transcript_file,
     ).toBe("/tmp/t.txt");
+  });
+
+  it("serve parses frame token and call id file", () => {
+    const args = parseArgs([
+      "_serve",
+      "--transcript-file",
+      "/tmp/t.txt",
+      "--call-id-file",
+      "/tmp/state.json",
+      "--frame-token",
+      "secret",
+    ]);
+    expect(args.call_id_file).toBe("/tmp/state.json");
+    expect(args.frame_token).toBe("secret");
   });
 
   it("invalid command throws", () => {

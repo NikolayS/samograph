@@ -7,5 +7,6 @@ __pycache__/
 *.png
 !avatar.png
 node_modules/
+.venv/
 dist/
 bun.lock
