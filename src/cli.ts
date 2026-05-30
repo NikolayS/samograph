@@ -233,6 +233,11 @@ async function main(): Promise<void> {
     process.stdout.write(USAGE);
     process.exit(argv.length === 0 ? 2 : 0);
   }
+  if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "-V") {
+    const pkg = (await import("../package.json")) as { version: string };
+    process.stdout.write(`samoagent ${pkg.version}\n`);
+    process.exit(0);
+  }
   let args: ParsedArgs;
   try {
     args = parseArgs(argv);
