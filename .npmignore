@@ -1,0 +1,24 @@
+# Source and tooling — dist/cli.js is the published artifact
+src/
+tests/
+tsconfig.json
+bun.lock
+
+# Internal agent session docs
+CLAUDE.md
+specs/
+
+# Python legacy artefacts (deleted but guard against reappearance)
+pytest.ini
+requirements.txt
+
+# Site / landing page
+index.html
+CNAME
+
+# CI / GitHub
+.github/
+
+# Dev artifacts that may appear locally
+transcript.txt
+screenshot.png

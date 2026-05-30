@@ -1,0 +1,90 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      # Must come before npm publish so it writes ~/.npmrc with NODE_AUTH_TOKEN
+      - name: Set up Node (npm auth)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Parse tag and determine dist-tag
+        id: tag
+        run: |
+          RAW_TAG="${GITHUB_REF_NAME}"
+          # Strip leading 'v'
+          NPM_VERSION="${RAW_TAG#v}"
+
+          # Validate semver (X.Y.Z with optional pre-release label)
+          if ! echo "$NPM_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "ERROR: tag '$RAW_TAG' does not match vX.Y.Z[-prerelease] semver pattern" >&2
+            exit 1
+          fi
+
+          # Determine dist-tag following the postgres-ai/postgresai convention:
+          #   X.Y.Z          → @latest (stable release, safe for `npm install samoagent`)
+          #   X.Y.Z-beta.N   → @beta   (pre-release, requires explicit @beta to install)
+          #   X.Y.Z-rc.N     → @rc
+          #   X.Y.Z-dev.N    → @dev
+          if echo "$NPM_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            DIST_TAG="latest"
+          elif echo "$NPM_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'; then
+            DIST_TAG="beta"
+          elif echo "$NPM_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'; then
+            DIST_TAG="rc"
+          elif echo "$NPM_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$'; then
+            DIST_TAG="dev"
+          else
+            echo "ERROR: unrecognised pre-release pattern in '$NPM_VERSION'." >&2
+            echo "Allowed formats: X.Y.Z, X.Y.Z-beta.N, X.Y.Z-rc.N, X.Y.Z-dev.N" >&2
+            exit 1
+          fi
+
+          echo "NPM_VERSION=$NPM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "DIST_TAG=$DIST_TAG"       >> "$GITHUB_OUTPUT"
+          echo "Resolved: samoagent@${NPM_VERSION} → dist-tag @${DIST_TAG}"
+
+      - name: Stamp version in package.json
+        run: npm version --no-git-tag-version "${{ steps.tag.outputs.NPM_VERSION }}"
+
+      - name: Dry run
+        run: npm publish --dry-run --tag "${{ steps.tag.outputs.DIST_TAG }}" --access public
+
+      - name: Publish
+        run: npm publish --tag "${{ steps.tag.outputs.DIST_TAG }}" --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify on registry
+        run: |
+          NPM_VERSION="${{ steps.tag.outputs.NPM_VERSION }}"
+          for i in $(seq 1 30); do
+            if npm view "samoagent@${NPM_VERSION}" version >/dev/null 2>&1; then
+              echo "samoagent@${NPM_VERSION} is live on npm"
+              exit 0
+            fi
+            echo "Waiting for npm registry to propagate (attempt $i/30)..."
+            sleep 2
+          done
+          echo "ERROR: samoagent@${NPM_VERSION} not found on npm after 60s" >&2
+          exit 1

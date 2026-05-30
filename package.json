@@ -3,6 +3,7 @@
   "version": "0.3.0",
   "description": "Meeting I/O helper that lets AI agents join calls, watch transcripts, chat, and capture frames.",
   "type": "module",
+  "license": "MIT",
   "bin": {
     "samoagent": "dist/cli.js"
   },
@@ -10,7 +11,6 @@
     "dist/cli.js",
     "dictionaries/",
     "README.md",
-    "CLAUDE.md",
     "avatar.html",
     "avatar.png",
     "logo.svg"
@@ -19,7 +19,7 @@
     "type": "git",
     "url": "git+https://github.com/NikolayS/samoagent.git"
   },
-  "homepage": "https://nikolays.github.io/samoagent/",
+  "homepage": "https://samoagent.dev/",
   "bugs": {
     "url": "https://github.com/NikolayS/samoagent/issues"
   },
