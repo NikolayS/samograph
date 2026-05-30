@@ -14,10 +14,10 @@ import type { RecallClient } from "../src/recall.ts";
 import type { ParsedArgs } from "../src/args.ts";
 
 const WEBHOOK_BASE = "https://ngrok.example";
-const WEBHOOK = `${WEBHOOK_BASE}/webhook`;
+const WEBHOOK_PREFIX = `${WEBHOOK_BASE}/webhook?token=`;
 
 /** Fake recall client capturing the createBot payload. */
-function makeFakeRecall(captured: { payload?: any }): RecallClient {
+function makeFakeRecall(captured: { payload?: any; rejectCreateBot?: boolean }): RecallClient {
   return {
     async leaveCall() {
       return new Response("{}", { status: 200 });
@@ -33,24 +33,30 @@ function makeFakeRecall(captured: { payload?: any }): RecallClient {
     },
     async createBot(payload: unknown) {
       captured.payload = payload;
+      if (captured.rejectCreateBot) {
+        throw new Error("recall failed");
+      }
       return { id: "bot-new" };
     },
   };
 }
 
-function fakeProc(pid: number): SpawnedProc {
-  return { pid, kill() {} };
+function fakeProc(pid: number, killed?: number[]): SpawnedProc {
+  return { pid, kill() { killed?.push(pid); } };
 }
 
 /** Hermetic deps: no ngrok, no mediamtx, no child processes, no network. */
-function makeDeps(captured: { payload?: any }): JoinDeps {
+function makeDeps(
+  captured: { payload?: any; rejectCreateBot?: boolean },
+  opts: { killed?: number[] } = {},
+): JoinDeps {
   let nextPid = 4242;
   return {
     recall: makeFakeRecall(captured),
     kill: () => {},
-    spawn: () => fakeProc(nextPid++),
+    spawn: () => fakeProc(nextPid++, opts.killed),
     waitForNgrok: async () => WEBHOOK_BASE,
-    startMediamtx: async () => fakeProc(7000),
+    startMediamtx: async () => fakeProc(7000, opts.killed),
     startNgrokTcpTunnel: async () => "tcp://ngrok.tcp:12345",
   };
 }
@@ -117,7 +123,7 @@ describe("cmdJoin payload + saved state", () => {
       Array.isArray(e.events) && e.events.includes("transcript.data"),
     );
     expect(webhookEp).toBeDefined();
-    expect(webhookEp.url).toBe(WEBHOOK);
+    expect(webhookEp.url).toStartWith(WEBHOOK_PREFIX);
     expect(webhookEp.events).toEqual(["transcript.data"]);
 
     expect(rc.video_mixed_flv).toBeUndefined();
@@ -147,7 +153,7 @@ describe("cmdJoin payload + saved state", () => {
     const state = JSON.parse(readFileSync(sf, "utf-8"));
     expect(state.bot_id).toBe("bot-new");
     expect(state.bot_name).toBe(botName("TARS"));
-    expect(state.webhook_url).toBe(WEBHOOK);
+    expect(state.webhook_url).toStartWith(WEBHOOK_PREFIX);
     expect(typeof state.transcript_file).toBe("string");
     expect(state.transcript_file).toContain("transcript.txt");
     expect(typeof state.server_pid).toBe("number");
@@ -192,6 +198,30 @@ describe("cmdJoin payload + saved state", () => {
     // saved state carries the remote rtmp url (ffmpeg reads directly)
     const state = JSON.parse(readFileSync(sf, "utf-8"));
     expect(state.rtmp_local_url).toBe(RTMP);
+  });
+
+  it("cleans up server and ngrok when recall createBot fails before state is saved", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any; rejectCreateBot?: boolean } = { rejectCreateBot: true };
+
+    await expect(cmdJoin(joinArgs(), makeDeps(captured, { killed }))).rejects.toThrow(
+      "recall failed",
+    );
+
+    expect(killed).toEqual([4242, 4243]);
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("cleans up server and ngrok when rtmp url parsing fails before state is saved", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+
+    await expect(
+      cmdJoin(joinArgs({ rtmp_url: "not a valid rtmp url" }), makeDeps(captured, { killed })),
+    ).rejects.toThrow();
+
+    expect(killed).toEqual([4242, 4243]);
+    expect(existsSync(sf)).toBe(false);
   });
 });
 

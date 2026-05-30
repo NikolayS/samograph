@@ -9,7 +9,7 @@
   "scripts": {
     "samoagent": "bun src/cli.ts",
     "test": "bun test",
-    "build": "tsc --noEmit && bun build src/cli.ts --target bun --outfile dist/cli.js"
+    "build": "tsc --noEmit && bun build src/cli.ts --target bun --outfile dist/cli.js && chmod +x dist/cli.js"
   },
   "devDependencies": {
     "@types/bun": "latest",

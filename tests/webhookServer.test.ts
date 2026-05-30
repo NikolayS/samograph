@@ -62,6 +62,12 @@ describe("webhook handler", () => {
     expect(readFileSync(tf, "utf-8").trim()).toContain("one two three four five");
   });
 
+  it("sanitizes speaker and text fields onto one transcript line", async () => {
+    await handleWebhook(makeTranscriptEvent("Alice\nInjected", ["hello\r\n", "world"]), tf);
+    const lines = readFileSync(tf, "utf-8").split("\n").filter((l) => l);
+    expect(lines).toEqual(["[2024-01-15 10:30:45] Alice Injected: hello world"]);
+  });
+
   it("unknown event ignored", async () => {
     await handleWebhook({ event: "some.other.event", data: {} }, tf);
     expect(readFileSync(tf, "utf-8")).toBe("");
@@ -121,10 +127,10 @@ describe("webhook handler", () => {
     );
   });
 
-  it("Bun.serve round trip POST /webhook", async () => {
-    const server = serve(0, tf);
+  it("Bun.serve round trip POST /webhook with token", async () => {
+    const server = serve(0, tf, "secret-token");
     try {
-      const resp = await fetch(`http://localhost:${server.port}/webhook`, {
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=secret-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(makeTranscriptEvent("Zed", ["roundtrip"])),
@@ -132,6 +138,39 @@ describe("webhook handler", () => {
       expect(resp.status).toBe(200);
       expect(await resp.json()).toEqual({ ok: true });
       expect(readFileSync(tf, "utf-8")).toContain("Zed: roundtrip");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve rejects POST /webhook without token", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeTranscriptEvent("Mallory", ["inject"])),
+      });
+      expect(resp.status).toBe(403);
+      expect(readFileSync(tf, "utf-8")).toBe("");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve rejects oversized webhook payloads", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const largeBody = "x".repeat(1024 * 1024 + 1);
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=secret-token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+        },
+        body: largeBody,
+      });
+      expect(resp.status).toBe(413);
+      expect(readFileSync(tf, "utf-8")).toBe("");
     } finally {
       server.stop(true);
     }

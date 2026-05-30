@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { ExitError } from "./config.ts";
 import type { ParsedArgs } from "./args.ts";
 import { cmdJoin } from "./commands/join.ts";
@@ -54,7 +55,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     frame: new Set(["--out"]),
-    _serve: new Set(["--port", "--transcript-file"]),
+    _serve: new Set(["--port", "--transcript-file", "--webhook-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
     join: new Set(["--rtmp"]),
@@ -162,6 +163,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         );
       }
       result.transcript_file = opts["--transcript-file"] as string;
+      result.webhook_token = (opts["--webhook-token"] as string) ?? "";
       break;
     }
   }

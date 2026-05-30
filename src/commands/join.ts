@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { AVATAR_URL, RECALL_BASE, ExitError } from "../config.ts";
 import { resolveTranscriptFile } from "../transcript.ts";
@@ -71,6 +72,7 @@ export async function cmdJoin(
 
   const transcriptFile = resolveTranscriptFile(args.transcript_dir);
   writeFileSync(transcriptFile, ""); // clear for new session
+  const webhookToken = randomUUID();
 
   const keyterms = loadDict(args.dict);
   const name = botName(args.name);
@@ -99,26 +101,39 @@ export async function cmdJoin(
     String(port),
     "--transcript-file",
     transcriptFile,
+    "--webhook-token",
+    webhookToken,
   ]);
+  const started = new Set<SpawnedProc>([server]);
+  let stateSaved = false;
+
+  const cleanupUnsaved = () => {
+    if (stateSaved) return;
+    for (const proc of started) {
+      proc.kill();
+    }
+    started.clear();
+  };
 
   // start ngrok
   const ngrok = spawn(["ngrok", "http", String(port), "--log=stdout"]);
+  started.add(ngrok);
 
-  process.stdout.write(`Starting ngrok tunnel on port ${port}...\n`);
-  let webhookUrl = await waitForNgrokFn(port);
-  if (!webhookUrl) {
-    process.stderr.write(
-      "Error: could not get ngrok URL. Is ngrok installed and authenticated?\n",
-    );
-    server.kill();
-    ngrok.kill();
-    throw new ExitError(1);
-  }
-  webhookUrl = webhookUrl.replace(/\/+$/, "") + "/webhook";
-  process.stdout.write(`Webhook: ${webhookUrl}\n`);
+  try {
+    process.stdout.write(`Starting ngrok tunnel on port ${port}...\n`);
+    let webhookUrl = await waitForNgrokFn(port);
+    if (!webhookUrl) {
+      process.stderr.write(
+        "Error: could not get ngrok URL. Is ngrok installed and authenticated?\n",
+      );
+      cleanupUnsaved();
+      throw new ExitError(1);
+    }
+    webhookUrl = webhookUrl.replace(/\/+$/, "") + `/webhook?token=${encodeURIComponent(webhookToken)}`;
+    process.stdout.write(`Webhook: ${webhookUrl}\n`);
 
-  let mediamtxAuto: SpawnedProc | null = null;
-  let rtmpViaNgrok = false;
+    let mediamtxAuto: SpawnedProc | null = null;
+    let rtmpViaNgrok = false;
 
   // --rtmp: auto-start mediamtx + open ngrok TCP tunnel → build RTMP URL automatically
   if (useRtmpAuto && !rtmpUrl) {
@@ -130,12 +145,14 @@ export async function cmdJoin(
       );
     } else {
       process.stdout.write("Opening ngrok TCP tunnel to port 1935...\n");
+      started.add(mediamtxEarly);
       const tcpPublic = await startNgrokTcpTunnelFn(1935);
       if (tcpPublic === null) {
         process.stderr.write(
           "Warning: ngrok TCP tunnel failed — RTMP frame capture disabled.\n",
         );
         mediamtxEarly.kill();
+        started.delete(mediamtxEarly);
       } else {
         rtmpUrl = tcpPublic.replace("tcp://", "rtmp://") + "/live/call";
         process.stdout.write(`ngrok TCP tunnel: ${tcpPublic}\n`);
@@ -181,6 +198,7 @@ export async function cmdJoin(
         );
         rtmpUrl = null;
       } else {
+        started.add(mediamtxProc);
         const streamPath = rtmpStreamPath(rtmpUrl);
         rtmpLocalUrl = `rtmp://localhost:1935/${streamPath}`;
         realtimeEndpoints.push({
@@ -263,6 +281,7 @@ export async function cmdJoin(
     newState.rtmp_local_url = rtmpLocalUrl;
   }
   saveState(newState);
+  stateSaved = true;
 
   void RECALL_BASE; // referenced for parity; recall client owns the base URL
 
@@ -301,4 +320,8 @@ export async function cmdJoin(
   }
   process.stdout.write(`To stop:                      python3 samoagent leave\n`);
   process.stdout.write(`--------------------------\n`);
+  } catch (err) {
+    cleanupUnsaved();
+    throw err;
+  }
 }

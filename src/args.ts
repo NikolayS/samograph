@@ -11,4 +11,5 @@ export interface ParsedArgs {
   out?: string;
   message?: string;
   transcript_file?: string;
+  webhook_token?: string;
 }

@@ -52,6 +52,10 @@ interface TranscriptPayload {
   };
 }
 
+export function sanitizeTranscriptField(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /**
  * Replicate the webhook transcript formatting logic.
  * Returns the `[ts] speaker: text` line, or null if the payload is not a
@@ -67,8 +71,8 @@ export function formatTranscriptLine(payload: unknown): string | null {
   if (!words.length) {
     return null;
   }
-  const text = words.map((w) => w.text ?? "").join(" ");
-  const speaker = inner.participant?.name ?? "?";
+  const text = sanitizeTranscriptField(words.map((w) => w.text ?? "").join(" "));
+  const speaker = sanitizeTranscriptField(inner.participant?.name ?? "") || "?";
   const absolute = words[0]?.start_timestamp?.absolute ?? "";
   const ts = absolute.slice(0, 19).replace("T", " ");
   return `[${ts}] ${speaker}: ${text}`;
