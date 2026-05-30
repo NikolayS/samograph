@@ -1,0 +1,11 @@
+src/
+tests/
+tsconfig.json
+bun.lock
+CLAUDE.md
+index.html
+CNAME
+.github/
+docs/
+transcript.txt
+screenshot.png
