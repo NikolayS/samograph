@@ -4,7 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>samoagent - meeting I/O for AI agents</title>
-  <meta name="description" content="samoagent lets AI agents join Zoom and Google Meet calls through Recall.ai, watch live transcripts, send chat, and inspect frames on demand.">
+  <meta name="description" content="samoagent gives engineers and AI builders a CLI helper that lets AI agents join Zoom and Google Meet calls, watch live transcripts, send chat, and inspect frames on demand.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
@@ -17,6 +20,7 @@
       --blue: #2447a8;
       --green: #1f7a5a;
       --code: #111821;
+      --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     }
 
     * {
@@ -25,7 +29,7 @@
 
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--mono);
       color: var(--ink);
       background: var(--paper);
       line-height: 1.55;
@@ -176,7 +180,7 @@
       padding: 22px;
       max-width: 100%;
       overflow-x: hidden;
-      font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font: 14px/1.55 var(--mono);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       word-break: break-word;
@@ -430,8 +434,8 @@
   <main>
     <section class="wrap hero">
       <div>
-        <h1>Meeting I/O <span>for AI agents.</span></h1>
-        <p class="lead">samoagent is not a full-fledged agent. It is the helper process you give to an AI agent so it can join a call, watch the transcript, send chat, and inspect the current screen.</p>
+        <h1>Meeting I/O <span>for AI builders.</span></h1>
+        <p class="lead">samoagent is not a full-fledged agent. It is the helper process engineers give to an AI agent so it can join a call, watch the transcript, send chat, and inspect the current screen.</p>
         <div class="actions">
           <a class="button primary" href="https://github.com/NikolayS/samoagent">View source</a>
           <a class="button" href="https://www.npmjs.com/package/samoagent">npm package</a>
@@ -465,7 +469,7 @@ samoagent leave</code></pre>
       <div class="wrap">
         <div class="section-head">
           <h2>Tools for call participation</h2>
-          <p>Give these commands to an AI agent and it gets a controlled interface to the live meeting.</p>
+          <p>Give these commands to an AI agent and it gets a controlled, scriptable interface to the live meeting.</p>
         </div>
         <div class="grid">
           <div class="item">
