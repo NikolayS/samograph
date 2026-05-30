@@ -1,8 +1,10 @@
 # samoagent
 
-samoagent is a meeting I/O helper for AI agents.
+> Build agents that show up to the meeting, not just the codebase.
 
-It is not a full agent by itself. Give this CLI, a meeting URL, and the needed tokens to your AI agent, and the agent can join Zoom or Google Meet through Recall.ai, watch the live transcript, send meeting chat messages, and inspect the current call view on demand. In other words: samoagent gives an AI agent the plumbing it needs to be an active participant in calls.
+samoagent lets your AI agent (Claude Code, Codex, and others) join Zoom and Google Meet calls as an active participant — listening, responding, and taking action in real time.
+
+Give this CLI, a meeting URL, and the needed tokens to your AI agent. samoagent handles the meeting plumbing through Recall.ai: joining calls, streaming the live transcript, sending explicit chat messages, and inspecting the current call view on demand.
 
 ## Setup
 
