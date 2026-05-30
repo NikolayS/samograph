@@ -238,4 +238,77 @@ describe("webhook handler", () => {
       server.stop(true);
     }
   });
+
+  it("Bun.serve rejects all requests when no token configured", async () => {
+    const server = serve(0, tf, "");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeTranscriptEvent("X", ["test"])),
+      });
+      expect(resp.status).toBe(403);
+      expect(readFileSync(tf, "utf-8")).toBe("");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve returns 404 for GET /webhook", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(
+        `http://localhost:${server.port}/webhook?token=secret-token`,
+      );
+      expect(resp.status).toBe(404);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve returns 404 for unknown paths", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/health`, {
+        method: "POST",
+      });
+      expect(resp.status).toBe(404);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve ignores invalid JSON body gracefully", async () => {
+    const server = serve(0, tf, "tok");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=tok`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{ not valid json }}}",
+      });
+      expect(resp.status).toBe(200);
+      expect(await resp.json()).toEqual({ ok: true });
+      expect(readFileSync(tf, "utf-8")).toBe("");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve rejects wrong token", async () => {
+    const server = serve(0, tf, "correct-token");
+    try {
+      const resp = await fetch(
+        `http://localhost:${server.port}/webhook?token=wrong-token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(makeTranscriptEvent("A", ["hi"])),
+        },
+      );
+      expect(resp.status).toBe(403);
+      expect(readFileSync(tf, "utf-8")).toBe("");
+    } finally {
+      server.stop(true);
+    }
+  });
 });

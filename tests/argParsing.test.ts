@@ -52,8 +52,12 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--rtmp"]).rtmp).toBe(true);
   });
 
-  it("join ws-video flag set", () => {
-    expect(parseArgs(["join", "https://zoom.us/j/1", "--ws-video"]).ws_video).toBe(true);
+  it("join ws-video default true", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).ws_video).toBe(true);
+  });
+
+  it("join ws-video can be disabled with --no-ws-video", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--no-ws-video"]).ws_video).toBe(false);
   });
 
   it("join frame-dir parsed", () => {
@@ -128,5 +132,29 @@ describe("argParsing", () => {
 
   it("invalid command throws", () => {
     expect(() => parseArgs(["bogus"])).toThrow();
+  });
+
+  it("join rejects port 0", () => {
+    expect(() => parseArgs(["join", "https://zoom.us/j/1", "--port", "0"])).toThrow();
+  });
+
+  it("join rejects port 65536", () => {
+    expect(() => parseArgs(["join", "https://zoom.us/j/1", "--port", "65536"])).toThrow();
+  });
+
+  it("join rejects negative port", () => {
+    expect(() => parseArgs(["join", "https://zoom.us/j/1", "--port", "-1"])).toThrow();
+  });
+
+  it("join rejects non-numeric port", () => {
+    expect(() => parseArgs(["join", "https://zoom.us/j/1", "--port", "abc"])).toThrow();
+  });
+
+  it("join accepts port 1", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--port", "1"]).port).toBe(1);
+  });
+
+  it("join accepts port 65535", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--port", "65535"]).port).toBe(65535);
   });
 });
