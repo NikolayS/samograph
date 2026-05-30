@@ -392,6 +392,14 @@ def cmd_join(args) -> None:
     if rtmp_url:
         recording_config["video_mixed_flv"] = {}
 
+    retention_days = getattr(args, "retention_days", 7)
+    if retention_days and retention_days > 0:
+        recording_config["retention"] = {"type": "timed", "hours": retention_days * 24}
+        print(f"Recording retention: {retention_days} day(s) (auto-delete on recall.ai)")
+    else:
+        recording_config["retention"] = {"type": "forever"}
+        print("Recording retention: FOREVER — recall.ai storage charges will apply after 7 days")
+
     payload = {
         "meeting_url": args.url,
         "bot_name": name,
@@ -768,6 +776,10 @@ def main() -> None:
                              "opens a ngrok TCP tunnel so recall.ai can stream the call video back to this machine. "
                              "Requires a credit/debit card on file at ngrok.com (free plan — card is NOT charged). "
                              "See: https://dashboard.ngrok.com/settings#id-verification")
+    p_join.add_argument("--retention-days", dest="retention_days", type=int, default=7,
+                        help="Auto-delete the recording from recall.ai after this many days "
+                             "(default: 7). Set to 0 to keep forever (NOT recommended — recall.ai "
+                             "charges $0.05/hour-recording/month after the first 7 days).")
 
     p_leave = sub.add_parser("leave", help="Remove agent from call")
     p_leave.add_argument("bot_id", nargs="?", help="Bot ID (optional, reads from state if omitted)")

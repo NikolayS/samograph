@@ -135,7 +135,7 @@ Upgrade to Option B only if true barge-in latency becomes a real pain point.
 ## Out of Scope
 
 - Real-time streaming TTS with sub-500ms first-word latency (requires Option B)
-- Multi-language voice selection (Russian vs English auto-detection)
+- Multi-language voice selection (automatic language detection)
 - Wake-word or always-on voice activation — agent decides when to speak
 - Recording/logging of bot's own speech in transcript
 - TTS for chat messages (speak is a separate explicit command)
