@@ -295,6 +295,25 @@
       font-size: 14px;
     }
 
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    .footer-name {
+      color: var(--ink);
+      font-weight: 760;
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 14px;
+    }
+
     @media (max-width: 820px) {
       .wrap {
         padding-left: 24px;
@@ -341,6 +360,15 @@
 
       pre {
         padding: 18px;
+      }
+
+      .footer-inner,
+      .footer-links {
+        justify-content: flex-start;
+      }
+
+      .footer-inner {
+        flex-direction: column;
       }
     }
   </style>
@@ -463,8 +491,17 @@ samoagent leave</code></pre>
   </main>
 
   <footer>
-    <div class="wrap">
-      Built for AI agents that need to participate in calls instead of only reading summaries afterward.
+    <div class="wrap footer-inner">
+      <div>
+        <div class="footer-name">Nik Samokhvalov</div>
+        <a href="mailto:nik@postgres.ai">nik@postgres.ai</a>
+      </div>
+      <div class="footer-links">
+        <a href="https://x.com/samokhvalov">X</a>
+        <a href="https://www.linkedin.com/in/samokhvalov">LinkedIn</a>
+        <a href="https://gitlab.com/NikolayS">GitLab</a>
+        <a href="https://github.com/NikolayS">GitHub</a>
+      </div>
     </div>
   </footer>
 </body>
