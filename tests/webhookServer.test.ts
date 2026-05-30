@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Buffer } from "node:buffer";
 import { handleWebhook, serve } from "../src/server.ts";
 import { makeTmpDir, cleanupTmpDir } from "./helpers.ts";
 
@@ -171,6 +172,68 @@ describe("webhook handler", () => {
       });
       expect(resp.status).toBe(413);
       expect(readFileSync(tf, "utf-8")).toBe("");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("frame routes reject missing token", async () => {
+    const server = serve(0, tf, { webhookToken: "webhook-token", frameToken: "frame-token" });
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/frame`);
+      const meta = await fetch(`http://localhost:${server.port}/frame.json`);
+      expect(resp.status).toBe(403);
+      expect(meta.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("video websocket stores latest frame in memory and frame routes require token", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      frameToken: "frame-token",
+      currentCallId: () => "bot-123",
+    });
+    try {
+      const publicWs = await fetch(`http://localhost:${server.port}/video-ws`);
+      expect(publicWs.status).toBe(403);
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/video-ws?token=frame-token`);
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error("websocket open failed"));
+      });
+      ws.send(JSON.stringify({
+        event: "video_separate_png.data",
+        data: {
+          data: {
+            buffer: Buffer.from([1, 2, 3]).toString("base64"),
+            type: "webcam",
+            participant: { id: "p1", name: "Alice", is_host: true },
+            timestamp: { absolute: "2026-05-30T15:00:00Z" },
+          },
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const blocked = await fetch(`http://localhost:${server.port}/frame`);
+      expect(blocked.status).toBe(403);
+
+      const frame = await fetch(`http://localhost:${server.port}/frame`, {
+        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+      });
+      expect(frame.status).toBe(200);
+      expect(new Uint8Array(await frame.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+
+      const meta = await fetch(`http://localhost:${server.port}/frame.json`, {
+        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+      });
+      expect(meta.status).toBe(200);
+      const json = (await meta.json()) as { call_id: string; participant: { id: string } };
+      expect(json.call_id).toBe("bot-123");
+      expect(json.participant.id).toBe("p1");
+      ws.close();
     } finally {
       server.stop(true);
     }

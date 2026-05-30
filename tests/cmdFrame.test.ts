@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdirSync, statSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ExitError } from "../src/config.ts";
 import { cmdFrame } from "../src/commands/frame.ts";
@@ -159,6 +159,155 @@ describe("cmdFrame — no RTMP", () => {
       (process.stdout.write as unknown) = orig;
     }
     expect(writes.join("")).toContain(resolve(out));
+  });
+
+  it("fetches WebSocket PNG from local frame server on demand", async () => {
+    const out = join(tmp, "out.png");
+    writeFileSync(
+      sf,
+      JSON.stringify({
+        local_frame_url: "http://127.0.0.1:18080/frame",
+        local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+        frame_token: "secret-token",
+        video_frame_file: join(tmp, "latest.png"),
+      }),
+    );
+    const calls: Array<{ url: string; headers?: RequestInit["headers"] }> = [];
+
+    await cmdFrame(
+      { command: "frame", out, bot_id: null },
+      {
+        fetchFn: async (url, init) => {
+          calls.push({ url: String(url), headers: init?.headers });
+          if (String(url).endsWith("/frame.json")) {
+            return Response.json({
+              call_id: "bot-123",
+              type: "webcam",
+              participant: { id: "p1" },
+              timestamp: { absolute: "2026-05-30T15:00:00Z" },
+            });
+          }
+          return new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "image/png" },
+          });
+        },
+      },
+    );
+
+    expect(new Uint8Array(readFileSync(out))).toEqual(new Uint8Array([1, 2, 3]));
+    expect(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).toContain("bot-123");
+    expect(calls[0]?.headers).toEqual({ "X-Samoagent-Frame-Token": "secret-token" });
+    expect(calls[1]?.headers).toEqual({ "X-Samoagent-Frame-Token": "secret-token" });
+    expect(existsSync(join(tmp, "latest.png"))).toBe(false);
+  });
+
+  it("writes metadata as sibling when --out has no extension", async () => {
+    const out = join(tmp, "nested.with.dot", "frame");
+    writeFileSync(
+      sf,
+      JSON.stringify({
+        local_frame_url: "http://127.0.0.1:18080/frame",
+        local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+        frame_token: "secret-token",
+      }),
+    );
+
+    await cmdFrame(
+      { command: "frame", out, bot_id: null },
+      {
+        fetchFn: async (url) => {
+          if (String(url).endsWith("/frame.json")) {
+            return Response.json({ call_id: "bot-123" });
+          }
+          return new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "image/png" },
+          });
+        },
+      },
+    );
+
+    expect(existsSync(out)).toBe(true);
+    expect(readFileSync(out + ".json", "utf-8")).toContain("bot-123");
+  });
+
+  it("does not chmod existing explicit --out directory", async () => {
+    const publicDir = join(tmp, "public");
+    mkdirSync(publicDir);
+    chmodSync(publicDir, 0o755);
+    const out = join(publicDir, "frame.png");
+    writeFileSync(
+      sf,
+      JSON.stringify({
+        local_frame_url: "http://127.0.0.1:18080/frame",
+        frame_token: "secret-token",
+      }),
+    );
+
+    await cmdFrame(
+      { command: "frame", out, bot_id: null },
+      {
+        fetchFn: async () => new Response(new Uint8Array([1, 2, 3]), {
+          headers: { "content-type": "image/png" },
+        }),
+      },
+    );
+
+    expect(statSync(publicDir).mode & 0o777).toBe(0o755);
+    expect(statSync(out).mode & 0o777).toBe(0o600);
+  });
+
+  it("archives WebSocket PNG only when requested", async () => {
+    writeFileSync(
+      sf,
+      JSON.stringify({
+        local_frame_url: "http://127.0.0.1:18080/frame",
+        local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+        frame_token: "secret-token",
+        video_frame_dir: tmp,
+        video_frame_file: join(tmp, "latest.png"),
+      }),
+    );
+
+    await cmdFrame(
+      { command: "frame", out: null, archive: true, bot_id: null },
+      {
+        fetchFn: async (url) => {
+          if (String(url).endsWith("/frame.json")) {
+            return Response.json({
+              call_id: "bot-123",
+              type: "webcam",
+              participant: { id: "p1" },
+              timestamp: { absolute: "2026-05-30T15:00:00Z" },
+            });
+          }
+          return new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "image/png" },
+          });
+        },
+      },
+    );
+
+    const archive = join(tmp, "bot-123_20260530T150000.000000Z_webcam_p1.png");
+    expect(new Uint8Array(readFileSync(archive))).toEqual(new Uint8Array([1, 2, 3]));
+    expect(existsSync(join(tmp, "latest.png"))).toBe(false);
+    expect(statSync(tmp).mode & 0o777).toBe(0o700);
+  });
+
+  it("exits when local WebSocket frame is not ready", async () => {
+    writeFileSync(
+      sf,
+      JSON.stringify({
+        local_frame_url: "http://127.0.0.1:18080/frame",
+        frame_token: "secret-token",
+      }),
+    );
+
+    await expect(
+      cmdFrame(
+        { command: "frame", out: join(tmp, "out.png"), bot_id: null },
+        { fetchFn: async () => new Response("", { status: 404 }) },
+      ),
+    ).rejects.toBeInstanceOf(ExitError);
   });
 });
 

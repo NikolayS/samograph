@@ -1,8 +1,9 @@
 import { writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { AVATAR_URL, RECALL_BASE, ExitError } from "../config.ts";
+import { AVATAR_URL, RECALL_BASE, ExitError, stateFile } from "../config.ts";
 import { resolveTranscriptFile } from "../transcript.ts";
+import { resolveVideoFrameDir, resolveVideoFrameFile } from "../frameStore.ts";
 import { loadDict } from "../dict.ts";
 import { botName } from "../botName.ts";
 import { loadState, saveState } from "../state.ts";
@@ -73,12 +74,16 @@ export async function cmdJoin(
   const transcriptFile = resolveTranscriptFile(args.transcript_dir);
   writeFileSync(transcriptFile, ""); // clear for new session
   const webhookToken = randomUUID();
+  const frameToken = randomUUID();
 
   const keyterms = loadDict(args.dict);
   const name = botName(args.name);
   const port = args.port || 8080;
   let rtmpUrl = args.rtmp_url ?? null;
   const useRtmpAuto = args.rtmp ?? false;
+  const useWsVideo = args.ws_video ?? false;
+  const videoFrameDir = resolveVideoFrameDir(args.frame_dir, false);
+  const videoFrameFile = resolveVideoFrameFile(args.frame_dir, false);
 
   // kill any old processes
   const oldState = loadState();
@@ -103,6 +108,10 @@ export async function cmdJoin(
     transcriptFile,
     "--webhook-token",
     webhookToken,
+    "--call-id-file",
+    stateFile(),
+    "--frame-token",
+    frameToken,
   ]);
   const started = new Set<SpawnedProc>([server]);
   let stateSaved = false;
@@ -184,6 +193,23 @@ export async function cmdJoin(
 
   let mediamtxProc: SpawnedProc | null = null;
   let rtmpLocalUrl: string | null = null;
+  let wsVideoUrl: string | null = null;
+
+  if (useWsVideo) {
+    wsVideoUrl = webhookUrl
+      .replace(/\/webhook(?:\?.*)?$/, "/video-ws")
+      .replace(/^https:\/\//, "wss://")
+      .replace(/^http:\/\//, "ws://");
+    wsVideoUrl += `?token=${encodeURIComponent(frameToken)}`;
+    realtimeEndpoints.push({
+      type: "websocket",
+      url: wsVideoUrl,
+      events: ["video_separate_png.data"],
+    });
+    process.stdout.write(
+      "WebSocket video: recall.ai → token-protected /video-ws → in-memory latest frame\n",
+    );
+  }
 
   if (rtmpUrl) {
     const rtmpHost = new URL(rtmpUrl).hostname || "";
@@ -246,6 +272,9 @@ export async function cmdJoin(
   if (rtmpUrl) {
     recordingConfig.video_mixed_flv = {};
   }
+  if (useWsVideo) {
+    recordingConfig.video_separate_png = {};
+  }
 
   const payload = {
     meeting_url: args.url,
@@ -280,6 +309,13 @@ export async function cmdJoin(
   if (rtmpLocalUrl) {
     newState.rtmp_local_url = rtmpLocalUrl;
   }
+  if (useWsVideo) {
+    newState.local_frame_url = `http://127.0.0.1:${port}/frame`;
+    newState.local_frame_metadata_url = `http://127.0.0.1:${port}/frame.json`;
+    newState.frame_token = frameToken;
+    newState.video_frame_dir = videoFrameDir;
+    newState.video_frame_file = videoFrameFile;
+  }
   saveState(newState);
   stateSaved = true;
 
@@ -299,7 +335,7 @@ export async function cmdJoin(
     `IMPORTANT: You must now monitor the live transcript for the duration of the call.\n`,
   );
   process.stdout.write(`Run this command with your Monitor tool (persistent=true):\n`);
-  process.stdout.write(`  python3 samoagent watch\n`);
+  process.stdout.write(`  samoagent watch\n`);
   process.stdout.write(
     `Each line you receive is a new utterance: [timestamp] Speaker: text\n`,
   );
@@ -307,18 +343,22 @@ export async function cmdJoin(
     `React to what is said. If someone addresses you or asks a question, respond in chat.\n`,
   );
   process.stdout.write(
-    `To send a message in the meeting chat: python3 samoagent chat 'your message'\n`,
+    `To send a message in the meeting chat: samoagent chat 'your message'\n`,
   );
   if (rtmpLocalUrl) {
     process.stdout.write(
-      `To capture call frame:        python3 samoagent frame  (ffmpeg from RTMP stream)\n`,
+      `To capture call frame:        samoagent frame  (ffmpeg from RTMP stream)\n`,
+    );
+  } else if (useWsVideo) {
+    process.stdout.write(
+      `To capture call frame:        samoagent frame  (latest WebSocket PNG, written on demand)\n`,
     );
   } else {
     process.stdout.write(
-      `To capture what's on screen:  python3 samoagent screenshot  (then Read screenshot.png)\n`,
+      `To capture what's on screen:  samoagent screenshot  (then Read screenshot.png)\n`,
     );
   }
-  process.stdout.write(`To stop:                      python3 samoagent leave\n`);
+  process.stdout.write(`To stop:                      samoagent leave\n`);
   process.stdout.write(`--------------------------\n`);
   } catch (err) {
     cleanupUnsaved();

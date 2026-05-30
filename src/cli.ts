@@ -17,7 +17,7 @@ const USAGE = `usage: samoagent <command> [options]
 AI meeting agent for Zoom & Google Meet
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--ws-video] [--frame-dir DIR]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
@@ -25,7 +25,7 @@ commands:
   transcript [bot_id]
   dicts
   watch
-  frame [--out FILE] [bot_id]
+  frame [--out FILE] [--archive] [bot_id]
 `;
 
 class ArgError extends Error {}
@@ -46,7 +46,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
@@ -55,10 +55,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     frame: new Set(["--out"]),
-    _serve: new Set(["--port", "--transcript-file", "--webhook-token"]),
+    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp"]),
+    join: new Set(["--rtmp", "--ws-video"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),
@@ -66,7 +66,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     transcript: new Set(),
     dicts: new Set(),
     watch: new Set(),
-    frame: new Set(),
+    frame: new Set(["--archive"]),
     _serve: new Set(),
   };
 
@@ -126,6 +126,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.transcript_dir = (opts["--transcript-dir"] as string) ?? null;
       result.rtmp_url = (opts["--rtmp-url"] as string) ?? null;
       result.rtmp = opts["--rtmp"] === true;
+      result.ws_video = opts["--ws-video"] === true;
+      result.frame_dir = (opts["--frame-dir"] as string) ?? null;
       break;
     }
     case "leave":
@@ -140,7 +142,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       break;
     }
     case "frame": {
-      result.out = (opts["--out"] as string) ?? "frame.png";
+      result.out = (opts["--out"] as string) ?? null;
+      result.archive = opts["--archive"] === true;
       result.bot_id = positionals.length ? positionals[0] : null;
       break;
     }
@@ -164,6 +167,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       result.transcript_file = opts["--transcript-file"] as string;
       result.webhook_token = (opts["--webhook-token"] as string) ?? "";
+      result.call_id_file = (opts["--call-id-file"] as string) ?? "";
+      result.frame_token = (opts["--frame-token"] as string) ?? "";
       break;
     }
   }
@@ -200,7 +205,13 @@ async function dispatch(args: ParsedArgs): Promise<void> {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
+  if (
+    argv.length === 0 ||
+    argv[0] === "--help" ||
+    argv[0] === "-h" ||
+    argv.includes("--help") ||
+    argv.includes("-h")
+  ) {
     process.stdout.write(USAGE);
     process.exit(argv.length === 0 ? 2 : 0);
   }
