@@ -53,6 +53,32 @@ describe("formatTranscriptLine", () => {
     expect(formatTranscriptLine({})).toBeNull();
     expect(formatTranscriptLine(null)).toBeNull();
   });
+
+  it("produces empty timestamp bracket when start_timestamp is absent", () => {
+    const line = formatTranscriptLine({
+      event: "transcript.data",
+      data: {
+        data: {
+          participant: { name: "Dan" },
+          words: [{ text: "hello" }],
+        },
+      },
+    });
+    expect(line).toBe("[] Dan: hello");
+  });
+
+  it("produces empty timestamp bracket when absolute is undefined", () => {
+    const line = formatTranscriptLine({
+      event: "transcript.data",
+      data: {
+        data: {
+          participant: { name: "Eve" },
+          words: [{ text: "hi", start_timestamp: {} }],
+        },
+      },
+    });
+    expect(line).toBe("[] Eve: hi");
+  });
 });
 
 describe("SENTINEL_RE", () => {

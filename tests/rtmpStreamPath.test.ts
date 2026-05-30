@@ -21,4 +21,8 @@ describe("rtmpStreamPath", () => {
   it("localhost url", () => {
     expect(rtmpStreamPath("rtmp://localhost:1935/live/call")).toBe("live/call");
   });
+
+  it("throws on invalid URL", () => {
+    expect(() => rtmpStreamPath("not-a-url")).toThrow();
+  });
 });
