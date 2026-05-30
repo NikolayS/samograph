@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>samoagent - meeting I/O for AI agents</title>
-  <meta name="description" content="samoagent gives engineers and AI builders a CLI helper that lets AI agents join Zoom and Google Meet calls, watch live transcripts, send chat, and inspect frames on demand.">
+  <title>samoagent - put your AI agent in the meeting</title>
+  <meta name="description" content="samoagent gives engineers and AI builders a small CLI toolset for AI agents that need to join Zoom and Google Meet calls, read the transcript, send chat, and inspect frames.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -26,41 +26,44 @@
   <style>
     :root {
       color-scheme: light dark;
-      --ink: #151515;
-      --muted: #5d626b;
-      --line: #dadde3;
+      --ink: #101216;
+      --muted: #56606f;
+      --line: #d9dde5;
       --paper: #f7f5ef;
       --panel: #ffffff;
+      --card: #fbfaf6;
+      --accent: #174ea6;
+      --accent-ink: #ffffff;
+      --green: #18794e;
       --red: #e02020;
-      --blue: #2447a8;
-      --green: #1f7a5a;
-      --code: #111821;
+      --code: #101721;
       --code-line: #2b3544;
       --code-muted: #8c98aa;
       --code-text: #d9f4e8;
-      --card: rgba(255, 255, 255, 0.58);
       --header: rgba(247, 245, 239, 0.94);
-      --shadow: rgba(22, 25, 31, 0.22);
+      --shadow: rgba(22, 25, 31, 0.18);
       --soft-shadow: rgba(22, 25, 31, 0.08);
       --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     }
 
     :root[data-theme="dark"] {
-      --ink: #f1f4f8;
-      --muted: #a9b2c2;
+      --ink: #f2f5f9;
+      --muted: #a9b3c4;
       --line: #293241;
-      --paper: #0b0f15;
-      --panel: #121821;
-      --blue: #8ab4ff;
+      --paper: #090d13;
+      --panel: #111821;
+      --card: #0e141d;
+      --accent: #8ab4ff;
+      --accent-ink: #06111f;
       --green: #4cc38a;
+      --red: #ff5d5d;
       --code: #05080d;
       --code-line: #222b38;
       --code-muted: #99a4b8;
       --code-text: #d9f4e8;
-      --card: rgba(18, 24, 33, 0.76);
-      --header: rgba(11, 15, 21, 0.92);
+      --header: rgba(9, 13, 19, 0.92);
       --shadow: rgba(0, 0, 0, 0.4);
-      --soft-shadow: rgba(0, 0, 0, 0.22);
+      --soft-shadow: rgba(0, 0, 0, 0.24);
     }
 
     * {
@@ -77,9 +80,14 @@
     }
 
     a {
-      color: var(--blue);
+      color: var(--accent);
       text-decoration-thickness: 1px;
       text-underline-offset: 3px;
+    }
+
+    code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .wrap {
@@ -89,11 +97,11 @@
     }
 
     header {
-      border-bottom: 1px solid var(--line);
-      background: var(--header);
       position: sticky;
       top: 0;
       z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: var(--header);
       backdrop-filter: blur(10px);
     }
 
@@ -105,11 +113,18 @@
       gap: 24px;
     }
 
-    .brand {
+    .brand,
+    .nav-right,
+    .links,
+    .actions,
+    .footer-links {
       display: flex;
       align-items: center;
+    }
+
+    .brand {
       gap: 12px;
-      font-weight: 760;
+      font-weight: 800;
       font-size: 18px;
     }
 
@@ -119,17 +134,13 @@
       border-radius: 8px;
     }
 
-    .links {
-      display: flex;
-      align-items: center;
-      gap: 18px;
-      font-size: 14px;
+    .nav-right {
+      gap: 20px;
     }
 
-    .nav-right {
-      display: flex;
-      align-items: center;
-      gap: 20px;
+    .links {
+      gap: 18px;
+      font-size: 14px;
     }
 
     .theme-switcher {
@@ -152,15 +163,15 @@
     }
 
     .theme-option[aria-pressed="true"] {
-      background: var(--ink);
       color: var(--paper);
+      background: var(--ink);
     }
 
     .hero {
-      padding: 72px 24px 48px;
+      padding: 74px 24px 54px;
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
-      gap: 44px;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.86fr);
+      gap: 48px;
       align-items: center;
     }
 
@@ -169,59 +180,116 @@
       min-width: 0;
     }
 
-    h1 {
+    .eyebrow {
+      display: inline-flex;
+      margin-bottom: 18px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
       margin: 0;
-      max-width: 760px;
-      font-size: clamp(44px, 7vw, 84px);
-      line-height: 0.98;
+    }
+
+    h1 {
+      max-width: 740px;
+      font-size: clamp(44px, 6.2vw, 76px);
+      line-height: 0.96;
       letter-spacing: 0;
     }
 
-    h1 span {
-      display: inline;
+    h2 {
+      margin-bottom: 14px;
+      font-size: 31px;
+      line-height: 1.14;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 17px;
+      letter-spacing: 0;
     }
 
     .lead {
-      margin: 24px 0 0;
-      max-width: 700px;
+      margin-top: 24px;
+      max-width: 710px;
       color: var(--muted);
-      font-size: 20px;
+      font-size: 19px;
+      overflow-wrap: anywhere;
     }
 
     .actions {
-      display: flex;
       flex-wrap: wrap;
       gap: 12px;
       margin-top: 28px;
     }
 
     .button {
+      min-height: 44px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 44px;
       padding: 0 16px;
-      border-radius: 6px;
       border: 1px solid var(--ink);
+      border-radius: 6px;
       color: var(--ink);
-      font-weight: 700;
-      text-decoration: none;
       background: var(--panel);
+      font-weight: 800;
+      text-decoration: none;
     }
 
     .button.primary {
-      background: var(--ink);
       color: var(--paper);
+      background: var(--ink);
+    }
+
+    .quick-proof {
+      margin-top: 26px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      max-width: 720px;
+    }
+
+    .proof-item {
+      padding: 14px;
+      background: var(--card);
+      border-right: 1px solid var(--line);
+    }
+
+    .proof-item:last-child {
+      border-right: 0;
+    }
+
+    .proof-item strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .proof-item span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
     }
 
     .terminal {
       min-width: 0;
-      background: var(--code);
-      color: var(--code-text);
-      border-radius: 8px;
       overflow: hidden;
+      border: 1px solid var(--code-line);
+      border-radius: 8px;
+      color: var(--code-text);
+      background: var(--code);
       box-shadow: 0 18px 50px var(--shadow);
-      border: 1px solid #252e3a;
     }
 
     .terminal-bar {
@@ -256,11 +324,6 @@
       word-break: break-word;
     }
 
-    code {
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
-
     pre code {
       white-space: inherit;
       word-break: break-all;
@@ -268,15 +331,24 @@
 
     .band {
       border-top: 1px solid var(--line);
-      padding: 44px 0;
+      padding: 52px 0;
     }
 
-    h2 {
-      margin: 0 0 18px;
-      font-size: 30px;
-      line-height: 1.15;
-      letter-spacing: 0;
+    .section-head {
+      max-width: 780px;
+      margin-bottom: 24px;
+    }
+
+    .section-head p,
+    .item p,
+    .flow-node span,
+    .star-cta p {
+      color: var(--muted);
       overflow-wrap: anywhere;
+    }
+
+    .section-head p {
+      font-size: 17px;
     }
 
     .grid {
@@ -285,15 +357,31 @@
       gap: 18px;
     }
 
-    .section-head {
-      max-width: 760px;
-      margin-bottom: 22px;
+    .toolbelt {
+      display: grid;
+      gap: 10px;
+      max-width: 880px;
     }
 
-    .section-head p {
-      margin: 0;
+    .tool {
+      display: grid;
+      grid-template-columns: 130px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+    }
+
+    .tool code {
+      color: var(--ink);
+      font-weight: 800;
+    }
+
+    .tool span {
       color: var(--muted);
-      font-size: 17px;
+      overflow-wrap: anywhere;
     }
 
     .item {
@@ -303,35 +391,15 @@
       background: var(--card);
     }
 
-    .item h3 {
-      margin: 0 0 8px;
-      font-size: 17px;
-      letter-spacing: 0;
-    }
-
     .item p {
-      margin: 0;
-      color: var(--muted);
       font-size: 15px;
-      overflow-wrap: anywhere;
     }
 
     .split {
       display: grid;
-      grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
-      gap: 30px;
+      grid-template-columns: minmax(0, 0.88fr) minmax(320px, 1.12fr);
+      gap: 34px;
       align-items: start;
-    }
-
-    .notes {
-      margin: 0;
-      padding-left: 20px;
-      color: var(--muted);
-      overflow-wrap: anywhere;
-    }
-
-    .notes li + li {
-      margin-top: 10px;
     }
 
     .flow {
@@ -340,21 +408,21 @@
     }
 
     .flow-node {
+      position: relative;
+      padding: 16px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
-      padding: 16px;
-      position: relative;
       box-shadow: 0 10px 28px var(--soft-shadow);
     }
 
     .flow-node + .flow-node::before {
       content: "";
       position: absolute;
+      top: -13px;
+      left: 28px;
       width: 2px;
       height: 12px;
-      left: 28px;
-      top: -13px;
       background: var(--line);
     }
 
@@ -366,8 +434,20 @@
     .flow-node span {
       display: block;
       margin-top: 3px;
-      color: var(--muted);
       font-size: 14px;
+    }
+
+    .notes {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .note {
+      padding-left: 14px;
+      border-left: 3px solid var(--line);
+      color: var(--muted);
+      font-size: 15px;
       overflow-wrap: anywhere;
     }
 
@@ -386,13 +466,6 @@
       margin-bottom: 8px;
     }
 
-    .star-cta p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 16px;
-      overflow-wrap: anywhere;
-    }
-
     footer {
       border-top: 1px solid var(--line);
       padding: 28px 0 42px;
@@ -409,11 +482,10 @@
 
     .footer-name {
       color: var(--ink);
-      font-weight: 760;
+      font-weight: 800;
     }
 
     .footer-links {
-      display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
       gap: 14px;
@@ -426,67 +498,121 @@
       }
 
       nav,
-      .nav-right,
-      .links {
+      .nav-right {
+        flex-direction: column;
         align-items: flex-start;
       }
 
-      nav,
-      .nav-right {
-        flex-direction: column;
+      nav {
         padding: 16px 0;
       }
 
       .nav-right {
         gap: 14px;
-        padding: 0;
+      }
+
+      .links {
+        align-items: flex-start;
       }
 
       .hero,
       .split,
-      .grid {
+      .grid,
+      .quick-proof,
+      .tool {
         grid-template-columns: minmax(0, 1fr);
       }
 
       .hero {
+        display: block;
         padding-top: 46px;
+        padding-left: 20px;
+        padding-right: 20px;
         padding-bottom: 38px;
       }
 
       .hero > *,
-      .hero .terminal {
+      .terminal {
         width: 100%;
         max-width: 100%;
       }
 
       h1 {
-        font-size: 40px;
+        max-width: calc(100vw - 40px);
+        font-size: 34px;
+        line-height: 1.02;
+        overflow-wrap: normal;
       }
 
-      h1 span {
+      .mobile-line {
         display: block;
       }
 
       .lead {
+        max-width: calc(100vw - 40px);
         font-size: 17px;
+      }
+
+      .proof-item {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .proof-item:last-child {
+        border-bottom: 0;
+      }
+
+      .tool {
+        gap: 4px;
       }
 
       pre {
         padding: 18px;
       }
 
-      .footer-inner,
+      .star-cta,
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
       .footer-links {
         justify-content: flex-start;
       }
+    }
 
-      .footer-inner {
-        flex-direction: column;
+    @media (max-width: 600px) {
+      .wrap {
+        width: 100%;
+        max-width: 390px;
+        margin-left: 0;
+        margin-right: 0;
+        padding-left: 20px;
+        padding-right: 20px;
       }
 
+      .hero {
+        max-width: 390px;
+      }
+
+      .actions {
+        display: grid;
+        width: 100%;
+        max-width: 100%;
+      }
+
+      .button {
+        width: 100%;
+        max-width: 100%;
+      }
+
+      .terminal,
+      .quick-proof,
+      .toolbelt,
+      .grid,
+      .split,
       .star-cta {
-        align-items: flex-start;
-        flex-direction: column;
+        max-width: 350px;
       }
     }
   </style>
@@ -518,11 +644,34 @@
   <main>
     <section class="wrap hero">
       <div>
-        <h1>Meeting I/O <span>for AI builders.</span></h1>
-        <p class="lead">samoagent is not a full-fledged agent. It is the helper process engineers give to an AI agent so it can join a call, watch the transcript, send chat, and inspect the current screen.</p>
+        <span class="eyebrow">Open-source CLI for AI call agents</span>
+        <h1><span class="mobile-line">Put your AI agent</span> <span class="mobile-line">in the meeting.</span></h1>
+        <p class="lead">samoagent is an open-source CLI that lets an AI agent join Zoom or Google Meet, stream the live transcript, send chat only when instructed, and inspect the current call frame on demand.</p>
         <div class="actions">
-          <a class="button primary" href="https://github.com/NikolayS/samoagent">View source</a>
-          <a class="button" href="https://www.npmjs.com/package/samoagent">npm package</a>
+          <a class="button primary" href="https://www.npmjs.com/package/samoagent">npm install -g samoagent</a>
+          <a class="button" href="https://github.com/NikolayS/samoagent">View on GitHub</a>
+        </div>
+        <div class="quick-proof" aria-label="samoagent key properties">
+          <div class="proof-item">
+            <strong>Open source</strong>
+            <span>MIT repo</span>
+          </div>
+          <div class="proof-item">
+            <strong>npm</strong>
+            <span>CLI install</span>
+          </div>
+          <div class="proof-item">
+            <strong>Recall.ai</strong>
+            <span>bot backend</span>
+          </div>
+          <div class="proof-item">
+            <strong>Zoom + Meet</strong>
+            <span>call targets</span>
+          </div>
+          <div class="proof-item">
+            <strong>Frames</strong>
+            <span>on demand</span>
+          </div>
         </div>
       </div>
 
@@ -531,20 +680,19 @@
           <span class="dot"></span>
           <span class="dot"></span>
           <span class="dot"></span>
-          <span>agent session</span>
+          <span>quickstart</span>
         </div>
         <pre><code>npm install -g samoagent
-
 export RECALL_API_KEY=...
 
 samoagent join "https://meet.google.com/..." \
   --ws-video \
-  --name Leo \
+  --name Samo \
   --dict postgresfm
 
 samoagent watch
 samoagent frame
-samoagent chat "I can see the screen now."
+samoagent chat "I can take this one."
 samoagent leave</code></pre>
       </div>
     </section>
@@ -552,29 +700,52 @@ samoagent leave</code></pre>
     <section class="band">
       <div class="wrap">
         <div class="section-head">
-          <h2>Tools for call participation</h2>
-          <p>Give these commands to an AI agent and it gets a controlled, scriptable interface to the live meeting.</p>
+          <h2>What the agent gets</h2>
+          <p>A small, auditable tool belt for live calls.</p>
+        </div>
+        <div class="toolbelt">
+          <div class="tool">
+            <code>join</code>
+            <span>Bring a Recall.ai bot into Zoom or Google Meet.</span>
+          </div>
+          <div class="tool">
+            <code>watch</code>
+            <span>Stream transcript lines as the meeting happens.</span>
+          </div>
+          <div class="tool">
+            <code>frame</code>
+            <span>Capture the current call frame only when requested.</span>
+          </div>
+          <div class="tool">
+            <code>chat</code>
+            <span>Send meeting chat through an explicit command.</span>
+          </div>
+          <div class="tool">
+            <code>leave</code>
+            <span>Exit the call and stop local runtime state.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Why it exists</h2>
+          <p>Agents need live meeting context, but they need a narrow interface, not desktop scraping or chat spam.</p>
         </div>
         <div class="grid">
           <div class="item">
-            <h3>Join</h3>
-            <p>Starts a Recall.ai bot for Zoom or Google Meet and keeps local state for the active session.</p>
+            <h3>Observe safely</h3>
+            <p>Transcript and frame access are explicit tool calls.</p>
           </div>
           <div class="item">
-            <h3>Watch</h3>
-            <p>Streams one utterance per line so an agent can follow the meeting in real time.</p>
+            <h3>Act deliberately</h3>
+            <p>Meeting chat only happens through <code>samoagent chat</code>.</p>
           </div>
           <div class="item">
-            <h3>Frame</h3>
-            <p>Receives WebSocket video frames in memory and writes files only when the agent asks.</p>
-          </div>
-          <div class="item">
-            <h3>Chat</h3>
-            <p>Sends deliberate meeting chat messages when the agent needs to participate visibly.</p>
-          </div>
-          <div class="item">
-            <h3>Leave</h3>
-            <p>Removes the bot, stops local processes, and cleans up runtime state.</p>
+            <h3>Build faster</h3>
+            <p>Use it for copilots, demo agents, incident reviews, interviews, and internal agents.</p>
           </div>
         </div>
       </div>
@@ -583,32 +754,30 @@ samoagent leave</code></pre>
     <section class="band">
       <div class="wrap split">
         <div>
-          <h2>How it integrates</h2>
-          <ul class="notes">
-            <li>Your AI agent runs <code>samoagent</code> commands as tools: join, watch, chat, frame, and leave.</li>
-            <li>samoagent starts a local callback server and a Recall.ai bot for the target Zoom or Google Meet call.</li>
-            <li>Recall.ai sends transcripts, chat delivery, and WebSocket video-frame events back to the local server.</li>
-            <li>The normal local path uses <code>ngrok http</code> for those HTTPS/WSS callbacks. Free ngrok should be enough for personal <code>--ws-video</code> use.</li>
-            <li>ngrok TCP is only for the optional RTMP mode and may require card verification.</li>
-            <li>Webhook and frame routes are token-protected, and default runtime files stay under <code>~/.samoagent/</code>.</li>
-          </ul>
+          <h2>How it works</h2>
+          <p class="lead">Your agent runs <code>samoagent</code> as a local tool. samoagent starts the callback server. Recall.ai joins the meeting and streams events back.</p>
+          <div class="notes">
+            <div class="note">Default video path uses WebSocket frames, so personal use should be fine with free ngrok HTTP.</div>
+            <div class="note">RTMP is still available for mixed video, but that optional path uses ngrok TCP.</div>
+            <div class="note">Webhook, frame, and runtime files are token-protected and kept under <code>~/.samoagent/</code> by default.</div>
+          </div>
         </div>
         <div class="flow" aria-label="samoagent integration diagram">
           <div class="flow-node">
             <strong>AI agent</strong>
-            <span>Decides when to join, listen, speak, or inspect the call view.</span>
+            <span>Chooses when to join, listen, inspect, chat, or leave.</span>
           </div>
           <div class="flow-node">
-            <strong>samoagent tools</strong>
-            <span><code>join</code>, <code>watch</code>, <code>chat</code>, <code>frame</code>, <code>leave</code></span>
+            <strong>samoagent CLI</strong>
+            <span><code>join</code>, <code>watch</code>, <code>frame</code>, <code>chat</code>, <code>leave</code></span>
           </div>
           <div class="flow-node">
             <strong>Local callback server</strong>
-            <span>Receives token-protected transcript and frame events over HTTPS/WSS.</span>
+            <span>Receives transcript and frame events over HTTPS/WSS.</span>
           </div>
           <div class="flow-node">
-            <strong>Recall.ai bot in Zoom/Meet</strong>
-            <span>Participates in the call and streams meeting signals back.</span>
+            <strong>Recall.ai bot</strong>
+            <span>Joins Zoom/Meet and streams meeting signals back.</span>
           </div>
         </div>
       </div>
@@ -618,10 +787,13 @@ samoagent leave</code></pre>
       <div class="wrap">
         <div class="star-cta">
           <div>
-            <h2>Star it on GitHub</h2>
-            <p>If samoagent is useful, a GitHub star helps people find the project.</p>
+            <h2>Build a meeting-aware agent</h2>
+            <p>Install the CLI, wire it into your agent loop, and star the repo if it saves you time.</p>
           </div>
-          <a class="button primary" href="https://github.com/NikolayS/samoagent">Open GitHub</a>
+          <div class="actions">
+            <a class="button primary" href="https://www.npmjs.com/package/samoagent">npm install</a>
+            <a class="button" href="https://github.com/NikolayS/samoagent">GitHub</a>
+          </div>
         </div>
       </div>
     </section>
