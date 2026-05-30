@@ -100,12 +100,11 @@ export async function cmdFrame(
         }
       }
       const raw = new Uint8Array(await resp.arrayBuffer());
+      // Always write latest.png (or explicit --out); --archive additionally creates a timestamped copy.
+      writeFrameFiles(out, raw, metadata);
       const output = archive && !args.out
         ? archiveFrameBytes(String(state.video_frame_dir ?? dirname(out)), raw, metadata)
         : out;
-      if (!(archive && !args.out)) {
-        writeFrameFiles(output, raw, metadata);
-      }
       process.stdout.write(resolve(output) + "\n");
       return;
     }

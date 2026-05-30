@@ -247,6 +247,82 @@ describe("cmdJoin payload + saved state", () => {
     expect(killed).toEqual([4242, 4243]);
     expect(existsSync(sf)).toBe(false);
   });
+
+  it("waitForNgrok returns null — throws ExitError(1) and kills spawned processes", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      waitForNgrok: async () => null,
+    };
+
+    const { ExitError } = await import("../src/config.ts");
+    await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+    // server (4242) and ngrok (4243) must both be killed
+    expect(killed).toContain(4242);
+    expect(killed).toContain(4243);
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("--rtmp: mediamtx starts but ngrok TCP tunnel returns null — rtmp disabled, mediamtx killed", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const mediamtxPid = 9001;
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      startMediamtx: async () => fakeProc(mediamtxPid, killed),
+      startNgrokTcpTunnel: async () => null,
+    };
+
+    await cmdJoin(joinArgs({ rtmp: true }), deps);
+
+    // mediamtx must have been killed when TCP tunnel failed
+    expect(killed).toContain(mediamtxPid);
+    // no RTMP in saved state
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.rtmp_local_url).toBeUndefined();
+    expect(state.mediamtx_pid).toBeUndefined();
+  });
+
+  it("--rtmp: mediamtx fails to start — join succeeds without RTMP", async () => {
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      startMediamtx: async () => null,
+    };
+
+    await cmdJoin(joinArgs({ rtmp: true }), deps);
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.rtmp_local_url).toBeUndefined();
+    expect(state.mediamtx_pid).toBeUndefined();
+    // still joined successfully
+    expect(state.bot_id).toBe("bot-new");
+  });
+
+  it("--rtmp-url localhost: mediamtx started, rtmp_local_url set in state", async () => {
+    const RTMP = "rtmp://localhost:1935/live/call";
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const mediamtxPid = 9002;
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      startMediamtx: async () => fakeProc(mediamtxPid, killed),
+    };
+
+    await cmdJoin(joinArgs({ rtmp_url: RTMP }), deps);
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.rtmp_local_url).toBe(RTMP);
+    expect(state.mediamtx_pid).toBe(mediamtxPid);
+    // rtmp realtime endpoint present
+    const rc = captured.payload.recording_config;
+    const rtmpEp = rc.realtime_endpoints.find((e: any) =>
+      e.events?.includes("video_mixed_flv.data")
+    );
+    expect(rtmpEp).toBeDefined();
+    expect(rc.video_mixed_flv).toEqual({});
+  });
 });
 
 export {};
