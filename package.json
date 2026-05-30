@@ -3,12 +3,14 @@
   "version": "0.3.0",
   "description": "Meeting I/O helper that lets AI agents join calls, watch transcripts, chat, and capture frames.",
   "type": "module",
+  "license": "Apache-2.0",
   "bin": {
     "samoagent": "dist/cli.js"
   },
   "files": [
     "dist/cli.js",
     "dictionaries/",
+    "LICENSE",
     "README.md",
     "CLAUDE.md",
     "avatar.html",

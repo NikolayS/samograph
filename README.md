@@ -133,3 +133,7 @@ Runtime files live under `~/.samoagent/` by default:
 - `frames/latest.png` and `frames/latest.json` - written only by `samoagent frame`.
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
