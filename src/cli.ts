@@ -58,7 +58,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--ws-video"]),
+    join: new Set(["--rtmp", "--ws-video", "--no-ws-video"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),
@@ -122,11 +122,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.url = positionals[0];
       result.name = (opts["--name"] as string) ?? null;
       result.dict = (opts["--dict"] as string) ?? null;
-      result.port = opts["--port"] !== undefined ? Number(opts["--port"]) : 8080;
+      const rawPort = opts["--port"];
+      if (rawPort !== undefined) {
+        const p = Number(rawPort);
+        if (!Number.isInteger(p) || p < 1 || p > 65535) {
+          throw new ArgError(`argument --port: invalid port number: '${rawPort}'`);
+        }
+        result.port = p;
+      } else {
+        result.port = 8080;
+      }
       result.transcript_dir = (opts["--transcript-dir"] as string) ?? null;
       result.rtmp_url = (opts["--rtmp-url"] as string) ?? null;
       result.rtmp = opts["--rtmp"] === true;
-      result.ws_video = opts["--ws-video"] === true;
+      result.ws_video = opts["--no-ws-video"] !== true;
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
       break;
     }
@@ -159,7 +168,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "watch":
       break;
     case "_serve": {
-      result.port = opts["--port"] !== undefined ? Number(opts["--port"]) : 8080;
+      const rawPort2 = opts["--port"];
+      if (rawPort2 !== undefined) {
+        const p2 = Number(rawPort2);
+        if (!Number.isInteger(p2) || p2 < 1 || p2 > 65535) {
+          throw new ArgError(`argument --port: invalid port number: '${rawPort2}'`);
+        }
+        result.port = p2;
+      } else {
+        result.port = 8080;
+      }
       if (opts["--transcript-file"] === undefined) {
         throw new ArgError(
           "the following arguments are required: --transcript-file",
