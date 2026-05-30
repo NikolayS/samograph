@@ -157,4 +157,22 @@ describe("argParsing", () => {
   it("join accepts port 65535", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--port", "65535"]).port).toBe(65535);
   });
+
+  it("-v prints version and exits 0", () => {
+    const proc = Bun.spawnSync(["bun", "src/cli.ts", "-v"], { cwd: "/Users/nik/github/samoagent" });
+    expect(proc.exitCode).toBe(0);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+  });
+
+  it("--version prints version and exits 0", () => {
+    const proc = Bun.spawnSync(["bun", "src/cli.ts", "--version"], { cwd: "/Users/nik/github/samoagent" });
+    expect(proc.exitCode).toBe(0);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+  });
+
+  it("-V prints version and exits 0", () => {
+    const proc = Bun.spawnSync(["bun", "src/cli.ts", "-V"], { cwd: "/Users/nik/github/samoagent" });
+    expect(proc.exitCode).toBe(0);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+  });
 });
