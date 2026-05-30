@@ -326,7 +326,8 @@ samoagent leave</code></pre>
           <h2>Why ngrok?</h2>
           <ul class="notes">
             <li>Recall.ai needs a public HTTPS/WSS callback URL to send live transcript and video-frame events to your local machine.</li>
-            <li>The normal path uses <code>ngrok http</code>. ngrok TCP is only for the optional RTMP mode.</li>
+            <li>The normal path uses <code>ngrok http</code>. Free ngrok should be enough for personal use with <code>--ws-video</code>.</li>
+            <li>ngrok TCP is only for the optional RTMP mode and may require card verification.</li>
             <li>Webhook and frame routes are token-protected, and default runtime files stay under <code>~/.samoagent/</code>.</li>
           </ul>
         </div>

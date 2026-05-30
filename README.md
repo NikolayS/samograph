@@ -10,7 +10,7 @@ Requirements for the normal local workflow:
 
 - Bun.
 - `RECALL_API_KEY`.
-- Authenticated `ngrok` HTTP tunnel.
+- Authenticated `ngrok` HTTP tunnel. The free ngrok plan should be enough for personal use with the normal `--ws-video` path.
 
 ```bash
 bun install
@@ -20,7 +20,7 @@ bun run build
 
 During development use `bun run samoagent ...`. After build or package install, use `samoagent ...`.
 
-Why ngrok: Recall.ai needs a public HTTPS/WSS callback URL to deliver live transcripts and WebSocket video frames to the local samoagent server. The current `join` command creates that public callback with `ngrok http`. ngrok TCP is not required for normal `--ws-video` use; it is only needed for the optional RTMP path.
+Why ngrok: Recall.ai needs a public HTTPS/WSS callback URL to deliver live transcripts and WebSocket video frames to the local samoagent server. The current `join` command creates that public callback with `ngrok http`. Free ngrok HTTP should be enough for personal use. ngrok TCP is not required for normal `--ws-video` use; it is only needed for the optional RTMP path and may require card verification.
 
 ## Agent Workflow
 
@@ -70,7 +70,7 @@ Archive filenames include bot id, UTC timestamp, source type, and participant id
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
 - `join --transcript-dir DIR` - transcript location, default `~/.samoagent/`.
-- `join --rtmp` - mixed-video RTMP path using ngrok TCP; requires ngrok card verification.
+- `join --rtmp` - mixed-video RTMP path using ngrok TCP; may require ngrok card verification.
 - `join --rtmp-url rtmp://host:1935/live/call` - explicit mixed-video RTMP receiver.
 
 ## Commands
