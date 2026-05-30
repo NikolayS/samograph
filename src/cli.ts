@@ -14,7 +14,10 @@ import { cmdServe } from "./commands/serve.ts";
 
 const USAGE = `usage: samoagent <command> [options]
 
-AI meeting agent for Zoom & Google Meet
+Meeting I/O helper for AI agents — join Zoom & Google Meet calls,
+stream live transcripts, capture frames, and send chat messages.
+
+Requires: RECALL_API_KEY env var (get one at recall.ai) and ngrok.
 
 commands:
   join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR]
@@ -26,6 +29,10 @@ commands:
   dicts
   watch
   frame [--out FILE] [--archive] [bot_id]
+
+flags:
+  -h, --help     Show this help message
+  -v, --version  Show version number
 `;
 
 class ArgError extends Error {}
