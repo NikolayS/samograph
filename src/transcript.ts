@@ -147,6 +147,7 @@ export async function watch(opts: WatchOpts = {}): Promise<void> {
 
   // If the call already ended before watch started, exit immediately.
   if (!existsSync(stateFile())) {
+    process.stderr.write("No active session. Run 'samoagent join' first.\n");
     return;
   }
   for (const existing of readFileSync(tf, "utf-8").split(/\r?\n/)) {
