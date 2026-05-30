@@ -289,7 +289,9 @@ describe("cmdFrame — no RTMP", () => {
 
     const archive = join(tmp, "bot-123_20260530T150000.000000Z_webcam_p1.png");
     expect(new Uint8Array(readFileSync(archive))).toEqual(new Uint8Array([1, 2, 3]));
-    expect(existsSync(join(tmp, "latest.png"))).toBe(false);
+    // --archive should ALSO write latest.png (the timestamped copy is additive)
+    expect(existsSync(join(tmp, "latest.png"))).toBe(true);
+    expect(new Uint8Array(readFileSync(join(tmp, "latest.png")))).toEqual(new Uint8Array([1, 2, 3]));
     expect(statSync(tmp).mode & 0o777).toBe(0o700);
   });
 

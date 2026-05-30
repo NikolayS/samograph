@@ -77,7 +77,7 @@ export function serve(
         let payload: unknown = {};
         try {
           const body = await req.text();
-          if (body.length > WEBHOOK_MAX_BYTES) {
+          if (new TextEncoder().encode(body).byteLength > WEBHOOK_MAX_BYTES) {
             return Response.json({ error: "payload too large" }, { status: 413 });
           }
           payload = body ? JSON.parse(body) : {};
