@@ -8,9 +8,24 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    (() => {
+      try {
+        const stored = localStorage.getItem("samoagent-theme") || "system";
+        const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = stored === "system"
+          ? (prefersDark ? "dark" : "light")
+          : stored;
+        document.documentElement.dataset.themeChoice = stored;
+      } catch {
+        document.documentElement.dataset.theme = "light";
+        document.documentElement.dataset.themeChoice = "system";
+      }
+    })();
+  </script>
   <style>
     :root {
-      color-scheme: light;
+      color-scheme: light dark;
       --ink: #151515;
       --muted: #5d626b;
       --line: #dadde3;
@@ -20,7 +35,32 @@
       --blue: #2447a8;
       --green: #1f7a5a;
       --code: #111821;
+      --code-line: #2b3544;
+      --code-muted: #8c98aa;
+      --code-text: #d9f4e8;
+      --card: rgba(255, 255, 255, 0.58);
+      --header: rgba(247, 245, 239, 0.94);
+      --shadow: rgba(22, 25, 31, 0.22);
+      --soft-shadow: rgba(22, 25, 31, 0.08);
       --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    :root[data-theme="dark"] {
+      --ink: #f1f4f8;
+      --muted: #a9b2c2;
+      --line: #293241;
+      --paper: #0b0f15;
+      --panel: #121821;
+      --blue: #8ab4ff;
+      --green: #4cc38a;
+      --code: #05080d;
+      --code-line: #222b38;
+      --code-muted: #99a4b8;
+      --code-text: #d9f4e8;
+      --card: rgba(18, 24, 33, 0.76);
+      --header: rgba(11, 15, 21, 0.92);
+      --shadow: rgba(0, 0, 0, 0.4);
+      --soft-shadow: rgba(0, 0, 0, 0.22);
     }
 
     * {
@@ -50,7 +90,7 @@
 
     header {
       border-bottom: 1px solid var(--line);
-      background: rgba(247, 245, 239, 0.94);
+      background: var(--header);
       position: sticky;
       top: 0;
       z-index: 10;
@@ -84,6 +124,36 @@
       align-items: center;
       gap: 18px;
       font-size: 14px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .theme-switcher {
+      display: inline-flex;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .theme-option {
+      min-height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 5px;
+      color: var(--muted);
+      background: transparent;
+      font: 700 12px/1 var(--mono);
+      cursor: pointer;
+    }
+
+    .theme-option[aria-pressed="true"] {
+      background: var(--ink);
+      color: var(--paper);
     }
 
     .hero {
@@ -141,16 +211,16 @@
 
     .button.primary {
       background: var(--ink);
-      color: #fff;
+      color: var(--paper);
     }
 
     .terminal {
       min-width: 0;
       background: var(--code);
-      color: #d9f4e8;
+      color: var(--code-text);
       border-radius: 8px;
       overflow: hidden;
-      box-shadow: 0 18px 50px rgba(22, 25, 31, 0.22);
+      box-shadow: 0 18px 50px var(--shadow);
       border: 1px solid #252e3a;
     }
 
@@ -160,8 +230,8 @@
       align-items: center;
       gap: 8px;
       padding: 0 14px;
-      border-bottom: 1px solid #2b3544;
-      color: #8c98aa;
+      border-bottom: 1px solid var(--code-line);
+      color: var(--code-muted);
       font-size: 13px;
     }
 
@@ -230,7 +300,7 @@
       padding: 18px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.58);
+      background: var(--card);
     }
 
     .item h3 {
@@ -275,7 +345,7 @@
       background: var(--panel);
       padding: 16px;
       position: relative;
-      box-shadow: 0 10px 28px rgba(22, 25, 31, 0.08);
+      box-shadow: 0 10px 28px var(--soft-shadow);
     }
 
     .flow-node + .flow-node::before {
@@ -356,13 +426,20 @@
       }
 
       nav,
+      .nav-right,
       .links {
         align-items: flex-start;
       }
 
-      nav {
+      nav,
+      .nav-right {
         flex-direction: column;
         padding: 16px 0;
+      }
+
+      .nav-right {
+        gap: 14px;
+        padding: 0;
       }
 
       .hero,
@@ -422,10 +499,17 @@
           <img src="logo.svg" alt="">
           <span>samoagent</span>
         </div>
-        <div class="links">
-          <a href="https://github.com/NikolayS/samoagent">GitHub</a>
-          <a href="https://www.npmjs.com/package/samoagent">npm</a>
-          <a href="https://github.com/NikolayS/samoagent/releases">Releases</a>
+        <div class="nav-right">
+          <div class="links">
+            <a href="https://github.com/NikolayS/samoagent">GitHub</a>
+            <a href="https://www.npmjs.com/package/samoagent">npm</a>
+            <a href="https://github.com/NikolayS/samoagent/releases">Releases</a>
+          </div>
+          <div class="theme-switcher" aria-label="Theme">
+            <button class="theme-option" type="button" data-theme-value="light">light</button>
+            <button class="theme-option" type="button" data-theme-value="dark">dark</button>
+            <button class="theme-option" type="button" data-theme-value="system">sys</button>
+          </div>
         </div>
       </nav>
     </div>
@@ -557,5 +641,51 @@ samoagent leave</code></pre>
       </div>
     </div>
   </footer>
+  <script>
+    (() => {
+      const storageKey = "samoagent-theme";
+      const root = document.documentElement;
+      const media = matchMedia("(prefers-color-scheme: dark)");
+      const buttons = [...document.querySelectorAll("[data-theme-value]")];
+
+      function resolveTheme(choice) {
+        return choice === "system" ? (media.matches ? "dark" : "light") : choice;
+      }
+
+      function applyTheme(choice) {
+        root.dataset.themeChoice = choice;
+        root.dataset.theme = resolveTheme(choice);
+        buttons.forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.themeValue === choice));
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const choice = button.dataset.themeValue;
+          try {
+            localStorage.setItem(storageKey, choice);
+          } catch {}
+          applyTheme(choice);
+        });
+      });
+
+      media.addEventListener("change", () => {
+        let choice = "system";
+        try {
+          choice = localStorage.getItem(storageKey) || "system";
+        } catch {}
+        if (choice === "system") {
+          applyTheme("system");
+        }
+      });
+
+      let choice = root.dataset.themeChoice || "system";
+      try {
+        choice = localStorage.getItem(storageKey) || choice;
+      } catch {}
+      applyTheme(choice);
+    })();
+  </script>
 </body>
 </html>
