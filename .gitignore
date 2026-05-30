@@ -6,3 +6,6 @@ __pycache__/
 .samoagent.json
 *.png
 !avatar.png
+node_modules/
+dist/
+bun.lock

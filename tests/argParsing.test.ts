@@ -1,0 +1,104 @@
+import { describe, it, expect } from "bun:test";
+import { parseArgs } from "../src/cli.ts";
+
+describe("argParsing", () => {
+  it("join requires url", () => {
+    expect(() => parseArgs(["join"])).toThrow();
+  });
+
+  it("join parses url", () => {
+    const args = parseArgs(["join", "https://zoom.us/j/123"]);
+    expect(args.url).toBe("https://zoom.us/j/123");
+    expect(args.command).toBe("join");
+  });
+
+  it("join default port", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).port).toBe(8080);
+  });
+
+  it("join custom port", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--port", "9090"]).port,
+    ).toBe(9090);
+  });
+
+  it("join rtmp-url optional", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).rtmp_url).toBeNull();
+  });
+
+  it("join rtmp-url parsed", () => {
+    const args = parseArgs([
+      "join",
+      "https://zoom.us/j/1",
+      "--rtmp-url",
+      "rtmp://1.2.3.4:1935/live/call",
+    ]);
+    expect(args.rtmp_url).toBe("rtmp://1.2.3.4:1935/live/call");
+  });
+
+  it("join name optional", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).name).toBeNull();
+  });
+
+  it("join dict optional", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).dict).toBeNull();
+  });
+
+  it("join rtmp flag default false", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).rtmp).toBe(false);
+  });
+
+  it("join rtmp flag set", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--rtmp"]).rtmp).toBe(true);
+  });
+
+  it("leave bot_id optional", () => {
+    expect(parseArgs(["leave"]).bot_id).toBeNull();
+  });
+
+  it("leave bot_id explicit", () => {
+    expect(parseArgs(["leave", "bot-abc"]).bot_id).toBe("bot-abc");
+  });
+
+  it("chat requires message", () => {
+    expect(() => parseArgs(["chat"])).toThrow();
+  });
+
+  it("chat message parsed", () => {
+    expect(parseArgs(["chat", "Hello meeting"]).message).toBe("Hello meeting");
+  });
+
+  it("dicts subcommand", () => {
+    expect(parseArgs(["dicts"]).command).toBe("dicts");
+  });
+
+  it("watch subcommand", () => {
+    expect(parseArgs(["watch"]).command).toBe("watch");
+  });
+
+  it("frame default out", () => {
+    expect(parseArgs(["frame"]).out).toBe("frame.png");
+  });
+
+  it("frame custom out", () => {
+    expect(parseArgs(["frame", "--out", "myframe.png"]).out).toBe("myframe.png");
+  });
+
+  it("screenshot default out", () => {
+    expect(parseArgs(["screenshot"]).out).toBe("screenshot.png");
+  });
+
+  it("serve requires transcript-file", () => {
+    expect(() => parseArgs(["_serve"])).toThrow();
+  });
+
+  it("serve parses transcript-file", () => {
+    expect(
+      parseArgs(["_serve", "--transcript-file", "/tmp/t.txt"]).transcript_file,
+    ).toBe("/tmp/t.txt");
+  });
+
+  it("invalid command throws", () => {
+    expect(() => parseArgs(["bogus"])).toThrow();
+  });
+});
