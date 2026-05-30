@@ -1,15 +1,48 @@
 {
   "name": "samoagent",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.3.0",
+  "description": "Meeting I/O helper that lets AI agents join calls, watch transcripts, chat, and capture frames.",
   "type": "module",
   "bin": {
-    "samoagent": "./dist/cli.js"
+    "samoagent": "dist/cli.js"
+  },
+  "files": [
+    "dist/cli.js",
+    "dictionaries/",
+    "README.md",
+    "CLAUDE.md",
+    "avatar.html",
+    "avatar.png",
+    "logo.svg"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NikolayS/samoagent.git"
+  },
+  "homepage": "https://nikolays.github.io/samoagent/",
+  "bugs": {
+    "url": "https://github.com/NikolayS/samoagent/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "meetings",
+    "recall-ai",
+    "zoom",
+    "google-meet",
+    "transcript",
+    "websocket"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "samoagent": "bun src/cli.ts",
     "test": "bun test",
-    "build": "tsc --noEmit && bun build src/cli.ts --target bun --outfile dist/cli.js && chmod +x dist/cli.js"
+    "build": "tsc --noEmit && bun build src/cli.ts --target bun --outfile dist/cli.js && chmod +x dist/cli.js",
+    "prepack": "bun run build"
   },
   "devDependencies": {
     "@types/bun": "latest",
