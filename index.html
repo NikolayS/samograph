@@ -179,6 +179,12 @@
       font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .band {
@@ -197,6 +203,17 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 18px;
+    }
+
+    .section-head {
+      max-width: 760px;
+      margin-bottom: 22px;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
     }
 
     .item {
@@ -235,6 +252,42 @@
       margin-top: 10px;
     }
 
+    .flow {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-node {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+      position: relative;
+      box-shadow: 0 10px 28px rgba(22, 25, 31, 0.08);
+    }
+
+    .flow-node + .flow-node::before {
+      content: "";
+      position: absolute;
+      width: 2px;
+      height: 12px;
+      left: 28px;
+      top: -13px;
+      background: var(--line);
+    }
+
+    .flow-node strong {
+      display: block;
+      font-size: 16px;
+    }
+
+    .flow-node span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
     footer {
       border-top: 1px solid var(--line);
       padding: 28px 0 42px;
@@ -261,7 +314,7 @@
       .hero,
       .split,
       .grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .hero {
@@ -270,7 +323,8 @@
 
       .hero > *,
       .hero .terminal {
-        max-width: calc(100vw - 48px);
+        width: 100%;
+        max-width: 100%;
       }
 
       h1 {
@@ -343,18 +397,32 @@ samoagent leave</code></pre>
     </section>
 
     <section class="band">
-      <div class="wrap grid">
-        <div class="item">
-          <h3>Joins calls</h3>
-          <p>Starts a Recall.ai bot for Zoom or Google Meet and keeps local state for the active session.</p>
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Tools for call participation</h2>
+          <p>Give these commands to an AI agent and it gets a controlled interface to the live meeting.</p>
         </div>
-        <div class="item">
-          <h3>Streams transcript</h3>
-          <p>Prints one utterance per line so an agent can follow the meeting in real time.</p>
-        </div>
-        <div class="item">
-          <h3>Captures frames on demand</h3>
-          <p>Receives WebSocket video frames in memory and writes files only when the agent asks.</p>
+        <div class="grid">
+          <div class="item">
+            <h3>Join</h3>
+            <p>Starts a Recall.ai bot for Zoom or Google Meet and keeps local state for the active session.</p>
+          </div>
+          <div class="item">
+            <h3>Watch</h3>
+            <p>Streams one utterance per line so an agent can follow the meeting in real time.</p>
+          </div>
+          <div class="item">
+            <h3>Frame</h3>
+            <p>Receives WebSocket video frames in memory and writes files only when the agent asks.</p>
+          </div>
+          <div class="item">
+            <h3>Chat</h3>
+            <p>Sends deliberate meeting chat messages when the agent needs to participate visibly.</p>
+          </div>
+          <div class="item">
+            <h3>Leave</h3>
+            <p>Removes the bot, stops local processes, and cleans up runtime state.</p>
+          </div>
         </div>
       </div>
     </section>
@@ -362,27 +430,33 @@ samoagent leave</code></pre>
     <section class="band">
       <div class="wrap split">
         <div>
-          <h2>Why ngrok?</h2>
+          <h2>How it integrates</h2>
           <ul class="notes">
-            <li>Recall.ai needs a public HTTPS/WSS callback URL to send live transcript and video-frame events to your local machine.</li>
-            <li>The normal path uses <code>ngrok http</code>. Free ngrok should be enough for personal use with <code>--ws-video</code>.</li>
+            <li>Your AI agent runs <code>samoagent</code> commands as tools: join, watch, chat, frame, and leave.</li>
+            <li>samoagent starts a local callback server and a Recall.ai bot for the target Zoom or Google Meet call.</li>
+            <li>Recall.ai sends transcripts, chat delivery, and WebSocket video-frame events back to the local server.</li>
+            <li>The normal local path uses <code>ngrok http</code> for those HTTPS/WSS callbacks. Free ngrok should be enough for personal <code>--ws-video</code> use.</li>
             <li>ngrok TCP is only for the optional RTMP mode and may require card verification.</li>
             <li>Webhook and frame routes are token-protected, and default runtime files stay under <code>~/.samoagent/</code>.</li>
           </ul>
         </div>
-        <div class="terminal" aria-label="frame capture example">
-          <div class="terminal-bar">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span>on-demand frame</span>
+        <div class="flow" aria-label="samoagent integration diagram">
+          <div class="flow-node">
+            <strong>AI agent</strong>
+            <span>Decides when to join, listen, speak, or inspect the call view.</span>
           </div>
-          <pre><code>samoagent frame
-# ~/.samoagent/frames/latest.png
-# ~/.samoagent/frames/latest.json
-
-samoagent frame --archive
-# bot-id_20260530T174500.000000Z_webcam_p1.png</code></pre>
+          <div class="flow-node">
+            <strong>samoagent tools</strong>
+            <span><code>join</code>, <code>watch</code>, <code>chat</code>, <code>frame</code>, <code>leave</code></span>
+          </div>
+          <div class="flow-node">
+            <strong>Local callback server</strong>
+            <span>Receives token-protected transcript and frame events over HTTPS/WSS.</span>
+          </div>
+          <div class="flow-node">
+            <strong>Recall.ai bot in Zoom/Meet</strong>
+            <span>Participates in the call and streams meeting signals back.</span>
+          </div>
         </div>
       </div>
     </section>

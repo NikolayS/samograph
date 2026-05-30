@@ -20,7 +20,38 @@ bun run build
 
 During development use `bun run samoagent ...`. After build or package install, use `samoagent ...`.
 
-Why ngrok: Recall.ai needs a public HTTPS/WSS callback URL to deliver live transcripts and WebSocket video frames to the local samoagent server. The current `join` command creates that public callback with `ngrok http`. Free ngrok HTTP should be enough for personal use. ngrok TCP is not required for normal `--ws-video` use; it is only needed for the optional RTMP path and may require card verification.
+## What It Provides
+
+samoagent gives an AI agent a small set of meeting tools:
+
+- `join` - bring a Recall.ai bot into a Zoom or Google Meet call.
+- `watch` - stream live transcript lines to the agent.
+- `chat` - send a deliberate message into the meeting chat.
+- `frame` - export the current call view on demand.
+- `leave` - remove the bot and clean up local state.
+
+The agent still decides what to say, when to inspect a frame, and how to use the meeting context. samoagent is the local adapter that exposes those call capabilities.
+
+```text
+AI agent
+  | runs CLI tools
+  v
+samoagent on your machine
+  | starts bot + local callback server
+  v
+Recall.ai bot in Zoom/Meet
+  | transcript, chat, WebSocket video events
+  v
+samoagent watch/chat/frame
+```
+
+## Integration
+
+For the normal local workflow, `join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine.
+
+Free ngrok HTTP should be enough for personal use with the default `--ws-video` path. ngrok TCP is not required for normal use; it is only needed for the optional RTMP path and may require card verification.
+
+Webhook and frame routes are token-protected, and default runtime files stay under `~/.samoagent/`.
 
 ## Agent Workflow
 
