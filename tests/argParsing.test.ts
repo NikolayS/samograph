@@ -160,6 +160,15 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--port", "65535"]).port).toBe(65535);
   });
 
+  it("--help uses current product positioning", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("Put your AI agent in Zoom and Google Meet calls.");
+    expect(stdout).toContain("streams live transcript lines");
+    expect(stdout).not.toContain("Meeting I/O helper");
+  });
+
   it("-v prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-v"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);

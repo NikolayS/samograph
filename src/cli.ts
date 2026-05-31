@@ -14,10 +14,11 @@ import { cmdServe } from "./commands/serve.ts";
 
 const USAGE = `usage: samoagent <command> [options]
 
-Meeting I/O helper for AI agents — join Zoom & Google Meet calls,
-stream live transcripts, capture frames, and send chat messages.
+Put your AI agent in Zoom and Google Meet calls.
+samoagent joins through Recall.ai, streams live transcript lines,
+captures call frames on demand, and sends explicit chat messages.
 
-Requires: RECALL_API_KEY env var (get one at recall.ai) and ngrok.
+Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok.
 
 commands:
   join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR]
