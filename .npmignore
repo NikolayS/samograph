@@ -1,11 +1,13 @@
+# package.json "files" is the authoritative whitelist; this is belt-and-suspenders.
 src/
 tests/
+demo/
+docs/
+specs/
 tsconfig.json
 bun.lock
 CLAUDE.md
-index.html
-CNAME
 .github/
-docs/
+.env.example
 transcript.txt
 screenshot.png

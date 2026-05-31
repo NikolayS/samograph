@@ -10,3 +10,5 @@ node_modules/
 .venv/
 dist/
 bun.lock
+
+.DS_Store
