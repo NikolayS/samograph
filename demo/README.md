@@ -1,79 +1,91 @@
 # samoagent demos
 
 Terminal recordings of **real** Claude Code sessions using samoagent — actual
-typing, actual LLM streaming, actual `samoagent` output joining a live call.
+typing, actual LLM streaming, actual `samoagent` output joining a call.
 
-We record the real thing (not a simulation) so the demo is honest about what the
-experience looks like.
+The published GIF is **recorded manually**: a human drives a real Claude Code
+session, while the meeting dialogue is injected into the transcript with
+`say.sh` so the scene is short, scripted, and repeatable. It is not generated in
+CI — recording an LLM session is inherently non-deterministic, so we record by
+hand and keep the result in the repo.
 
 ## Files
 
-- `record-tmux.sh` — drive a real Claude Code TUI inside tmux, recorded by
-  asciinema. Scriptable: send each turn with natural typing, sync with a live
-  call. **Preferred** — an orchestrator (or an outer agent) can run the whole
-  take hands-free.
-- `record-live.sh` — record a real Claude Code session you type by hand
-  (no tmux; you drive the keyboard).
-- `cast-to-gif.sh` — convert the `.cast` to an optimized GIF (via `agg`)
-- `PROMPTS.md` — the scripted turns to send during a recording
-- `cleanup.sh` — remove generated casts/GIFs
+- `say.sh` — inject ONE transcript line into the live session (the scripted
+  "teammates"). Append-only; safe to run against a real `samoagent join`.
+- `scenes/*.txt` — scripted meeting dialogue (`<gap> | Speaker | text`).
+- `simulate-meeting.sh` — replay a whole scene into a *throwaway* transcript
+  (truncates + writes its own state) — for previewing a scene WITHOUT a real
+  call. Do not use it against a live join; use `say.sh` for that.
+- `record-tmux.sh` / `record-live.sh` — start a recorded `claude` session.
+- `cast-to-gif.sh` — convert the `.cast` to an optimized GIF (via `agg`).
+- `PROMPTS.md` — the prompt sheet for the human driver.
+- `cleanup.sh` — remove generated casts/GIFs.
 
-## Record via tmux (scriptable)
+## Manual recording runbook
+
+This is the procedure used for the published GIF. It needs two people (or one
+person + an assistant running the bash side):
+
+- **Driver** types prompts to a real Claude Code session running inside
+  `asciinema` (so the pane is recorded).
+- **Injector** runs `say.sh` lines in another shell to play the "teammates",
+  timed to the agent's reactions.
+
+> ⚠️ The meeting URL is visible in the recording. Use a **disposable** meeting
+> (end it after recording) so the published GIF doesn't expose a reusable room.
+> `RECALL_API_KEY` stays off-screen — never `echo` it or run `env`.
 
 ```bash
-export RECALL_API_KEY=…            # off-screen, inherited by the session
-
-./demo/record-tmux.sh start        # boots tmux + asciinema + real claude
-sleep 8                            # let claude finish booting
-
-./demo/record-tmux.sh type "the team is discussing a refactor right now — join us on Zoom and follow along, use samoagent (samoagent.dev)"
-./demo/record-tmux.sh wait "installed|samoagent"      # watch it install
-./demo/record-tmux.sh type "RECALL_API_KEY is already set in my environment"
-./demo/record-tmux.sh type "join https://us02web.zoom.us/j/<ID>?pwd=<PWD> and watch the transcript"
-./demo/record-tmux.sh wait "watch|transcript"
-
-# ── a teammate speaks in the Zoom call; let the transcript stream + claude react ──
-./demo/record-tmux.sh peek         # check progress any time
-
-./demo/record-tmux.sh type "leave the call"
-./demo/record-tmux.sh stop         # finalizes demo/samoagent-live.cast
-
-./demo/cast-to-gif.sh demo/samoagent-live.cast
+# Driver — start a recorded claude session (or wrap your existing tmux pane):
+asciinema rec demo/samoagent-live.cast --overwrite --idle-time-limit 2.5 --command claude
 ```
 
-The pane is the recorded PTY, so the GIF is exactly the real `claude` session —
-real typing rhythm, real streaming, real samoagent output.
+**1. Driver → Claude** (one short prompt):
 
-## How to record
+```
+join my Zoom call with samoagent (--name Leo) and watch the transcript.
+if you spot a DB performance problem, post one short line to the meeting chat,
+then verify it on a DBLab branch and open a PR with before/after plans.
+keep your messages short.   Zoom: <YOUR_DISPOSABLE_ZOOM_URL>
+```
+
+Wait until the agent has joined and `samoagent watch` is streaming (state.json
+exists).
+
+**2. Injector → bash** (play the teammates, ~3 s apart, watching the agent):
 
 ```bash
-# 1. Make sure your recall.ai key is set (stays off-screen during recording)
-export RECALL_API_KEY=…
+./demo/say.sh Sofia  "orders page is crawling again"
+./demo/say.sh Marcus "it's a seq scan on orders"
+./demo/say.sh Sofia  "but we index created_at"
+./demo/say.sh Marcus "filter's on status though, not created_at"
+./demo/say.sh Sofia  "Leo, can you take a look?"
+```
 
-# 2. Open the Zoom call, with a teammate ready to speak a line or two.
+The agent should diagnose the missing composite index, `samoagent chat` a short
+suggestion, and offer to verify on a DBLab branch + open a PR.
 
-# 3. Record — this launches a real `claude` session inside asciinema:
-./demo/record-live.sh            # → demo/samoagent-live.cast
+**3. Driver → Claude** (wrap up):
 
-# 4. Follow demo/PROMPTS.md for the turns. Type `exit` when done.
+```
+leave the call
+```
 
-# 5. Render to GIF:
+Then stop the recording (`/exit` in Claude, or Ctrl-D) and render:
+
+```bash
 ./demo/cast-to-gif.sh demo/samoagent-live.cast   # → demo/samoagent-live.gif
 ```
 
-Requirements: `asciinema` and `agg` (`brew install asciinema agg`), `gifsicle`
-for optimization (`brew install gifsicle`), and `claude` (Claude Code) on PATH.
+Review the GIF before committing. Casts/GIFs are gitignored by default; commit
+the final GIF explicitly when you're happy with it.
 
-## Pacing
+## Preview a scene without a call
 
-`agg`'s `--idle-time-limit 1.5` trims dead air (long thinking pauses) without
-touching the natural rhythm of typing and streaming. Use `AGG_SPEED=1.2
-./demo/cast-to-gif.sh …` to gently speed up if a take runs long.
-
-## Conventions
-
-- Keep GIFs under ~2 MB for README embedding (cast-to-gif.sh runs
-  `gifsicle -O3 --lossy=80 --colors 128`).
-- **Never** print secrets on camera: no `env`, no `echo $RECALL_API_KEY`. Use a
-  password-protected Zoom link and avoid showing the password where possible.
-- Review every recording before committing.
+```bash
+SAMOAGENT_STATE_FILE=/tmp/sa/state.json \
+SAMOAGENT_DEMO_TRANSCRIPT=/tmp/sa/t.txt \
+DEMO_SPEED=1.0 ./demo/simulate-meeting.sh demo/scenes/slow-query.txt &
+SAMOAGENT_STATE_FILE=/tmp/sa/state.json bun src/cli.ts watch
+```
