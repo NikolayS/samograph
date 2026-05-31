@@ -5,6 +5,7 @@ bun.lock
 
 # Runtime state and artifacts
 samoagent_state.json
+.samoagent.json
 transcript.txt
 *.png
 !avatar.png
