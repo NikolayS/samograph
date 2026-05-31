@@ -33,8 +33,7 @@ JSON
 
 # advance HH:MM:SS by N seconds (portable, no GNU date)
 tick() {
-  local base="$1" add="$2"
-  local h m s total
+  local base="$1" add="$2" h m s total
   IFS=: read -r h m s <<<"$base"
   total=$(( (10#$h*3600 + 10#$m*60 + 10#$s + add) % 86400 ))
   printf '%02d:%02d:%02d' $((total/3600)) $((total%3600/60)) $((total%60))
@@ -48,7 +47,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
   who="$(printf '%s' "$line" | cut -d'|' -f2 | sed 's/^ *//;s/ *$//')"
   text="$(printf '%s' "$line" | cut -d'|' -f3- | sed 's/^ *//')"
   if [ "$SPEED" != "0" ]; then
-    sleep "$(awk "BEGIN{printf \"%.2f\", $gap*$SPEED}")"
+    sleep "$(awk -v g="$gap" -v sp="$SPEED" 'BEGIN{printf "%.2f", g*sp}')"
   fi
   elapsed=$(( elapsed + gap ))
   ts="$(tick "$CLOCK" "$elapsed")"
