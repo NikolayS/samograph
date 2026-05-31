@@ -1,0 +1,9 @@
+# Demo meeting script. One line per utterance:
+#   <gap_seconds> | Speaker | text
+# Blank lines and #-comments are ignored. Speakers are fictional.
+# Short and punchy — this is acting, not a real transcript dump.
+2 | Sofia | ok the orders page is crawling again
+3 | Marcus | yeah it's a seq scan on orders
+3 | Sofia | we index created_at though
+3 | Marcus | filter's on status, not created_at
+3 | Sofia | Leo — can you take a look?
