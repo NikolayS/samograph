@@ -239,21 +239,55 @@
     }
 
     .credit {
-      margin-top: 18px;
-      color: var(--muted);
-      font-size: 13px;
-      letter-spacing: 0.01em;
+      margin-top: 22px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px 16px;
     }
 
-    .credit a {
+    .credit-label {
       color: var(--muted);
-      text-decoration: none;
-      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
 
-    .credit a:hover {
+    .credit-logos {
+      display: inline-flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .credit-logos a {
+      display: inline-flex;
+      align-items: center;
       color: var(--ink);
-      text-decoration: underline;
+      opacity: 0.65;
+      transition: opacity 0.15s ease;
+    }
+
+    .credit-logos a:hover {
+      opacity: 1;
+    }
+
+    .credit-logos img {
+      display: block;
+      width: auto;
+    }
+
+    .credit-logos img.mark {
+      height: 18px;
+    }
+
+    .credit-logos img.icon {
+      height: 22px;
+    }
+
+    .credit-sep {
+      width: 1px;
+      height: 18px;
+      background: var(--line);
     }
 
     .actions {
