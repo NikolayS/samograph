@@ -1,16 +1,18 @@
-.env
-transcript.txt
-screenshot.png
-__pycache__/
-*.pyc
-.samoagent.json
-*.png
-!avatar.png
-node_modules/
-.venv/
+# Build output
 dist/
+node_modules/
 bun.lock
 
+# Runtime state and artifacts
+samoagent_state.json
+transcript.txt
+*.png
+!avatar.png
+frames/
+screenshot.png
+.env
 .DS_Store
+
+# Demo recordings (generated, not committed)
 demo/*.cast
 demo/*.gif

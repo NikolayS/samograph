@@ -47,7 +47,7 @@ case "$cmd" in
     # tmux pane = the recorded PTY; asciinema records claude running inside it.
     tmux new-session -d -s "$SESSION" -x "$COLS" -y "$ROWS"
     tmux send-keys -t "$SESSION" \
-      "cd '$REPO_ROOT' && asciinema rec '$CAST' --overwrite --idle-time-limit 3 --command claude" Enter
+      "cd '$REPO_ROOT' && asciinema rec '$CAST' --overwrite --idle-time-limit 3 --command '${CLAUDE_CMD:-claude}'" Enter
     echo "Started session '$SESSION' (${COLS}×${ROWS}) recording → $CAST"
     echo "Give claude a few seconds to boot, then drive it with: type / key / peek / wait"
     ;;
