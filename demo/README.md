@@ -8,10 +8,41 @@ experience looks like.
 
 ## Files
 
-- `record-live.sh` — record a real Claude Code session with asciinema
+- `record-tmux.sh` — drive a real Claude Code TUI inside tmux, recorded by
+  asciinema. Scriptable: send each turn with natural typing, sync with a live
+  call. **Preferred** — an orchestrator (or an outer agent) can run the whole
+  take hands-free.
+- `record-live.sh` — record a real Claude Code session you type by hand
+  (no tmux; you drive the keyboard).
 - `cast-to-gif.sh` — convert the `.cast` to an optimized GIF (via `agg`)
-- `PROMPTS.md` — the scripted turns to type during a recording
+- `PROMPTS.md` — the scripted turns to send during a recording
 - `cleanup.sh` — remove generated casts/GIFs
+
+## Record via tmux (scriptable)
+
+```bash
+export RECALL_API_KEY=…            # off-screen, inherited by the session
+
+./demo/record-tmux.sh start        # boots tmux + asciinema + real claude
+sleep 8                            # let claude finish booting
+
+./demo/record-tmux.sh type "the team is discussing a refactor right now — join us on Zoom and follow along, use samoagent (samoagent.dev)"
+./demo/record-tmux.sh wait "installed|samoagent"      # watch it install
+./demo/record-tmux.sh type "RECALL_API_KEY is already set in my environment"
+./demo/record-tmux.sh type "join https://us02web.zoom.us/j/<ID>?pwd=<PWD> and watch the transcript"
+./demo/record-tmux.sh wait "watch|transcript"
+
+# ── a teammate speaks in the Zoom call; let the transcript stream + claude react ──
+./demo/record-tmux.sh peek         # check progress any time
+
+./demo/record-tmux.sh type "leave the call"
+./demo/record-tmux.sh stop         # finalizes demo/samoagent-live.cast
+
+./demo/cast-to-gif.sh demo/samoagent-live.cast
+```
+
+The pane is the recorded PTY, so the GIF is exactly the real `claude` session —
+real typing rhythm, real streaming, real samoagent output.
 
 ## How to record
 
