@@ -12,3 +12,5 @@ dist/
 bun.lock
 
 .DS_Store
+demo/*.cast
+demo/*.gif

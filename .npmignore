@@ -3,7 +3,7 @@ src/
 tests/
 demo/
 docs/
-specs/
+blueprints/
 tsconfig.json
 bun.lock
 CLAUDE.md
