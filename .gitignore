@@ -6,6 +6,9 @@ __pycache__/
 .samoagent.json
 *.png
 !avatar.png
+!apple-touch-icon.png
+!favicon-192.png
+!favicon-512.png
 node_modules/
 .venv/
 dist/
