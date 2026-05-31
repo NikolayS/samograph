@@ -37,6 +37,7 @@ samoagent gives an AI agent a small set of meeting tools:
 - `transcript` - print the transcript (local file, or post-call from Recall).
 - `screenshot` - capture the local Mac screen (fallback when no call frame is available).
 - `dicts` - list available Deepgram keyword dictionaries.
+- `doctor` - check local prerequisites before joining a call.
 
 The agent still decides what to say, when to inspect a frame, and how to use the meeting context. samoagent is the local adapter that exposes those call capabilities.
 

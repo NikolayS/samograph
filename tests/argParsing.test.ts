@@ -92,6 +92,10 @@ describe("argParsing", () => {
     expect(parseArgs(["watch"]).command).toBe("watch");
   });
 
+  it("doctor subcommand", () => {
+    expect(parseArgs(["doctor"]).command).toBe("doctor");
+  });
+
   it("frame default out", () => {
     expect(parseArgs(["frame"]).out).toBeNull();
   });
@@ -167,6 +171,32 @@ describe("argParsing", () => {
     expect(stdout).toContain("Put your AI agent in Zoom and Google Meet calls.");
     expect(stdout).toContain("streams live transcript lines");
     expect(stdout).not.toContain("Meeting I/O helper");
+  });
+
+  it("join --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "join", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent join <url>");
+    expect(stdout).toContain("--no-ws-video");
+    expect(stdout).toContain("--rtmp-url URL");
+  });
+
+  it("frame --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frame", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent frame");
+    expect(stdout).toContain("frames stay in memory");
+    expect(stdout).toContain("--archive");
+  });
+
+  it("doctor --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "doctor", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent doctor");
+    expect(stdout).toContain("Check local prerequisites");
   });
 
   it("-v prints version and exits 0", () => {

@@ -11,6 +11,7 @@ import { cmdFrame } from "./commands/frame.ts";
 import { cmdDicts } from "./commands/dicts.ts";
 import { cmdWatch } from "./commands/watch.ts";
 import { cmdServe } from "./commands/serve.ts";
+import { cmdDoctor } from "./commands/doctor.ts";
 
 const USAGE = `usage: samoagent <command> [options]
 
@@ -30,11 +31,53 @@ commands:
   dicts
   watch
   frame [--out FILE] [--archive] [bot_id]
+  doctor
 
 flags:
   -h, --help     Show this help message
   -v, --version  Show version number
 `;
+
+const COMMAND_HELP: Record<string, string> = {
+  join: `usage: samoagent join <url> [options]
+
+Join a Zoom or Google Meet call as a Recall.ai bot.
+By default, samoagent streams transcript events and receives call frames over WebSocket.
+
+options:
+  --name N               Bot display name
+  --dict D               Deepgram keyword dictionary name
+  --port P               Local callback server port (default: 8080)
+  --transcript-dir DIR   Directory for transcript.txt
+  --frame-dir DIR        Directory for on-demand frame output
+  --no-ws-video          Disable WebSocket call-frame capture
+  --rtmp                 Use local RTMP path through ngrok TCP
+  --rtmp-url URL         Use an existing RTMP endpoint
+
+examples:
+  samoagent join "https://meet.google.com/abc-defg-hij" --name Leo
+  samoagent join "https://zoom.us/j/123" --dict postgresfm
+`,
+  frame: `usage: samoagent frame [--out FILE] [--archive] [bot_id]
+
+Write the latest call frame to disk.
+With the default WebSocket path, frames stay in memory until this command is run.
+
+options:
+  --out FILE   Output path. Defaults to latest frame path from active state.
+  --archive    Also write a timestamped PNG+JSON archive copy.
+
+examples:
+  samoagent frame
+  samoagent frame --out /tmp/current-call.png
+  samoagent frame --archive
+`,
+  doctor: `usage: samoagent doctor
+
+Check local prerequisites for joining meetings:
+Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samoagent state.
+`,
+};
 
 class ArgError extends Error {}
 
@@ -63,6 +106,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     frame: new Set(["--out"]),
+    doctor: new Set(),
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
@@ -75,6 +119,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     frame: new Set(["--archive"]),
+    doctor: new Set(),
     _serve: new Set(),
   };
 
@@ -174,6 +219,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     case "dicts":
     case "watch":
+    case "doctor":
       break;
     case "_serve": {
       const rawPort2 = opts["--port"];
@@ -222,6 +268,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdDicts();
     case "watch":
       return cmdWatch();
+    case "doctor":
+      return cmdDoctor();
     case "_serve":
       return cmdServe(args);
     default:
@@ -234,12 +282,15 @@ async function main(): Promise<void> {
   if (
     argv.length === 0 ||
     argv[0] === "--help" ||
-    argv[0] === "-h" ||
-    argv.includes("--help") ||
-    argv.includes("-h")
+    argv[0] === "-h"
   ) {
     process.stdout.write(USAGE);
     process.exit(argv.length === 0 ? 2 : 0);
+  }
+  if (argv.length >= 2 && (argv[1] === "--help" || argv[1] === "-h")) {
+    const help = COMMAND_HELP[argv[0]!];
+    process.stdout.write(help ?? USAGE);
+    process.exit(help ? 0 : 2);
   }
   if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "-V") {
     const pkg = (await import("../package.json")) as { version: string };
