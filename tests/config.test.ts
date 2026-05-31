@@ -17,7 +17,7 @@ describe("config constants", () => {
   });
 
   it("AVATAR_URL matches reference", () => {
-    expect(AVATAR_URL).toBe("https://nikolays.github.io/samoagent/avatar.html");
+    expect(AVATAR_URL).toBe("https://samoagent.dev/avatar.html");
   });
 });
 

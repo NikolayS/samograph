@@ -14,13 +14,15 @@ Requirements:
 - `RECALL_API_KEY`.
 - `ngrok` installed and authenticated (free plan). `join` starts and manages ngrok automatically — you don't run it yourself.
 
+Install the CLI from npm:
+
 ```bash
-bun install
+npm install -g samoagent
 export RECALL_API_KEY=...
-bun run build
+samoagent join "https://meet.google.com/..." --name Leo
 ```
 
-During development use `bun run samoagent ...`. After build or package install, use `samoagent ...`.
+During development use `bun install`, `bun run build`, then `bun run samoagent ...`.
 
 ## What It Provides
 

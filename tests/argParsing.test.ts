@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import { parseArgs } from "../src/cli.ts";
 
+const repoRoot = new URL("..", import.meta.url).pathname;
+
 describe("argParsing", () => {
   it("join requires url", () => {
     expect(() => parseArgs(["join"])).toThrow();
@@ -159,19 +161,19 @@ describe("argParsing", () => {
   });
 
   it("-v prints version and exits 0", () => {
-    const proc = Bun.spawnSync(["bun", "src/cli.ts", "-v"], { cwd: "/Users/nik/github/samoagent" });
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-v"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
     expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
   });
 
   it("--version prints version and exits 0", () => {
-    const proc = Bun.spawnSync(["bun", "src/cli.ts", "--version"], { cwd: "/Users/nik/github/samoagent" });
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--version"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
     expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
   });
 
   it("-V prints version and exits 0", () => {
-    const proc = Bun.spawnSync(["bun", "src/cli.ts", "-V"], { cwd: "/Users/nik/github/samoagent" });
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-V"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
     expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
   });

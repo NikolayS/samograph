@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const RECALL_BASE = "https://us-east-1.recall.ai/api/v1";
-export const AVATAR_URL = "https://nikolays.github.io/samoagent/avatar.html";
+export const AVATAR_URL = "https://samoagent.dev/avatar.html";
 
 export class ExitError extends Error {
   constructor(public code: number) {
