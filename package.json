@@ -11,11 +11,7 @@
     "dist/cli.js",
     "dictionaries/",
     "LICENSE",
-    "README.md",
-    "docs/",
-    "avatar.html",
-    "avatar.png",
-    "logo.svg"
+    "README.md"
   ],
   "repository": {
     "type": "git",

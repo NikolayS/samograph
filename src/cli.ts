@@ -292,7 +292,7 @@ async function main(): Promise<void> {
     process.stdout.write(help ?? USAGE);
     process.exit(help ? 0 : 2);
   }
-  if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "-V") {
+  if (argv[0] === "--version" || argv[0] === "-v") {
     const pkg = (await import("../package.json")) as { version: string };
     process.stdout.write(`samoagent ${pkg.version}\n`);
     process.exit(0);

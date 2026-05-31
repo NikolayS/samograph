@@ -13,3 +13,8 @@ node_modules/
 .venv/
 dist/
 bun.lock
+.DS_Store
+
+# Demo recordings (generated, not committed)
+demo/*.cast
+demo/*.gif

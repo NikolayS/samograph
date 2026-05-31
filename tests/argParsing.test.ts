@@ -211,9 +211,9 @@ describe("argParsing", () => {
     expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
   });
 
-  it("-V prints version and exits 0", () => {
+  it("-V is not a version alias (lowercase -v only)", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-V"], { cwd: repoRoot });
-    expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(proc.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samoagent \d+\.\d+\.\d+/);
   });
 });
