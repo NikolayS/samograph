@@ -256,14 +256,16 @@
     .credit-logos {
       display: inline-flex;
       align-items: center;
-      gap: 16px;
+      gap: 18px;
     }
 
     .credit-logos a {
       display: inline-flex;
       align-items: center;
+      gap: 7px;
       color: var(--ink);
-      opacity: 0.65;
+      text-decoration: none;
+      opacity: 0.7;
       transition: opacity 0.15s ease;
     }
 
@@ -271,17 +273,17 @@
       opacity: 1;
     }
 
-    .credit-logos img {
+    .brand-icon {
       display: block;
-      width: auto;
+      height: 20px;
+      width: 20px;
+      object-fit: contain;
     }
 
-    .credit-logos img.mark {
-      height: 18px;
-    }
-
-    .credit-logos img.icon {
-      height: 22px;
+    .brand-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
     }
 
     .credit-sep {
@@ -827,14 +829,14 @@
         <div class="credit">
           <span class="credit-label">Born at</span>
           <span class="credit-logos">
-            <a href="https://postgres.ai" title="Postgres.ai"><img class="mark" src="logos/postgres-ai.svg" alt="Postgres.ai"></a>
+            <a href="https://postgres.ai"><img class="brand-icon" src="logos/postgres-ai.svg" alt=""><span class="brand-name">Postgres.ai</span></a>
           </span>
           <span class="credit-sep"></span>
           <span class="credit-label">Works with</span>
           <span class="credit-logos">
-            <a href="https://recall.ai" title="Recall.ai"><img class="mark" src="logos/recall-ai.svg" alt="Recall.ai"></a>
-            <a href="https://zoom.us" title="Zoom"><img class="icon" src="logos/zoom.svg" alt="Zoom"></a>
-            <a href="https://meet.google.com" title="Google Meet"><img class="icon" src="logos/google-meet.svg" alt="Google Meet"></a>
+            <a href="https://recall.ai"><img class="brand-icon" src="logos/recall-mark.png" alt=""><span class="brand-name">Recall.ai</span></a>
+            <a href="https://zoom.us"><img class="brand-icon" src="logos/zoom.svg" alt=""><span class="brand-name">Zoom</span></a>
+            <a href="https://meet.google.com"><img class="brand-icon" src="logos/google-meet.svg" alt=""><span class="brand-name">Google Meet</span></a>
           </span>
         </div>
       </div>
