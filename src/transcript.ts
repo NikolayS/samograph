@@ -120,13 +120,18 @@ export interface WatchOpts {
   stateGoneCheckEvery?: number;
   /** Max iterations to wait for the transcript file to appear (each pollMs*5 in Python: 0.5s). */
   appearWaitMs?: number;
+  /** Replay the existing transcript before tailing live lines. */
+  fromStart?: boolean;
 }
 
 /**
- * Stream transcript lines to stdout as they arrive.
+ * Stream transcript lines to a callback as they arrive.
  * Exits when SAMOAGENT_CALL_ENDED sentinel is seen or when state.json disappears.
  */
-export async function watch(opts: WatchOpts = {}): Promise<void> {
+export async function streamTranscriptLines(
+  onLine: (line: string) => void | Promise<void>,
+  opts: WatchOpts = {},
+): Promise<void> {
   const pollMs = opts.pollMs ?? 100;
   const stateGoneCheckEvery = opts.stateGoneCheckEvery ?? 20;
   const appearWaitMs = opts.appearWaitMs ?? 30000;
@@ -156,7 +161,17 @@ export async function watch(opts: WatchOpts = {}): Promise<void> {
     }
   }
 
-  // Tail the file from current end.
+  if (opts.fromStart === true) {
+    for (const existing of readFileSync(tf, "utf-8").split(/\r?\n/)) {
+      if (!existing) continue;
+      if (SENTINEL_RE.test(existing.replace(/\r$/, ""))) {
+        return;
+      }
+      await onLine(existing);
+    }
+  }
+
+  // Tail the file from current end unless fromStart replayed through current contents.
   const fd = openSync(tf, "r");
   try {
     let pos = Bun.file(tf).size;
@@ -207,7 +222,7 @@ export async function watch(opts: WatchOpts = {}): Promise<void> {
           if (SENTINEL_RE.test(line.replace(/\r$/, ""))) {
             return;
           }
-          process.stdout.write(line + "\n");
+          await onLine(line);
         }
       } else {
         pollCounter += 1;
@@ -223,4 +238,14 @@ export async function watch(opts: WatchOpts = {}): Promise<void> {
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * Stream transcript lines to stdout as they arrive.
+ * Exits when SAMOAGENT_CALL_ENDED sentinel is seen or when state.json disappears.
+ */
+export async function watch(opts: WatchOpts = {}): Promise<void> {
+  return streamTranscriptLines((line) => {
+    process.stdout.write(line + "\n");
+  }, opts);
 }

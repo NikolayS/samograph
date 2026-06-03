@@ -7,6 +7,7 @@ Use samoagent to join a meeting, watch the live transcript, speak in meeting cha
 ```bash
 samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
+samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
 samoagent frame
 samoagent leave
 ```
@@ -22,6 +23,16 @@ React in your agent session. Use meeting chat only for deliberate call-visible m
 ```bash
 samoagent chat "Short message to the meeting"
 ```
+
+## Live Google Doc Notes
+
+Use `notes` when asked to keep a shared doc updated during the call:
+
+```bash
+samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
+```
+
+The doc must already be shared with the service-account email as an editor. `notes` appends transcript lines live and exits when `leave` writes the call-ended sentinel. Add `--from-start` if the doc should include transcript lines captured before `notes` started.
 
 ## Looking At The Call
 

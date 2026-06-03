@@ -12,6 +12,7 @@ import { cmdDicts } from "./commands/dicts.ts";
 import { cmdWatch } from "./commands/watch.ts";
 import { cmdServe } from "./commands/serve.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
+import { cmdNotes } from "./commands/notes.ts";
 
 const USAGE = `usage: samoagent <command> [options]
 
@@ -30,6 +31,7 @@ commands:
   transcript [bot_id]
   dicts
   watch
+  notes [--doc-id ID] [--credentials FILE] [--from-start]
   frame [--out FILE] [--archive] [bot_id]
   doctor
 
@@ -77,6 +79,19 @@ examples:
 Check local prerequisites for joining meetings:
 Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samoagent state.
 `,
+  notes: `usage: samoagent notes [--doc-id ID] [--credentials FILE] [--from-start]
+
+Append live transcript lines to a Google Doc as meeting notes.
+Uses GOOGLE_DOC_ID and GOOGLE_APPLICATION_CREDENTIALS when flags are omitted.
+
+options:
+  --doc-id ID           Google Doc document ID or URL
+  --credentials FILE    Google service-account JSON credentials
+  --from-start          Copy existing transcript lines before tailing live lines
+
+example:
+  samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
+`,
 };
 
 class ArgError extends Error {}
@@ -105,6 +120,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     transcript: new Set(),
     dicts: new Set(),
     watch: new Set(),
+    notes: new Set(["--doc-id", "--credentials"]),
     frame: new Set(["--out"]),
     doctor: new Set(),
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
@@ -118,6 +134,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     transcript: new Set(),
     dicts: new Set(),
     watch: new Set(),
+    notes: new Set(["--from-start"]),
     frame: new Set(["--archive"]),
     doctor: new Set(),
     _serve: new Set(),
@@ -221,6 +238,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "watch":
     case "doctor":
       break;
+    case "notes": {
+      result.doc_id = (opts["--doc-id"] as string) ?? null;
+      result.credentials = (opts["--credentials"] as string) ?? null;
+      result.from_start = opts["--from-start"] === true;
+      break;
+    }
     case "_serve": {
       const rawPort2 = opts["--port"];
       if (rawPort2 !== undefined) {
@@ -268,6 +291,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdDicts();
     case "watch":
       return cmdWatch();
+    case "notes":
+      return cmdNotes(args);
     case "doctor":
       return cmdDoctor();
     case "_serve":

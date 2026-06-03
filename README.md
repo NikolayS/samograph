@@ -30,6 +30,7 @@ samoagent gives an AI agent a small set of meeting tools:
 
 - `join` - bring a Recall.ai bot into a Zoom or Google Meet call.
 - `watch` - stream live transcript lines to the agent.
+- `notes` - append live transcript lines to a Google Doc.
 - `chat` - send a deliberate message into the meeting chat.
 - `frame` - export the current call view on demand.
 - `leave` - remove the bot and clean up local state.
@@ -51,7 +52,7 @@ samoagent on your machine
 Recall.ai bot in Zoom/Meet
   | transcript, chat, WebSocket video events
   v
-samoagent watch/chat/frame
+samoagent watch/notes/chat/frame
 ```
 
 ## Integration
@@ -67,6 +68,7 @@ Webhook and frame routes are token-protected, and default runtime files stay und
 ```bash
 samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
+samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
 samoagent frame
 samoagent chat "I can see the screen now."
 samoagent leave
@@ -81,6 +83,22 @@ Run `watch` immediately after `join` and keep it running for the whole call. It 
 `watch` exits automatically when `leave` is run. If there is no active session, it prints `No active session.` to stderr and exits.
 
 Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session.
+
+## Google Doc Notes
+
+`notes` tails the same live transcript as `watch` and appends each new utterance to a Google Doc:
+
+```bash
+export GOOGLE_DOC_ID=1abc...
+export GOOGLE_APPLICATION_CREDENTIALS=~/.samoagent/google-service-account.json
+samoagent notes
+```
+
+The credentials file must be a Google service-account JSON key, and the target doc must be shared with that service account's `client_email` as an editor. Use `--from-start` to copy existing local transcript lines before tailing live lines:
+
+```bash
+samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json --from-start
+```
 
 ## Frames
 
@@ -116,11 +134,15 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --transcript-dir DIR` - transcript location, default `~/.samoagent/`.
 - `join --rtmp` - mixed-video RTMP path using ngrok TCP; requires ngrok card verification.
 - `join --rtmp-url rtmp://host:1935/live/call` - explicit mixed-video RTMP receiver.
+- `notes --doc-id ID` - Google Doc ID or URL for live transcript notes; defaults to `GOOGLE_DOC_ID`.
+- `notes --credentials FILE` - Google service-account JSON; defaults to `GOOGLE_APPLICATION_CREDENTIALS`.
+- `notes --from-start` - replay existing transcript lines before tailing live lines.
 
 ## Commands
 
 - `join <meeting-url>` - start local server, ngrok tunnel, and Recall bot.
 - `watch` - stream live transcript until `leave` writes the end sentinel; exits immediately if no session is active.
+- `notes [--doc-id ID] [--credentials FILE] [--from-start]` - append live transcript lines to a Google Doc.
 - `chat <message>` - send meeting chat.
 - `frame [--out FILE] [--archive]` - write latest in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, and transcript file path.

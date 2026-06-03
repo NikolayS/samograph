@@ -19,6 +19,8 @@ const ENV_KEYS = [
   "SAMOAGENT_DICT_DIR",
   "SAMOAGENT_HOME",
   "RECALL_API_KEY",
+  "GOOGLE_DOC_ID",
+  "GOOGLE_APPLICATION_CREDENTIALS",
 ] as const;
 
 export function saveEnv(): Record<string, string | undefined> {

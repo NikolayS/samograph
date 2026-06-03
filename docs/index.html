@@ -857,6 +857,8 @@
 <div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent watch</span>)</div>
 <div class="t-result"><span class="t-time">[14:02:11]</span> <span class="t-spk">Sofia:</span> the p99 on the orders query just doubled</div>
 <div class="t-result"><span class="t-time">[14:02:18]</span> <span class="t-spk">Marcus:</span> can you pull the plan and share it here?</div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent notes --doc-id 1abc...</span>)</div>
+<div class="t-result"><span class="t-gutter">&#9099;</span> live notes appending to Google Doc <span class="t-ok">&#10003;</span></div>
 <div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent frame</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">frame captured &rarr; ~/.samoagent/frames/latest.png</span></div>
 <div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent chat "Seq scan on orders — missing index on (created_at). Patch incoming."</span>)</div>
@@ -880,6 +882,10 @@
           <div class="tool">
             <code>watch</code>
             <span>Stream transcript lines as the meeting happens.</span>
+          </div>
+          <div class="tool">
+            <code>notes</code>
+            <span>Append live transcript notes to a Google Doc.</span>
           </div>
           <div class="tool">
             <code>frame</code>
@@ -938,7 +944,7 @@
           </div>
           <div class="flow-node">
             <strong>samoagent CLI</strong>
-            <span><code>join</code>, <code>watch</code>, <code>frame</code>, <code>chat</code>, <code>leave</code></span>
+            <span><code>join</code>, <code>watch</code>, <code>notes</code>, <code>frame</code>, <code>chat</code>, <code>leave</code></span>
           </div>
           <div class="flow-node">
             <strong>Local callback server</strong>

@@ -96,6 +96,21 @@ describe("argParsing", () => {
     expect(parseArgs(["doctor"]).command).toBe("doctor");
   });
 
+  it("notes subcommand parses Google Doc options", () => {
+    const args = parseArgs([
+      "notes",
+      "--doc-id",
+      "doc-123",
+      "--credentials",
+      "/tmp/google.json",
+      "--from-start",
+    ]);
+    expect(args.command).toBe("notes");
+    expect(args.doc_id).toBe("doc-123");
+    expect(args.credentials).toBe("/tmp/google.json");
+    expect(args.from_start).toBe(true);
+  });
+
   it("frame default out", () => {
     expect(parseArgs(["frame"]).out).toBeNull();
   });
@@ -197,6 +212,14 @@ describe("argParsing", () => {
     expect(proc.exitCode).toBe(0);
     expect(stdout).toContain("usage: samoagent doctor");
     expect(stdout).toContain("Check local prerequisites");
+  });
+
+  it("notes --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "notes", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent notes");
+    expect(stdout).toContain("--doc-id ID");
   });
 
   it("-v prints version and exits 0", () => {
