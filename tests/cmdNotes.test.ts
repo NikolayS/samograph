@@ -35,7 +35,89 @@ describe("cmdNotes", () => {
     cleanupTmpDir(tmp);
   });
 
-  it("appends live transcript lines to the configured Google Doc", async () => {
+  function fakeDocs(writes: Array<{ method: string; docId: string; heading?: string; text: string }>) {
+    return {
+      appendText: async (docId: string, text: string) => {
+        writes.push({ method: "appendText", docId, text });
+      },
+      appendToSection: async (docId: string, heading: string, text: string) => {
+        writes.push({ method: "appendToSection", docId, heading, text });
+      },
+    };
+  }
+
+  it("initializes a GitLab-style live meeting doc template", async () => {
+    const writes: Array<{ method: string; docId: string; heading?: string; text: string }> = [];
+    await cmdNotes(
+      { command: "notes", notes_action: "init", doc_id: "doc-arg", title: "Customer call" },
+      { docs: fakeDocs(writes) },
+    );
+    expect(writes[0]!.method).toBe("appendText");
+    expect(writes[0]!.docId).toBe("doc-arg");
+    expect(writes[0]!.text).toContain("Customer call");
+    expect(writes[0]!.text).toContain("Agenda / questions");
+    expect(writes[0]!.text).toContain("Decisions");
+    expect(writes[0]!.text).toContain("Next steps / action items");
+  });
+
+  it("adds deliberate points, decisions, and action items to sections", async () => {
+    const writes: Array<{ method: string; docId: string; heading?: string; text: string }> = [];
+    const docs = fakeDocs(writes);
+    await cmdNotes(
+      {
+        command: "notes",
+        notes_action: "point",
+        doc_id: "doc-arg",
+        section: "important",
+        speaker: "Alice",
+        message: "Migration risk is the blocker",
+      },
+      { docs },
+    );
+    await cmdNotes(
+      {
+        command: "notes",
+        notes_action: "decision",
+        doc_id: "doc-arg",
+        message: "Use logical replication for phase 1",
+      },
+      { docs },
+    );
+    await cmdNotes(
+      {
+        command: "notes",
+        notes_action: "action",
+        doc_id: "doc-arg",
+        owner: "Nik",
+        due: "2026-06-07",
+        message: "Open migration checklist issue",
+      },
+      { docs },
+    );
+
+    expect(writes).toEqual([
+      {
+        method: "appendToSection",
+        docId: "doc-arg",
+        heading: "Important points",
+        text: "1. Alice: Migration risk is the blocker\n",
+      },
+      {
+        method: "appendToSection",
+        docId: "doc-arg",
+        heading: "Decisions",
+        text: "1. Use logical replication for phase 1\n",
+      },
+      {
+        method: "appendToSection",
+        docId: "doc-arg",
+        heading: "Next steps / action items",
+        text: "1. Owner: Nik. Due: 2026-06-07. Open migration checklist issue\n",
+      },
+    ]);
+  });
+
+  it("appends live transcript lines only in explicit transcript mode", async () => {
     const appended: Array<{ docId: string; text: string }> = [];
     process.env.GOOGLE_DOC_ID = "doc-123";
     writeFileSync(tf, "");
@@ -52,12 +134,13 @@ describe("cmdNotes", () => {
 
     await withTimeout(
       cmdNotes(
-        { command: "notes", doc_id: null },
+        { command: "notes", notes_action: "transcript", doc_id: null },
         {
           docs: {
             appendText: async (docId, text) => {
               appended.push({ docId, text });
             },
+            appendToSection: async () => {},
           },
           watch: FAST,
         },
@@ -86,12 +169,13 @@ describe("cmdNotes", () => {
 
     await withTimeout(
       cmdNotes(
-        { command: "notes", doc_id: "doc-arg", from_start: true },
+        { command: "notes", notes_action: "transcript", doc_id: "doc-arg", from_start: true },
         {
           docs: {
             appendText: async (_docId, text) => {
               texts.push(text);
             },
+            appendToSection: async () => {},
           },
           watch: FAST,
         },

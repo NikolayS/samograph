@@ -20,4 +20,10 @@ export interface ParsedArgs {
   doc_id?: string | null;
   credentials?: string | null;
   from_start?: boolean;
+  notes_action?: string;
+  section?: string | null;
+  speaker?: string | null;
+  owner?: string | null;
+  due?: string | null;
+  title?: string | null;
 }

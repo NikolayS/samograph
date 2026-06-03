@@ -7,7 +7,7 @@ Use samoagent to join a meeting, watch the live transcript, speak in meeting cha
 ```bash
 samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
-samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
+samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Meeting live doc"
 samoagent frame
 samoagent leave
 ```
@@ -29,10 +29,13 @@ samoagent chat "Short message to the meeting"
 Use `notes` when asked to keep a shared doc updated during the call:
 
 ```bash
-samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
+samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Customer call"
+samoagent notes point "Customer is blocked on cutover risk" --speaker Alice
+samoagent notes decision "Run a shadow replay before scheduling cutover"
+samoagent notes action "Create replay checklist issue" --owner Nik --due 2026-06-07
 ```
 
-The doc must already be shared with the service-account email as an editor. `notes` appends transcript lines live and exits when `leave` writes the call-ended sentinel. Add `--from-start` if the doc should include transcript lines captured before `notes` started.
+The doc must already be shared with the service-account email as an editor. Do not dump the whole transcript into the doc unless asked; use `notes transcript --from-start` only for raw transcript mirroring. Prefer concise GitLab-style notes: agenda/question context, important points, decisions, action items, owners, dates, and links.
 
 ## Looking At The Call
 

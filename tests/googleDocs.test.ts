@@ -95,4 +95,78 @@ describe("googleDocs", () => {
       ],
     });
   });
+
+  it("appends text before the next heading when a section exists", async () => {
+    const requests: Request[] = [];
+    const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
+      const req = input instanceof Request ? new Request(input, init) : new Request(String(input), init);
+      requests.push(req);
+      if (req.url === "https://oauth2.googleapis.com/token") {
+        return Response.json({ access_token: "token-123" });
+      }
+      if (req.url.includes("?fields=body")) {
+        return Response.json({
+          body: {
+            content: [
+              {
+                startIndex: 1,
+                endIndex: 11,
+                paragraph: {
+                  paragraphStyle: { namedStyleType: "HEADING_1" },
+                  elements: [{ textRun: { content: "Context\n" } }],
+                },
+              },
+              {
+                startIndex: 11,
+                endIndex: 30,
+                paragraph: {
+                  paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+                  elements: [{ textRun: { content: "1. Goal:\n" } }],
+                },
+              },
+              {
+                startIndex: 30,
+                endIndex: 42,
+                paragraph: {
+                  paragraphStyle: { namedStyleType: "HEADING_1" },
+                  elements: [{ textRun: { content: "Decisions\n" } }],
+                },
+              },
+              {
+                startIndex: 42,
+                endIndex: 59,
+                paragraph: {
+                  paragraphStyle: { namedStyleType: "HEADING_1" },
+                  elements: [{ textRun: { content: "Next steps\n" } }],
+                },
+              },
+              { endIndex: 60 },
+            ],
+          },
+        });
+      }
+      return Response.json({ replies: [] });
+    };
+
+    const client = makeGoogleDocsClient(
+      {
+        client_email: "svc@example.iam.gserviceaccount.com",
+        private_key: privateKey(),
+      },
+      fetchFn as typeof fetch,
+    );
+
+    await client.appendToSection("doc-1", "Decisions", "1. Go\n");
+
+    expect(await requests[2]!.json()).toEqual({
+      requests: [
+        {
+          insertText: {
+            location: { index: 41 },
+            text: "1. Go\n",
+          },
+        },
+      ],
+    });
+  });
 });

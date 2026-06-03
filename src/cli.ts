@@ -31,7 +31,7 @@ commands:
   transcript [bot_id]
   dicts
   watch
-  notes [--doc-id ID] [--credentials FILE] [--from-start]
+  notes <init|point|decision|action|transcript> [options]
   frame [--out FILE] [--archive] [bot_id]
   doctor
 
@@ -79,18 +79,27 @@ examples:
 Check local prerequisites for joining meetings:
 Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samoagent state.
 `,
-  notes: `usage: samoagent notes [--doc-id ID] [--credentials FILE] [--from-start]
+  notes: `usage: samoagent notes <init|point|decision|action|transcript> [options]
 
-Append live transcript lines to a Google Doc as meeting notes.
+Maintain a GitLab-style live meeting doc.
 Uses GOOGLE_DOC_ID and GOOGLE_APPLICATION_CREDENTIALS when flags are omitted.
 
 options:
   --doc-id ID           Google Doc document ID or URL
   --credentials FILE    Google service-account JSON credentials
-  --from-start          Copy existing transcript lines before tailing live lines
+  --title TITLE         Title for notes init
+  --section NAME        Section for notes point
+  --speaker NAME        Speaker prefix for notes point
+  --owner NAME          Action-item owner
+  --due DATE            Action-item due date
+  --from-start          For transcript: copy existing lines before tailing live lines
 
-example:
-  samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
+examples:
+  samoagent notes init --doc-id 1abc...
+  samoagent notes point "Customer is blocked on migration risk" --speaker Alice
+  samoagent notes decision "Use logical replication for phase 1"
+  samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
+  samoagent notes transcript --from-start
 `,
 };
 
@@ -120,7 +129,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     transcript: new Set(),
     dicts: new Set(),
     watch: new Set(),
-    notes: new Set(["--doc-id", "--credentials"]),
+    notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
     frame: new Set(["--out"]),
     doctor: new Set(),
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
@@ -242,6 +251,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.doc_id = (opts["--doc-id"] as string) ?? null;
       result.credentials = (opts["--credentials"] as string) ?? null;
       result.from_start = opts["--from-start"] === true;
+      result.notes_action = positionals[0] ?? "help";
+      result.message = positionals.slice(1).join(" ") || undefined;
+      result.title = (opts["--title"] as string) ?? null;
+      result.section = (opts["--section"] as string) ?? null;
+      result.speaker = (opts["--speaker"] as string) ?? null;
+      result.owner = (opts["--owner"] as string) ?? null;
+      result.due = (opts["--due"] as string) ?? null;
       break;
     }
     case "_serve": {

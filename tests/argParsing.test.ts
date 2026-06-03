@@ -99,16 +99,25 @@ describe("argParsing", () => {
   it("notes subcommand parses Google Doc options", () => {
     const args = parseArgs([
       "notes",
+      "action",
+      "Open",
+      "issue",
       "--doc-id",
       "doc-123",
       "--credentials",
       "/tmp/google.json",
-      "--from-start",
+      "--owner",
+      "Nik",
+      "--due",
+      "2026-06-07",
     ]);
     expect(args.command).toBe("notes");
+    expect(args.notes_action).toBe("action");
+    expect(args.message).toBe("Open issue");
     expect(args.doc_id).toBe("doc-123");
     expect(args.credentials).toBe("/tmp/google.json");
-    expect(args.from_start).toBe(true);
+    expect(args.owner).toBe("Nik");
+    expect(args.due).toBe("2026-06-07");
   });
 
   it("frame default out", () => {

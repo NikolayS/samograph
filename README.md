@@ -30,7 +30,7 @@ samoagent gives an AI agent a small set of meeting tools:
 
 - `join` - bring a Recall.ai bot into a Zoom or Google Meet call.
 - `watch` - stream live transcript lines to the agent.
-- `notes` - append live transcript lines to a Google Doc.
+- `notes` - maintain a structured Google Doc agenda with important points, decisions, and action items.
 - `chat` - send a deliberate message into the meeting chat.
 - `frame` - export the current call view on demand.
 - `leave` - remove the bot and clean up local state.
@@ -68,7 +68,10 @@ Webhook and frame routes are token-protected, and default runtime files stay und
 ```bash
 samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
-samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json
+samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Customer migration call"
+samoagent notes point "Migration risk is the blocker" --speaker Alice
+samoagent notes decision "Use logical replication for phase 1"
+samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
 samoagent frame
 samoagent chat "I can see the screen now."
 samoagent leave
@@ -86,18 +89,23 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Google Doc Notes
 
-`notes` tails the same live transcript as `watch` and appends each new utterance to a Google Doc:
+`notes` follows GitLab-style live doc meetings: the doc is an agenda and collaboration surface, not a transcript dump. The agent watches the transcript, decides what matters, then writes concise points into the right section.
 
 ```bash
 export GOOGLE_DOC_ID=1abc...
 export GOOGLE_APPLICATION_CREDENTIALS=~/.samoagent/google-service-account.json
-samoagent notes
+samoagent notes init --title "Customer migration call"
+samoagent notes point "Customer is blocked on cutover risk" --speaker Alice
+samoagent notes decision "Run a shadow replay before scheduling cutover"
+samoagent notes action "Create replay checklist issue" --owner Nik --due 2026-06-07
 ```
 
-The credentials file must be a Google service-account JSON key, and the target doc must be shared with that service account's `client_email` as an editor. Use `--from-start` to copy existing local transcript lines before tailing live lines:
+The credentials file must be a Google service-account JSON key, and the target doc must be shared with that service account's `client_email` as an editor.
+
+If you really want raw transcript mirroring, make that explicit:
 
 ```bash
-samoagent notes --doc-id 1abc... --credentials ~/.samoagent/google.json --from-start
+samoagent notes transcript --from-start
 ```
 
 ## Frames
@@ -134,15 +142,22 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --transcript-dir DIR` - transcript location, default `~/.samoagent/`.
 - `join --rtmp` - mixed-video RTMP path using ngrok TCP; requires ngrok card verification.
 - `join --rtmp-url rtmp://host:1935/live/call` - explicit mixed-video RTMP receiver.
-- `notes --doc-id ID` - Google Doc ID or URL for live transcript notes; defaults to `GOOGLE_DOC_ID`.
+- `notes --doc-id ID` - Google Doc ID or URL for live meeting notes; defaults to `GOOGLE_DOC_ID`.
 - `notes --credentials FILE` - Google service-account JSON; defaults to `GOOGLE_APPLICATION_CREDENTIALS`.
-- `notes --from-start` - replay existing transcript lines before tailing live lines.
+- `notes --section NAME` - section for `notes point`, such as `important`, `agenda`, `decisions`, or `actions`.
+- `notes --speaker NAME` - speaker prefix for `notes point`.
+- `notes --owner NAME` and `--due DATE` - action-item metadata.
+- `notes --from-start` - with `notes transcript`, replay existing transcript lines before tailing live lines.
 
 ## Commands
 
 - `join <meeting-url>` - start local server, ngrok tunnel, and Recall bot.
 - `watch` - stream live transcript until `leave` writes the end sentinel; exits immediately if no session is active.
-- `notes [--doc-id ID] [--credentials FILE] [--from-start]` - append live transcript lines to a Google Doc.
+- `notes init` - add a live meeting doc template.
+- `notes point <text>` - add an important point under a section.
+- `notes decision <text>` - add a decision.
+- `notes action <text>` - add an action item.
+- `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat.
 - `frame [--out FILE] [--archive]` - write latest in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, and transcript file path.

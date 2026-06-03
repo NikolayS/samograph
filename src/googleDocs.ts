@@ -12,11 +12,27 @@ export type FetchFn = typeof fetch;
 
 export interface GoogleDocsClient {
   appendText(docId: string, text: string): Promise<void>;
+  appendToSection(docId: string, heading: string, text: string): Promise<void>;
 }
 
 const DOCS_SCOPE = "https://www.googleapis.com/auth/documents";
 const TOKEN_URI = "https://oauth2.googleapis.com/token";
 const DOCS_API = "https://docs.googleapis.com/v1/documents";
+
+interface DocsParagraph {
+  startIndex?: number;
+  endIndex?: number;
+  paragraph?: {
+    paragraphStyle?: { namedStyleType?: string };
+    elements?: Array<{
+      textRun?: { content?: string };
+    }>;
+  };
+}
+
+interface DocsDocument {
+  body?: { content?: DocsParagraph[] };
+}
 
 function base64url(input: string | Buffer): string {
   return Buffer.from(input)
@@ -124,38 +140,83 @@ export function makeGoogleDocsClient(
     return fetchFn(url, { ...init, headers });
   }
 
+  async function getDoc(docId: string): Promise<DocsDocument> {
+    const encodedDocId = encodeURIComponent(docId);
+    const docRes = await request(
+      `${DOCS_API}/${encodedDocId}?fields=body(content(startIndex,endIndex,paragraph(paragraphStyle(namedStyleType),elements(textRun(content)))))`,
+    );
+    if (!docRes.ok) {
+      throw new Error(`Google Docs get failed: HTTP ${docRes.status} ${await docRes.text()}`);
+    }
+    return (await docRes.json()) as DocsDocument;
+  }
+
+  async function insertText(docId: string, index: number, text: string): Promise<void> {
+    const encodedDocId = encodeURIComponent(docId);
+    const updateRes = await request(`${DOCS_API}/${encodedDocId}:batchUpdate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requests: [
+          {
+            insertText: {
+              location: { index },
+              text,
+            },
+          },
+        ],
+      }),
+    });
+    if (!updateRes.ok) {
+      throw new Error(`Google Docs update failed: HTTP ${updateRes.status} ${await updateRes.text()}`);
+    }
+  }
+
+  function endInsertionIndex(doc: DocsDocument): number {
+    const content = doc.body?.content ?? [];
+    const endIndex = content.length ? content[content.length - 1]!.endIndex ?? 1 : 1;
+    return Math.max(1, endIndex - 1);
+  }
+
+  function paragraphText(block: DocsParagraph): string {
+    return (block.paragraph?.elements ?? [])
+      .map((e) => e.textRun?.content ?? "")
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function isHeading(block: DocsParagraph): boolean {
+    return Boolean(block.paragraph?.paragraphStyle?.namedStyleType?.startsWith("HEADING_"));
+  }
+
+  function sectionInsertionIndex(doc: DocsDocument, heading: string): number | null {
+    const content = doc.body?.content ?? [];
+    const wanted = heading.toLowerCase();
+    const headingIdx = content.findIndex(
+      (block) => isHeading(block) && paragraphText(block).toLowerCase() === wanted,
+    );
+    if (headingIdx === -1) return null;
+    for (let i = headingIdx + 1; i < content.length; i++) {
+      if (isHeading(content[i]!)) {
+        return Math.max(1, (content[i]!.startIndex ?? content[i]!.endIndex ?? 1) - 1);
+      }
+    }
+    return endInsertionIndex(doc);
+  }
+
   return {
     async appendText(docId: string, text: string): Promise<void> {
-      const encodedDocId = encodeURIComponent(docId);
-      const docRes = await request(
-        `${DOCS_API}/${encodedDocId}?fields=body(content(endIndex))`,
-      );
-      if (!docRes.ok) {
-        throw new Error(`Google Docs get failed: HTTP ${docRes.status} ${await docRes.text()}`);
+      await insertText(docId, endInsertionIndex(await getDoc(docId)), text);
+    },
+    async appendToSection(docId: string, heading: string, text: string): Promise<void> {
+      const doc = await getDoc(docId);
+      const index = sectionInsertionIndex(doc, heading);
+      if (index === null) {
+        await insertText(docId, endInsertionIndex(doc), `\n${heading}\n${text}`);
+        return;
       }
-      const doc = (await docRes.json()) as {
-        body?: { content?: Array<{ endIndex?: number }> };
-      };
-      const content = doc.body?.content ?? [];
-      const endIndex = content.length ? content[content.length - 1]!.endIndex ?? 1 : 1;
-      const insertIndex = Math.max(1, endIndex - 1);
-      const updateRes = await request(`${DOCS_API}/${encodedDocId}:batchUpdate`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          requests: [
-            {
-              insertText: {
-                location: { index: insertIndex },
-                text,
-              },
-            },
-          ],
-        }),
-      });
-      if (!updateRes.ok) {
-        throw new Error(`Google Docs update failed: HTTP ${updateRes.status} ${await updateRes.text()}`);
-      }
+      await insertText(docId, index, text);
     },
   };
 }
