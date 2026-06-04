@@ -92,6 +92,26 @@ describe("argParsing", () => {
     expect(parseArgs(["watch"]).command).toBe("watch");
   });
 
+  it("transcript cursor options", () => {
+    const args = parseArgs([
+      "transcript",
+      "--local",
+      "--file",
+      "/tmp/transcript.txt",
+      "--cursor",
+      "20",
+      "--limit",
+      "10",
+      "bot-abc",
+    ]);
+    expect(args.command).toBe("transcript");
+    expect(args.bot_id).toBe("bot-abc");
+    expect(args.transcript_local).toBe(true);
+    expect(args.transcript_file).toBe("/tmp/transcript.txt");
+    expect(args.transcript_cursor).toBe(20);
+    expect(args.transcript_limit).toBe(10);
+  });
+
   it("doctor subcommand", () => {
     expect(parseArgs(["doctor"]).command).toBe("doctor");
   });
@@ -229,6 +249,16 @@ describe("argParsing", () => {
     expect(proc.exitCode).toBe(0);
     expect(stdout).toContain("usage: samoagent notes");
     expect(stdout).toContain("--doc-id ID");
+  });
+
+  it("transcript --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "transcript", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent transcript");
+    expect(stdout).toContain("--cursor N");
+    expect(stdout).toContain("--file FILE");
+    expect(stdout).toContain("--limit N");
   });
 
   it("-v prints version and exits 0", () => {

@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { resolveTranscriptFile } from "../src/transcript.ts";
+import { existsSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import {
+  resolveNewTranscriptFile,
+  resolveTranscriptFile,
+} from "../src/transcript.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
 
 describe("resolveTranscriptFile", () => {
@@ -41,5 +44,32 @@ describe("resolveTranscriptFile", () => {
     process.env.SAMOAGENT_HOME = tmp;
     resolveTranscriptFile(null);
     expect(existsSync(join(tmp, ".samoagent"))).toBe(true);
+  });
+
+  it("new transcript path starts with UTC timestamp prefix", () => {
+    const custom = join(tmp, "calls");
+    const result = resolveNewTranscriptFile(
+      custom,
+      new Date("2026-06-04T02:29:15Z"),
+    );
+    expect(result).toBe(join(custom, "20260604_022915_transcript.txt"));
+    expect(existsSync(custom)).toBe(true);
+  });
+
+  it("new transcript path does not reuse an existing timestamped file", () => {
+    const custom = join(tmp, "calls");
+    const first = resolveNewTranscriptFile(
+      custom,
+      new Date("2026-06-04T02:29:15Z"),
+    );
+    writeFileSync(first, "previous call\n");
+
+    const second = resolveNewTranscriptFile(
+      custom,
+      new Date("2026-06-04T02:29:15Z"),
+    );
+
+    expect(second).not.toBe(first);
+    expect(basename(second)).toBe("20260604_022915_2_transcript.txt");
   });
 });

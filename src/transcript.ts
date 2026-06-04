@@ -27,6 +27,11 @@ function expanduser(p: string): string {
 }
 
 export function resolveTranscriptFile(transcriptDir?: string | null): string {
+  const d = resolveTranscriptDir(transcriptDir);
+  return join(d, "transcript.txt");
+}
+
+function resolveTranscriptDir(transcriptDir?: string | null): string {
   let d: string;
   if (transcriptDir) {
     d = expanduser(transcriptDir);
@@ -34,7 +39,33 @@ export function resolveTranscriptFile(transcriptDir?: string | null): string {
     d = samoagentDir();
   }
   mkdirSync(d, { recursive: true });
-  return join(d, "transcript.txt");
+  return d;
+}
+
+function timestampPrefixUtc(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return [
+    now.getUTCFullYear(),
+    pad(now.getUTCMonth() + 1),
+    pad(now.getUTCDate()),
+  ].join("") + "_" + [
+    pad(now.getUTCHours()),
+    pad(now.getUTCMinutes()),
+    pad(now.getUTCSeconds()),
+  ].join("");
+}
+
+export function resolveNewTranscriptFile(
+  transcriptDir?: string | null,
+  now: Date = new Date(),
+): string {
+  const d = resolveTranscriptDir(transcriptDir);
+  const prefix = timestampPrefixUtc(now);
+  let candidate = join(d, `${prefix}_transcript.txt`);
+  for (let i = 2; existsSync(candidate); i += 1) {
+    candidate = join(d, `${prefix}_${i}_transcript.txt`);
+  }
+  return candidate;
 }
 
 interface WordEntry {
@@ -87,12 +118,10 @@ function transcriptPathFromState(): string {
   return defaultTranscriptFile();
 }
 
-export function printLocalTranscript(): void {
-  const tf = transcriptPathFromState();
+export function printLocalTranscript(path?: string): void {
+  const tf = path ?? transcriptPathFromState();
   if (existsSync(tf)) {
-    const lines = readFileSync(tf, "utf-8")
-      .split(/\r?\n/)
-      .filter((l) => l.trim() && !SENTINEL_RE.test(l));
+    const lines = localTranscriptLines(tf);
     if (lines.length) {
       const tail = lines.slice(-20);
       const base = tf.split("/").pop() ?? tf;
@@ -110,6 +139,16 @@ export function printLocalTranscript(): void {
   } else {
     process.stdout.write(`Transcript not found at ${tf}\n`);
   }
+}
+
+export function localTranscriptLines(path?: string): string[] {
+  const tf = path ?? transcriptPathFromState();
+  if (!existsSync(tf)) {
+    return [];
+  }
+  return readFileSync(tf, "utf-8")
+    .split(/\r?\n/)
+    .filter((l) => l.trim() && !SENTINEL_RE.test(l));
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -186,7 +225,7 @@ export async function streamTranscriptLines(
     while (true) {
       const size = Bun.file(tf).size;
       if (size < pos) {
-        // File was truncated/rotated (e.g. a new join cleared it) — re-sync
+        // File was truncated/rotated — re-sync
         // from the start. Reset the read position, the line buffer, and the
         // decoder (any partial-byte state belongs to the old file contents).
         pos = 0;

@@ -6,7 +6,13 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
-import { cmdJoin, type JoinDeps, type SpawnedProc } from "../src/commands/join.ts";
+import {
+  cmdJoin,
+  spawnDetached,
+  type JoinDeps,
+  type SpawnChildFn,
+  type SpawnedProc,
+} from "../src/commands/join.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
 import { AVATAR_URL } from "../src/config.ts";
 import { botName } from "../src/botName.ts";
@@ -89,7 +95,7 @@ describe("cmdJoin payload + saved state", () => {
     dictDir = join(tmp, "dicts");
     mkdirSync(dictDir, { recursive: true });
     process.env.SAMOAGENT_STATE_FILE = sf;
-    process.env.SAMOAGENT_HOME = tmp; // transcript -> <tmp>/.samoagent/transcript.txt
+    process.env.SAMOAGENT_HOME = tmp; // transcripts -> <tmp>/.samoagent/<timestamp>_transcript.txt
     process.env.SAMOAGENT_DICT_DIR = dictDir;
   });
   afterEach(() => {
@@ -162,16 +168,20 @@ describe("cmdJoin payload + saved state", () => {
     expect(state.rtmp_local_url).toBeUndefined();
   });
 
-  it("transcript file is truncated on join", async () => {
+  it("new join uses a fresh transcript file and preserves the previous one", async () => {
     const captured: { payload?: any } = {};
-    // First join creates the transcript file & state.
     await cmdJoin(joinArgs(), makeDeps(captured));
-    const state = JSON.parse(readFileSync(sf, "utf-8"));
-    const tf = state.transcript_file as string;
-    writeFileSync(tf, "STALE CONTENT FROM A PREVIOUS CALL\n");
-    // Re-join must clear it.
+    const firstState = JSON.parse(readFileSync(sf, "utf-8"));
+    const firstTf = firstState.transcript_file as string;
+    writeFileSync(firstTf, "PREVIOUS CALL TRANSCRIPT\n");
+
     await cmdJoin(joinArgs(), makeDeps(captured));
-    expect(readFileSync(tf, "utf-8")).toBe("");
+    const secondState = JSON.parse(readFileSync(sf, "utf-8"));
+    const secondTf = secondState.transcript_file as string;
+
+    expect(secondTf).not.toBe(firstTf);
+    expect(readFileSync(firstTf, "utf-8")).toBe("PREVIOUS CALL TRANSCRIPT\n");
+    expect(readFileSync(secondTf, "utf-8")).toBe("");
   });
 
   it("--rtmp-url remote: video_mixed_flv {} + rtmp endpoint + saved rtmp_local_url", async () => {
@@ -205,6 +215,7 @@ describe("cmdJoin payload + saved state", () => {
     await cmdJoin(joinArgs({ ws_video: true, frame_dir: join(tmp, "frames") }), makeDeps(captured));
 
     const rc = captured.payload.recording_config;
+    expect(rc.video_mixed_layout).toBe("gallery_view_v2");
     expect(rc.video_separate_png).toEqual({});
     const wsEp = rc.realtime_endpoints.find((e: any) =>
       Array.isArray(e.events) && e.events.includes("video_separate_png.data"),
@@ -322,6 +333,48 @@ describe("cmdJoin payload + saved state", () => {
     );
     expect(rtmpEp).toBeDefined();
     expect(rc.video_mixed_flv).toEqual({});
+  });
+});
+
+describe("spawnDetached", () => {
+  it("spawns long-lived helpers as detached and unrefs them", () => {
+    const calls: Array<{
+      command: string;
+      args: string[];
+      options: unknown;
+      unref: boolean;
+      killedWith: unknown[];
+    }> = [];
+    const fakeSpawn: SpawnChildFn = (command, args, options) => {
+      const call = { command, args, options, unref: false, killedWith: [] as unknown[] };
+      calls.push(call);
+      return {
+        pid: 1234,
+        kill(signal?: NodeJS.Signals | number) {
+          call.killedWith.push(signal);
+          return true;
+        },
+        unref() {
+          call.unref = true;
+        },
+      };
+    };
+
+    const proc = spawnDetached(["ngrok", "http", "18080"], fakeSpawn);
+
+    expect(proc.pid).toBe(1234);
+    expect(calls).toEqual([
+      {
+        command: "ngrok",
+        args: ["http", "18080"],
+        options: { detached: true, stdio: "ignore" },
+        unref: true,
+        killedWith: [],
+      },
+    ]);
+
+    proc.kill();
+    expect(calls[0]!.killedWith).toEqual(["SIGTERM"]);
   });
 });
 

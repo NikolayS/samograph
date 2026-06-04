@@ -10,6 +10,9 @@ export interface ParsedArgs {
   ws_video?: boolean;
   frame_dir?: string | null;
   bot_id?: string | null;
+  transcript_cursor?: number;
+  transcript_limit?: number;
+  transcript_local?: boolean;
   out?: string | null;
   archive?: boolean;
   message?: string;

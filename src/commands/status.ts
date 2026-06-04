@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { defaultTranscriptFile } from "../config.ts";
+import type { VideoFrameMetadata } from "../frameStore.ts";
 import { loadState, botIdFromArgsOrState } from "../state.ts";
 import { SENTINEL_RE } from "../transcript.ts";
 import type { ParsedArgs } from "../args.ts";
@@ -7,6 +8,7 @@ import { makeRecallClient, type RecallClient } from "../recall.ts";
 
 export interface StatusDeps {
   recall?: RecallClient;
+  fetchFn?: typeof fetch;
 }
 
 export async function cmdStatus(
@@ -14,6 +16,7 @@ export async function cmdStatus(
   deps: StatusDeps = {},
 ): Promise<void> {
   const recall = deps.recall ?? makeRecallClient();
+  const fetchFn = deps.fetchFn ?? fetch;
   const bid = botIdFromArgsOrState(args.bot_id);
   const bot = (await recall.getBot(bid)) as {
     status_changes?: Array<{ code?: string }>;
@@ -38,6 +41,45 @@ export async function cmdStatus(
       .split(/\r?\n/)
       .filter((l) => l.trim() && !SENTINEL_RE.test(l));
     process.stdout.write(`Transcript lines so far: ${lines.length}\n`);
+    if (lines.length) {
+      process.stdout.write(
+        `Last transcript at: ${statSync(tf).mtime.toISOString()}\n`,
+      );
+      process.stdout.write(
+        `Last transcript line: ${lines[lines.length - 1]}\n`,
+      );
+    } else {
+      process.stdout.write("Last transcript line: none yet\n");
+    }
     process.stdout.write(`Transcript file: ${tf}\n`);
+  }
+
+  const frameMetadataUrl = state.local_frame_metadata_url;
+  if (typeof frameMetadataUrl === "string" && frameMetadataUrl) {
+    const headers: Record<string, string> = {};
+    if (typeof state.frame_token === "string" && state.frame_token) {
+      headers["X-Samoagent-Frame-Token"] = state.frame_token;
+    }
+    try {
+      const resp = await fetchFn(frameMetadataUrl, { headers });
+      if (resp.status === 404) {
+        process.stdout.write("Last frame: none yet\n");
+      } else if (resp.ok) {
+        const metadata = (await resp.json()) as VideoFrameMetadata;
+        const participant = metadata.participant?.name ?? "?";
+        const sourceType = metadata.type ?? "?";
+        const frameAt = metadata.timestamp?.absolute ?? metadata.updated_at ?? "?";
+        process.stdout.write(`Last frame at: ${frameAt}\n`);
+        process.stdout.write(`Last frame source: ${sourceType} / ${participant}\n`);
+        if (metadata.updated_at) {
+          process.stdout.write(`Last frame received at: ${metadata.updated_at}\n`);
+        }
+      } else {
+        process.stdout.write(`Last frame: unavailable (${resp.status})\n`);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      process.stdout.write(`Last frame: unavailable (${message})\n`);
+    }
   }
 }

@@ -139,7 +139,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
-- `join --transcript-dir DIR` - transcript location, default `~/.samoagent/`.
+- `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samoagent/`.
 - `join --rtmp` - mixed-video RTMP path using ngrok TCP; requires ngrok card verification.
 - `join --rtmp-url rtmp://host:1935/live/call` - explicit mixed-video RTMP receiver.
 - `notes --doc-id ID` - Google Doc ID or URL for live meeting notes; defaults to `GOOGLE_DOC_ID`.
@@ -171,7 +171,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 Runtime files live under `~/.samoagent/` by default:
 
 - `state.json` - active bot id, process ids, URLs, paths.
-- `transcript.txt` - live transcript.
+- `YYYYMMDD_HHMMSS_transcript.txt` - per-call live transcript; `join` never overwrites older transcripts.
 - `frames/latest.png` and `frames/latest.json` - written only by `samoagent frame`.
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.

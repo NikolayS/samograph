@@ -1,8 +1,9 @@
 import { writeFileSync } from "node:fs";
+import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { AVATAR_URL, RECALL_BASE, ExitError, stateFile } from "../config.ts";
-import { resolveTranscriptFile } from "../transcript.ts";
+import { resolveNewTranscriptFile } from "../transcript.ts";
 import { resolveVideoFrameDir, resolveVideoFrameFile } from "../frameStore.ts";
 import { loadDict } from "../dict.ts";
 import { botName } from "../botName.ts";
@@ -48,14 +49,43 @@ function defaultKill(pid: number, signal: string): void {
   }
 }
 
-function defaultSpawn(cmd: string[]): SpawnedProc {
-  const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+interface ChildProcLike {
+  pid?: number;
+  kill(signal?: NodeJS.Signals | number): boolean;
+  unref(): void;
+}
+
+export type SpawnChildFn = (
+  command: string,
+  args: string[],
+  options: {
+    detached: true;
+    stdio: "ignore";
+  },
+) => ChildProcLike;
+
+export function spawnDetached(
+  cmd: string[],
+  spawnFn: SpawnChildFn = spawnChild,
+): SpawnedProc {
+  const [command, ...args] = cmd;
+  if (!command) {
+    throw new Error("cannot spawn an empty command");
+  }
+  const proc = spawnFn(command, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  proc.unref();
+  if (typeof proc.pid !== "number") {
+    throw new Error(`failed to spawn ${command}`);
+  }
   return {
     get pid() {
-      return proc.pid;
+      return proc.pid!;
     },
     kill() {
-      proc.kill();
+      proc.kill("SIGTERM");
     },
   };
 }
@@ -66,13 +96,13 @@ export async function cmdJoin(
 ): Promise<void> {
   const recall = deps.recall ?? makeRecallClient();
   const kill = deps.kill ?? defaultKill;
-  const spawn = deps.spawn ?? defaultSpawn;
+  const spawn = deps.spawn ?? spawnDetached;
   const waitForNgrokFn = deps.waitForNgrok ?? waitForNgrok;
   const startMediamtxFn = deps.startMediamtx ?? startMediamtx;
   const startNgrokTcpTunnelFn = deps.startNgrokTcpTunnel ?? startNgrokTcpTunnel;
 
-  const transcriptFile = resolveTranscriptFile(args.transcript_dir);
-  writeFileSync(transcriptFile, ""); // clear for new session
+  const transcriptFile = resolveNewTranscriptFile(args.transcript_dir);
+  writeFileSync(transcriptFile, "", { flag: "wx", mode: 0o600 });
   const webhookToken = randomUUID();
   const frameToken = randomUUID();
 
@@ -273,6 +303,7 @@ export async function cmdJoin(
     recordingConfig.video_mixed_flv = {};
   }
   if (useWsVideo) {
+    recordingConfig.video_mixed_layout = "gallery_view_v2";
     recordingConfig.video_separate_png = {};
   }
 
