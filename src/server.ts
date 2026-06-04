@@ -4,6 +4,8 @@ import { Buffer } from "node:buffer";
 import { formatTranscriptLine } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
+  frameSourceAliases,
+  normalizeFrameSource,
   type DecodedVideoFrame,
   type VideoFrameMetadata,
 } from "./frameStore.ts";
@@ -35,6 +37,28 @@ export interface LatestVideoFrame {
   metadata: VideoFrameMetadata | null;
 }
 
+function selectedFrame(
+  latest: LatestVideoFrame,
+  bySource: Map<string, LatestVideoFrame>,
+  source?: string | null,
+): LatestVideoFrame {
+  const key = normalizeFrameSource(source);
+  return key ? (bySource.get(key) ?? { raw: null, metadata: null }) : latest;
+}
+
+function frameInventory(bySource: Map<string, LatestVideoFrame>): VideoFrameMetadata[] {
+  const seen = new Set<string>();
+  const frames: VideoFrameMetadata[] = [];
+  for (const frame of bySource.values()) {
+    const sourceKey = frame.metadata?.source_key;
+    if (!frame.metadata || !sourceKey || seen.has(sourceKey)) continue;
+    seen.add(sourceKey);
+    frames.push(frame.metadata);
+  }
+  frames.sort((a, b) => String(a.source_key).localeCompare(String(b.source_key)));
+  return frames;
+}
+
 export function callIdFromStateFile(path?: string | null): string | null {
   if (!path) return null;
   try {
@@ -59,6 +83,7 @@ export function serve(
       ? { webhookToken: options }
       : options;
   const latestVideoFrame: LatestVideoFrame = { raw: null, metadata: null };
+  const framesBySource = new Map<string, LatestVideoFrame>();
   const frameAuthorized = (req: Request): boolean =>
     Boolean(opts.frameToken) && req.headers.get("X-Samoagent-Frame-Token") === opts.frameToken;
   return Bun.serve({
@@ -91,10 +116,11 @@ export function serve(
         if (!frameAuthorized(req)) {
           return new Response("", { status: 403 });
         }
-        if (latestVideoFrame.raw === null) {
+        const frame = selectedFrame(latestVideoFrame, framesBySource, url.searchParams.get("source"));
+        if (frame.raw === null) {
           return new Response("", { status: 404 });
         }
-        return new Response(latestVideoFrame.raw, {
+        return new Response(frame.raw, {
           headers: { "Content-Type": "image/png" },
         });
       }
@@ -102,10 +128,17 @@ export function serve(
         if (!frameAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
-        if (latestVideoFrame.metadata === null) {
+        const frame = selectedFrame(latestVideoFrame, framesBySource, url.searchParams.get("source"));
+        if (frame.metadata === null) {
           return Response.json({ error: "no frame" }, { status: 404 });
         }
-        return Response.json(latestVideoFrame.metadata);
+        return Response.json(frame.metadata);
+      }
+      if (req.method === "GET" && url.pathname === "/frames.json") {
+        if (!frameAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        return Response.json({ frames: frameInventory(framesBySource) });
       }
       if (url.pathname === "/video-ws") {
         if (!opts.frameToken || url.searchParams.get("token") !== opts.frameToken) {
@@ -135,6 +168,10 @@ export function serve(
         if (decoded === null) return;
         latestVideoFrame.raw = decoded.raw;
         latestVideoFrame.metadata = decoded.metadata;
+        const frame = { raw: decoded.raw, metadata: decoded.metadata };
+        for (const alias of frameSourceAliases(decoded.metadata)) {
+          framesBySource.set(alias, frame);
+        }
       },
     },
   });

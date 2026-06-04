@@ -859,8 +859,10 @@
 <div class="t-result"><span class="t-time">[14:02:18]</span> <span class="t-spk">Marcus:</span> can you pull the plan and share it here?</div>
 <div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent notes decision "Replay before cutover"</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> decision added to live doc <span class="t-ok">&#10003;</span></div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent frame</span>)</div>
-<div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">frame captured &rarr; ~/.samoagent/frames/latest.png</span></div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent frames</span>)</div>
+<div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">type:screen_share available</span></div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent frame --source screen</span>)</div>
+<div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">screen frame captured &rarr; ~/.samoagent/frames/latest.png</span></div>
 <div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent chat "Seq scan on orders — missing index on (created_at). Patch incoming."</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-chat">chat sent to the meeting <span class="t-ok">&#10003;</span></span></div>
 <div class="t-caretline"><span class="blink"></span></div>
@@ -912,7 +914,7 @@
         <div class="grid">
           <div class="item">
             <h3>Observe safely</h3>
-            <p>Transcript and frame access are explicit tool calls.</p>
+            <p>Transcript and selected frame access are explicit tool calls.</p>
           </div>
           <div class="item">
             <h3>Act deliberately</h3>
@@ -944,7 +946,7 @@
           </div>
           <div class="flow-node">
             <strong>samoagent CLI</strong>
-            <span><code>join</code>, <code>watch</code>, <code>notes</code>, <code>frame</code>, <code>chat</code>, <code>leave</code></span>
+            <span><code>join</code>, <code>watch</code>, <code>notes</code>, <code>frames</code>, <code>frame</code>, <code>chat</code>, <code>leave</code></span>
           </div>
           <div class="flow-node">
             <strong>Local callback server</strong>

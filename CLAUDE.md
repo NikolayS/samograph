@@ -8,6 +8,7 @@ Use samoagent to join a meeting, watch the live transcript, speak in meeting cha
 samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
 samoagent watch
 samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Meeting live doc"
+samoagent frames
 samoagent frame
 samoagent leave
 ```
@@ -39,9 +40,10 @@ The doc must already be shared with the service-account email as an editor. Do n
 
 ## Looking At The Call
 
-Frame capture is on by default. Recall sends `video_separate_png.data` frames over the ngrok HTTPS/WSS tunnel. Frames stay in server memory; disk writes happen only when the agent calls:
+Frame capture is on by default. Recall sends `video_separate_png.data` frames over the ngrok HTTPS/WSS tunnel. Frames stay in server memory, indexed by source; disk writes happen only when the agent calls:
 
 ```bash
+samoagent frames
 samoagent frame
 ```
 
@@ -55,9 +57,13 @@ Default output is outside the repo:
 Use explicit outputs only when needed:
 
 ```bash
+samoagent frame --source screen --out /tmp/screen.png
+samoagent frame --source participant:100
 samoagent frame --out /tmp/call.png
 samoagent frame --archive
 ```
+
+`samoagent frames` lists source keys such as `type:screen_share` and `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
 
 `--archive` creates a timestamped filename with bot id, source type, and participant id.
 
