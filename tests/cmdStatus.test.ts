@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { cmdStatus } from "../src/commands/status.ts";
 import type { RecallClient } from "../src/recall.ts";
@@ -61,6 +61,8 @@ describe("cmdStatus", () => {
   it("shows transcript line count when transcript file exists", async () => {
     const tf = join(tmp, "transcript.txt");
     writeFileSync(tf, "[2026-05-30 10:00:00] Alice: hello\n[2026-05-30 10:00:05] Bob: hi\n");
+    const mtime = new Date("2026-05-30T10:00:06Z");
+    utimesSync(tf, mtime, mtime);
     writeFileSync(sf, JSON.stringify({ bot_id: "bot-test-123", transcript_file: tf }));
 
     const bot = { bot_name: "TARS", status_changes: [{ code: "in_call" }] };
@@ -68,6 +70,71 @@ describe("cmdStatus", () => {
       cmdStatus({ command: "status", bot_id: null }, { recall: makeRecall(bot) })
     );
     expect(out).toContain("Transcript lines so far: 2");
+    expect(out).toContain("Last transcript at: 2026-05-30T10:00:06.000Z");
+    expect(out).toContain("Last transcript line: [2026-05-30 10:00:05] Bob: hi");
     expect(out).toContain(tf);
+  });
+
+  it("shows when the transcript file exists but has no transcript lines yet", async () => {
+    const tf = join(tmp, "transcript.txt");
+    writeFileSync(tf, "");
+    writeFileSync(sf, JSON.stringify({ bot_id: "bot-test-123", transcript_file: tf }));
+
+    const bot = { bot_name: "TARS", status_changes: [{ code: "in_call_recording" }] };
+    const out = await captureStdout(() =>
+      cmdStatus({ command: "status", bot_id: null }, { recall: makeRecall(bot) })
+    );
+    expect(out).toContain("Transcript lines so far: 0");
+    expect(out).toContain("Last transcript line: none yet");
+  });
+
+  it("shows latest frame metadata when WebSocket frame capture is configured", async () => {
+    writeFileSync(sf, JSON.stringify({
+      bot_id: "bot-test-123",
+      local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+      frame_token: "frame-secret",
+    }));
+    const seenHeaders: string[] = [];
+    const fetchFn = async (_url: string | URL | Request, init?: RequestInit) => {
+      seenHeaders.push((init?.headers as Record<string, string>)["X-Samoagent-Frame-Token"]);
+      return Response.json({
+        type: "webcam",
+        participant: { id: 100, name: "Nik - PostgresAI", is_host: true },
+        timestamp: { absolute: "2026-06-04T00:48:16.443351Z" },
+        updated_at: "2026-06-04T00:48:17.334Z",
+      });
+    };
+
+    const bot = { bot_name: "TARS", status_changes: [{ code: "in_call_recording" }] };
+    const out = await captureStdout(() =>
+      cmdStatus({ command: "status", bot_id: null }, {
+        recall: makeRecall(bot),
+        fetchFn: fetchFn as unknown as typeof fetch,
+      })
+    );
+
+    expect(seenHeaders).toEqual(["frame-secret"]);
+    expect(out).toContain("Last frame at: 2026-06-04T00:48:16.443351Z");
+    expect(out).toContain("Last frame source: webcam / Nik - PostgresAI");
+    expect(out).toContain("Last frame received at: 2026-06-04T00:48:17.334Z");
+  });
+
+  it("shows when WebSocket frame capture has no frame yet", async () => {
+    writeFileSync(sf, JSON.stringify({
+      bot_id: "bot-test-123",
+      local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+      frame_token: "frame-secret",
+    }));
+    const fetchFn = async () => Response.json({ error: "no frame" }, { status: 404 });
+
+    const bot = { bot_name: "TARS", status_changes: [{ code: "in_call_recording" }] };
+    const out = await captureStdout(() =>
+      cmdStatus({ command: "status", bot_id: null }, {
+        recall: makeRecall(bot),
+        fetchFn: fetchFn as unknown as typeof fetch,
+      })
+    );
+
+    expect(out).toContain("Last frame: none yet");
   });
 });

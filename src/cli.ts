@@ -28,7 +28,7 @@ commands:
   status [bot_id]
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID]
-  transcript [bot_id]
+  transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
   watch
   notes <init|point|decision|action|transcript> [options]
@@ -50,7 +50,7 @@ options:
   --name N               Bot display name
   --dict D               Deepgram keyword dictionary name
   --port P               Local callback server port (default: 8080)
-  --transcript-dir DIR   Directory for transcript.txt
+  --transcript-dir DIR   Directory for timestamped transcript files
   --frame-dir DIR        Directory for on-demand frame output
   --no-ws-video          Disable WebSocket call-frame capture
   --rtmp                 Use local RTMP path through ngrok TCP
@@ -101,6 +101,23 @@ examples:
   samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
   samoagent notes transcript --from-start
 `,
+  transcript: `usage: samoagent transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
+
+Print a finished Recall.ai transcript, falling back to the local live transcript.
+
+options:
+  --cursor N   Start at transcript line N (0-based)
+  --file FILE  Read a local transcript file instead of Recall
+  --limit N    Return at most N lines and print the next cursor
+  --local      Read the active/default local transcript instead of Recall
+
+examples:
+  samoagent transcript
+  samoagent transcript --local --cursor 0 --limit 20
+  samoagent transcript --file ~/.samoagent/20260604_022915_transcript.txt --cursor 0 --limit 20
+  samoagent transcript --cursor 0 --limit 20
+  samoagent transcript --cursor 20 --limit 20 <bot_id>
+`,
 };
 
 class ArgError extends Error {}
@@ -126,7 +143,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     status: new Set(),
     screenshot: new Set(["--out"]),
     chat: new Set(["--bot-id"]),
-    transcript: new Set(),
+    transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
@@ -140,7 +157,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     status: new Set(),
     screenshot: new Set(),
     chat: new Set(),
-    transcript: new Set(),
+    transcript: new Set(["--local"]),
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--from-start"]),
@@ -222,6 +239,24 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "status":
     case "transcript": {
       result.bot_id = positionals.length ? positionals[0] : null;
+      result.transcript_local = opts["--local"] === true;
+      result.transcript_file = (opts["--file"] as string) ?? undefined;
+      const rawCursor = opts["--cursor"];
+      if (rawCursor !== undefined) {
+        const c = Number(rawCursor);
+        if (!Number.isInteger(c) || c < 0) {
+          throw new ArgError(`argument --cursor: invalid non-negative integer: '${rawCursor}'`);
+        }
+        result.transcript_cursor = c;
+      }
+      const rawLimit = opts["--limit"];
+      if (rawLimit !== undefined) {
+        const l = Number(rawLimit);
+        if (!Number.isInteger(l) || l < 1) {
+          throw new ArgError(`argument --limit: invalid positive integer: '${rawLimit}'`);
+        }
+        result.transcript_limit = l;
+      }
       break;
     }
     case "screenshot": {

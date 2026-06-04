@@ -1,5 +1,5 @@
 import { botIdFromArgsOrState } from "../state.ts";
-import { printLocalTranscript } from "../transcript.ts";
+import { localTranscriptLines, printLocalTranscript } from "../transcript.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient, type FetchFn } from "../recall.ts";
 
@@ -8,10 +8,36 @@ export interface TranscriptDeps {
   fetchFn?: FetchFn;
 }
 
+function printLinesWithCursor(lines: string[], args: ParsedArgs): void {
+  const cursor = args.transcript_cursor ?? 0;
+  const limit = args.transcript_limit;
+  const end = limit === undefined ? lines.length : Math.min(lines.length, cursor + limit);
+  for (const line of lines.slice(cursor, end)) {
+    process.stdout.write(line + "\n");
+  }
+  if (args.transcript_cursor !== undefined || limit !== undefined) {
+    process.stdout.write(`Next cursor: ${end}\n`);
+  }
+}
+
+function printLocalTranscriptChunk(args: ParsedArgs): void {
+  const lines = localTranscriptLines(args.transcript_file);
+  if (lines.length) {
+    printLinesWithCursor(lines, args);
+  } else {
+    printLocalTranscript(args.transcript_file);
+  }
+}
+
 export async function cmdTranscript(
   args: ParsedArgs,
   deps: TranscriptDeps = {},
 ): Promise<void> {
+  if (args.transcript_local === true || args.transcript_file) {
+    printLocalTranscriptChunk(args);
+    return;
+  }
+
   const recall = deps.recall ?? makeRecallClient();
   const fetchFn = deps.fetchFn ?? fetch;
   const bid = botIdFromArgsOrState(args.bot_id);
@@ -28,7 +54,7 @@ export async function cmdTranscript(
   const recordings = bot.recordings ?? [];
   if (!recordings.length) {
     process.stdout.write("No recordings yet.\n");
-    printLocalTranscript();
+    printLocalTranscriptChunk(args);
     return;
   }
 
@@ -42,14 +68,15 @@ export async function cmdTranscript(
       words?: Array<{ text?: string; start_time?: number }>;
       speaker?: string;
     }>;
-    for (const entry of data) {
+    const lines = data.map((entry) => {
       const words = (entry.words ?? []).map((w) => w.text ?? "").join(" ");
       const speaker = entry.speaker ?? "?";
       const start = entry.words?.[0]?.start_time ?? 0;
-      process.stdout.write(`[${start.toFixed(1)}s] ${speaker}: ${words}\n`);
-    }
+      return `[${start.toFixed(1)}s] ${speaker}: ${words}`;
+    });
+    printLinesWithCursor(lines, args);
   } else {
     process.stdout.write(`Transcript status: ${statusCode}\n`);
-    printLocalTranscript();
+    printLocalTranscriptChunk(args);
   }
 }
