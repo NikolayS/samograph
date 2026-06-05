@@ -154,13 +154,24 @@ export async function cmdJoin(
     started.clear();
   };
 
-  // start ngrok
-  const ngrok = spawn(["ngrok", "http", String(port), "--log=stdout"]);
-  started.add(ngrok);
+  // start ngrok — unless an external tunnel base URL was provided via --webhook-base
+  const webhookBase = args.webhook_base ?? null;
+  const ngrok = webhookBase
+    ? null
+    : spawn(["ngrok", "http", String(port), "--log=stdout"]);
+  if (ngrok) started.add(ngrok);
 
   try {
-    process.stdout.write(`Starting ngrok tunnel on port ${port}...\n`);
-    let webhookUrl = await waitForNgrokFn(port);
+    let webhookUrl: string | null;
+    if (webhookBase) {
+      process.stdout.write(
+        `Using external tunnel (--webhook-base): ${webhookBase} → localhost:${port}\n`,
+      );
+      webhookUrl = webhookBase;
+    } else {
+      process.stdout.write(`Starting ngrok tunnel on port ${port}...\n`);
+      webhookUrl = await waitForNgrokFn(port);
+    }
     if (!webhookUrl) {
       process.stderr.write(
         "Error: could not get ngrok URL. Is ngrok installed and authenticated?\n",
@@ -328,7 +339,7 @@ export async function cmdJoin(
     bot_name: name,
     webhook_url: webhookUrl,
     server_pid: server.pid,
-    ngrok_pid: ngrok.pid,
+    ngrok_pid: ngrok ? ngrok.pid : null,
     started_at: new Date().toISOString(),
     dict: args.dict ?? null,
     meeting_url: args.url,

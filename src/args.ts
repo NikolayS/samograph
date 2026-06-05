@@ -8,6 +8,7 @@ export interface ParsedArgs {
   rtmp_url?: string | null;
   rtmp?: boolean;
   ws_video?: boolean;
+  webhook_base?: string | null;
   frame_dir?: string | null;
   bot_id?: string | null;
   transcript_cursor?: number;
