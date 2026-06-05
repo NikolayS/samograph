@@ -155,7 +155,25 @@ export async function cmdJoin(
   };
 
   // start ngrok — unless an external tunnel base URL was provided via --webhook-base
-  const webhookBase = args.webhook_base ?? null;
+  let webhookBase = args.webhook_base ?? null;
+  if (webhookBase !== null) {
+    if (!webhookBase) {
+      process.stderr.write("Error: --webhook-base requires a non-empty URL\n");
+      process.exit(1);
+    }
+    let parsedBase: URL;
+    try {
+      parsedBase = new URL(webhookBase);
+    } catch {
+      process.stderr.write(`Error: --webhook-base is not a valid URL: ${webhookBase}\n`);
+      process.exit(1);
+    }
+    if (parsedBase.protocol !== "https:") {
+      process.stderr.write("Error: --webhook-base must be an https:// URL\n");
+      process.exit(1);
+    }
+    webhookBase = webhookBase.replace(/\/$/, "");
+  }
   const ngrok = webhookBase
     ? null
     : spawn(["ngrok", "http", String(port), "--log=stdout"]);

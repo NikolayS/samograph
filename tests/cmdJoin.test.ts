@@ -334,6 +334,47 @@ describe("cmdJoin payload + saved state", () => {
     expect(rtmpEp).toBeDefined();
     expect(rc.video_mixed_flv).toEqual({});
   });
+
+  it("--webhook-base: no ngrok spawned, webhook URL starts with provided base, ngrok_pid is null", async () => {
+    const captured: { payload?: any } = {};
+    const spawnedCmds: string[][] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      spawn: (cmd) => {
+        spawnedCmds.push(cmd);
+        return fakeProc(5000);
+      },
+    };
+
+    await cmdJoin(joinArgs({ webhook_base: "https://my-tunnel.example" }), deps);
+
+    // ngrok must NOT have been spawned
+    const ngrokSpawned = spawnedCmds.some((cmd) => cmd[0] === "ngrok");
+    expect(ngrokSpawned).toBe(false);
+    // only the server should have been spawned
+    expect(spawnedCmds.length).toBe(1);
+
+    // webhook URL should be rooted at the supplied base
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.webhook_url).toStartWith("https://my-tunnel.example/webhook?token=");
+    expect(state.ngrok_pid).toBeNull();
+
+    // Recall payload webhook endpoint also starts with the base
+    const rc = captured.payload.recording_config;
+    const webhookEp = rc.realtime_endpoints.find((e: any) =>
+      e.events?.includes("transcript.data"),
+    );
+    expect(webhookEp.url).toStartWith("https://my-tunnel.example/webhook?token=");
+  });
+
+  it("--webhook-base with trailing slash: endpoint URL does not contain //webhook", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ webhook_base: "https://my-tunnel.example/" }), makeDeps(captured));
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.webhook_url).not.toContain("//webhook");
+    expect(state.webhook_url).toStartWith("https://my-tunnel.example/webhook?token=");
+  });
 });
 
 describe("spawnDetached", () => {

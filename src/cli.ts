@@ -20,7 +20,7 @@ Put your AI agent in Zoom and Google Meet calls.
 samoagent joins through Recall.ai, streams live transcript lines,
 captures call frames on demand, and sends explicit chat messages.
 
-Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok.
+Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
 
 commands:
   join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL]

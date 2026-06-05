@@ -208,6 +208,16 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--port", "65535"]).port).toBe(65535);
   });
 
+  it("join webhook-base default null", () => {
+    expect(parseArgs(["join", "https://meet.google.com/abc"]).webhook_base).toBeNull();
+  });
+
+  it("join webhook-base parsed", () => {
+    expect(
+      parseArgs(["join", "https://meet.google.com/abc", "--webhook-base", "https://my-tunnel.example"]).webhook_base,
+    ).toBe("https://my-tunnel.example");
+  });
+
   it("--help uses current product positioning", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
