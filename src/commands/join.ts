@@ -155,24 +155,34 @@ export async function cmdJoin(
   };
 
   // start ngrok — unless an external tunnel base URL was provided via --webhook-base
+  const rejectWebhookBase = (message: string): never => {
+    process.stderr.write(message);
+    cleanupUnsaved();
+    throw new ExitError(1);
+  };
+  const normalizeWebhookBase = (rawBase: string): string => {
+    if (!rawBase) {
+      rejectWebhookBase("Error: --webhook-base requires a non-empty https:// URL\n");
+    }
+
+    const parsedBase = (() => {
+      try {
+        return new URL(rawBase);
+      } catch {
+        return rejectWebhookBase(`Error: --webhook-base is not a valid URL: ${rawBase}\n`);
+      }
+    })();
+
+    if (parsedBase.protocol !== "https:") {
+      rejectWebhookBase("Error: --webhook-base must be an https:// URL\n");
+    }
+
+    return parsedBase.origin;
+  };
+
   let webhookBase = args.webhook_base ?? null;
   if (webhookBase !== null) {
-    if (!webhookBase) {
-      process.stderr.write("Error: --webhook-base requires a non-empty URL\n");
-      process.exit(1);
-    }
-    let parsedBase: URL;
-    try {
-      parsedBase = new URL(webhookBase);
-    } catch {
-      process.stderr.write(`Error: --webhook-base is not a valid URL: ${webhookBase}\n`);
-      process.exit(1);
-    }
-    if (parsedBase.protocol !== "https:") {
-      process.stderr.write("Error: --webhook-base must be an https:// URL\n");
-      process.exit(1);
-    }
-    webhookBase = webhookBase.replace(/\/$/, "");
+    webhookBase = normalizeWebhookBase(webhookBase);
   }
   const ngrok = webhookBase
     ? null

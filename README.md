@@ -137,7 +137,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 ## Important Flags
 
 - `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
-- `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting ngrok. Useful when ngrok is unavailable or its free-tier bandwidth cap is hit (`ERR_NGROK_727`): run `npx localtunnel --port 8081`, then pass the printed `https://*.loca.lt` URL here.
+- `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting ngrok. Useful when ngrok is unavailable or its free-tier bandwidth cap is hit (`ERR_NGROK_727`): run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here.
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
 - `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samoagent/`.

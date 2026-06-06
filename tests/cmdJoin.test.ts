@@ -364,6 +364,8 @@ describe("cmdJoin payload + saved state", () => {
     const webhookEp = rc.realtime_endpoints.find((e: any) =>
       e.events?.includes("transcript.data"),
     );
+    expect(rc.realtime_endpoints.length).toBeGreaterThan(0);
+    expect(webhookEp).toBeDefined();
     expect(webhookEp.url).toStartWith("https://my-tunnel.example/webhook?token=");
   });
 
@@ -374,6 +376,48 @@ describe("cmdJoin payload + saved state", () => {
     const state = JSON.parse(readFileSync(sf, "utf-8"));
     expect(state.webhook_url).not.toContain("//webhook");
     expect(state.webhook_url).toStartWith("https://my-tunnel.example/webhook?token=");
+
+    const rc = captured.payload.recording_config;
+    const webhookEndpoints = rc.realtime_endpoints.filter((e: any) =>
+      e.events?.includes("transcript.data"),
+    );
+    expect(webhookEndpoints.length).toBeGreaterThan(0);
+    expect(webhookEndpoints[0].url).toMatch(/^https:\/\/my-tunnel\.example\//);
+    expect(webhookEndpoints[0].url).not.toContain("//webhook");
+  });
+
+  it("--webhook-base canonicalizes to origin before registering with Recall", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(
+      joinArgs({ webhook_base: "https://user:pass@my-tunnel.example/some/path/" }),
+      makeDeps(captured),
+    );
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.webhook_url).toStartWith("https://my-tunnel.example/webhook?token=");
+    expect(state.webhook_url).not.toContain("user:pass");
+
+    const rc = captured.payload.recording_config;
+    const webhookEndpoints = rc.realtime_endpoints.filter((e: any) =>
+      e.events?.includes("transcript.data"),
+    );
+    expect(webhookEndpoints.length).toBeGreaterThan(0);
+    expect(webhookEndpoints[0].url).toStartWith("https://my-tunnel.example/webhook?token=");
+    expect(webhookEndpoints[0].url).not.toContain("user:pass");
+  });
+
+  it("--webhook-base rejects http URLs and cleans up the local server", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const { ExitError } = await import("../src/config.ts");
+
+    await expect(
+      cmdJoin(joinArgs({ webhook_base: "http://insecure.example" }), makeDeps(captured, { killed })),
+    ).rejects.toBeInstanceOf(ExitError);
+
+    expect(killed).toEqual([4242]);
+    expect(captured.payload).toBeUndefined();
+    expect(existsSync(sf)).toBe(false);
   });
 });
 
