@@ -12,7 +12,7 @@ Requirements:
 
 - Bun.
 - `RECALL_API_KEY`.
-- `ngrok` installed and authenticated (free plan). `join` starts and manages ngrok automatically — you don't run it yourself.
+- `ngrok` installed and authenticated (free plan). `join` starts and manages ngrok automatically — you don't run it yourself. ngrok is optional when using `--webhook-base` with an external tunnel (localtunnel, cloudflared, etc.).
 
 Install the CLI from npm:
 
@@ -47,7 +47,7 @@ AI agent
   | runs CLI tools
   v
 samoagent on your machine
-  | starts bot + local callback server + ngrok tunnel
+  | starts bot + local callback server + ngrok tunnel (or external tunnel via --webhook-base)
   v
 Recall.ai bot in Zoom/Meet
   | transcript, chat, WebSocket video events
@@ -57,7 +57,7 @@ samoagent watch/notes/chat/frame
 
 ## Integration
 
-`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for normal use.
+`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for normal use. Alternatively, pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning ngrok entirely.
 
 ngrok TCP is only needed for the optional RTMP path (`--rtmp`) and requires a credit/debit card on file at ngrok.com (free plan — the card is not charged). The standard WebSocket frame path does not need TCP or card verification.
 
@@ -137,6 +137,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 ## Important Flags
 
 - `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
+- `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting ngrok. Useful when ngrok is unavailable or its free-tier bandwidth cap is hit (`ERR_NGROK_727`): run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here.
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
 - `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samoagent/`.
