@@ -14,13 +14,13 @@ import {
   type SpawnedProc,
 } from "../src/commands/join.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
-import { AVATAR_URL } from "../src/config.ts";
 import { botName } from "../src/botName.ts";
 import type { RecallClient } from "../src/recall.ts";
 import type { ParsedArgs } from "../src/args.ts";
 
 const WEBHOOK_BASE = "https://ngrok.example";
 const WEBHOOK_PREFIX = `${WEBHOOK_BASE}/webhook?token=`;
+const PRESENCE_PREFIX = `${WEBHOOK_BASE}/presence?token=`;
 
 /** Fake recall client capturing the createBot payload. */
 function makeFakeRecall(captured: { payload?: any; rejectCreateBot?: boolean }): RecallClient {
@@ -111,7 +111,7 @@ describe("cmdJoin payload + saved state", () => {
     expect(p).toBeDefined();
     expect(p.bot_name).toBe(botName("TARS"));
     expect(p.output_media.camera.kind).toBe("webpage");
-    expect(p.output_media.camera.config.url).toBe(AVATAR_URL);
+    expect(p.output_media.camera.config.url).toStartWith(PRESENCE_PREFIX);
 
     const rc = p.recording_config;
     expect(rc.transcript.provider.deepgram_streaming).toEqual({
@@ -160,6 +160,11 @@ describe("cmdJoin payload + saved state", () => {
     expect(state.bot_id).toBe("bot-new");
     expect(state.bot_name).toBe(botName("TARS"));
     expect(state.webhook_url).toStartWith(WEBHOOK_PREFIX);
+    expect(state.presence_page_url).toStartWith(PRESENCE_PREFIX);
+    expect(state.local_presence_url).toBe("http://127.0.0.1:8080/presence");
+    expect(state.local_presence_update_url).toBe("http://127.0.0.1:8080/presence");
+    expect(typeof state.presence_token).toBe("string");
+    expect(captured.payload.output_media.camera.config.url).toBe(state.presence_page_url);
     expect(typeof state.transcript_file).toBe("string");
     expect(state.transcript_file).toContain("transcript.txt");
     expect(typeof state.server_pid).toBe("number");
@@ -358,6 +363,7 @@ describe("cmdJoin payload + saved state", () => {
     const state = JSON.parse(readFileSync(sf, "utf-8"));
     expect(state.webhook_url).toStartWith("https://my-tunnel.example/webhook?token=");
     expect(state.ngrok_pid).toBeNull();
+    expect(state.presence_page_url).toStartWith("https://my-tunnel.example/presence?token=");
 
     // Recall payload webhook endpoint also starts with the base
     const rc = captured.payload.recording_config;
@@ -367,6 +373,9 @@ describe("cmdJoin payload + saved state", () => {
     expect(rc.realtime_endpoints.length).toBeGreaterThan(0);
     expect(webhookEp).toBeDefined();
     expect(webhookEp.url).toStartWith("https://my-tunnel.example/webhook?token=");
+    expect(captured.payload.output_media.camera.config.url).toStartWith(
+      "https://my-tunnel.example/presence?token=",
+    );
   });
 
   it("--webhook-base with trailing slash: endpoint URL does not contain //webhook", async () => {

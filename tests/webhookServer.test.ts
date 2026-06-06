@@ -189,6 +189,91 @@ describe("webhook handler", () => {
     }
   });
 
+  it("presence page and json are token gated and start in listening state", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const blocked = await fetch(`http://localhost:${server.port}/presence`);
+      expect(blocked.status).toBe(403);
+
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("Content-Type")).toContain("text/html");
+      expect(await page.text()).toContain("samoagent-presence");
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      expect(jsonResp.status).toBe(200);
+      const json = await jsonResp.json() as { state: string; message: string };
+      expect(json.state).toBe("listening");
+      expect(json.message).toBe("Listening");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence update changes later presence json", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const blocked = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
+      });
+      expect(blocked.status).toBe(403);
+
+      const queryOnly = await fetch(`http://localhost:${server.port}/presence?token=presence-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "acting", message: "Query token should not update" }),
+      });
+      expect(queryOnly.status).toBe(403);
+
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samoagent-Presence-Token": "presence-token",
+        },
+        body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
+      });
+      expect(updated.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const json = await jsonResp.json() as { state: string; message: string };
+      expect(json).toMatchObject({
+        state: "thinking",
+        message: "Checking indexes",
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence update rejects invalid state", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samoagent-Presence-Token": "presence-token",
+        },
+        body: JSON.stringify({ state: "confused" }),
+      });
+      expect(resp.status).toBe(400);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("video websocket stores latest frame in memory and frame routes require token", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",

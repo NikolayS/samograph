@@ -13,6 +13,7 @@ import { cmdWatch } from "./commands/watch.ts";
 import { cmdServe } from "./commands/serve.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
+import { cmdPresence } from "./commands/presence.ts";
 
 const USAGE = `usage: samoagent <command> [options]
 
@@ -28,6 +29,7 @@ commands:
   status [bot_id]
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID]
+  presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
   watch
@@ -80,6 +82,16 @@ examples:
 
 Check local prerequisites for joining meetings:
 Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samoagent state.
+`,
+  presence: `usage: samoagent presence <state> [message]
+
+Update the bot camera presence shown in the meeting.
+States: listening|thinking|speaking|acting|idle
+
+examples:
+  samoagent presence listening
+  samoagent presence thinking "Checking the migration plan"
+  samoagent presence speaking "Answering in chat"
 `,
   notes: `usage: samoagent notes <init|point|decision|action|transcript> [options]
 
@@ -145,13 +157,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
     status: new Set(),
     screenshot: new Set(["--out"]),
     chat: new Set(["--bot-id"]),
+    presence: new Set(),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
     frame: new Set(["--out"]),
     doctor: new Set(),
-    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
+    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
     join: new Set(["--rtmp", "--no-ws-video"]),
@@ -159,6 +172,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     status: new Set(),
     screenshot: new Set(),
     chat: new Set(),
+    presence: new Set(),
     transcript: new Set(["--local"]),
     dicts: new Set(),
     watch: new Set(),
@@ -281,6 +295,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.bot_id = (opts["--bot-id"] as string) ?? null;
       break;
     }
+    case "presence": {
+      if (positionals.length < 1) {
+        throw new ArgError("the following arguments are required: state");
+      }
+      result.presence_state = positionals[0];
+      result.message = positionals.slice(1).join(" ") || undefined;
+      break;
+    }
     case "dicts":
     case "watch":
     case "doctor":
@@ -318,6 +340,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.webhook_token = (opts["--webhook-token"] as string) ?? "";
       result.call_id_file = (opts["--call-id-file"] as string) ?? "";
       result.frame_token = (opts["--frame-token"] as string) ?? "";
+      result.presence_token = (opts["--presence-token"] as string) ?? "";
       break;
     }
   }
@@ -339,6 +362,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdTranscript(args);
     case "chat":
       return cmdChat(args);
+    case "presence":
+      return cmdPresence(args);
     case "frame":
       return cmdFrame(args);
     case "dicts":

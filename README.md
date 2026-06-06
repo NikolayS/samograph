@@ -32,6 +32,7 @@ samoagent gives an AI agent a small set of meeting tools:
 - `watch` - stream live transcript lines to the agent.
 - `notes` - maintain a structured Google Doc agenda with important points, decisions, and action items.
 - `chat` - send a deliberate message into the meeting chat.
+- `presence` - update the bot camera state shown in the meeting.
 - `frame` - export the current call view on demand.
 - `leave` - remove the bot and clean up local state.
 - `status` - show the current Recall bot state.
@@ -72,6 +73,7 @@ samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --t
 samoagent notes point "Migration risk is the blocker" --speaker Alice
 samoagent notes decision "Use logical replication for phase 1"
 samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
+samoagent presence thinking "Checking the shared screen"
 samoagent frame
 samoagent chat "I can see the screen now."
 samoagent leave
@@ -86,6 +88,22 @@ Run `watch` immediately after `join` and keep it running for the whole call. It 
 `watch` exits automatically when `leave` is run. If there is no active session, it prints `No active session.` to stderr and exits.
 
 Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session.
+
+## Dynamic Bot Presence
+
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page starts as `listening` and refreshes itself from the local callback server every second.
+
+Update it from the agent loop:
+
+```bash
+samoagent presence listening
+samoagent presence thinking "Checking logs"
+samoagent presence speaking "Answering in chat"
+samoagent presence acting "Opening PR review"
+samoagent presence idle
+```
+
+Presence is in-memory runtime state. It is meant for lightweight meeting signaling, not persistence.
 
 ## Google Doc Notes
 
@@ -160,6 +178,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes action <text>` - add an action item.
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat.
+- `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state.
 - `frame [--out FILE] [--archive]` - write latest in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, and transcript file path.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.

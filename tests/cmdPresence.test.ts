@@ -1,0 +1,90 @@
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ExitError } from "../src/config.ts";
+import { cmdPresence } from "../src/commands/presence.ts";
+import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
+
+describe("cmdPresence", () => {
+  let tmp: string;
+  let env: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    env = saveEnv();
+    tmp = makeTmpDir();
+    process.env.SAMOAGENT_STATE_FILE = join(tmp, "state.json");
+  });
+
+  afterEach(() => {
+    restoreEnv(env);
+    cleanupTmpDir(tmp);
+  });
+
+  it("posts state update to the local presence server with token", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_token: "presence-secret",
+      }),
+    );
+
+    let capturedUrl = "";
+    let capturedInit: RequestInit | undefined;
+    const writes: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (s: string) => { writes.push(s); return true; };
+    try {
+      await cmdPresence(
+        { command: "presence", presence_state: "thinking", message: "Checking indexes" },
+        {
+          fetchFn: async (url, init) => {
+            capturedUrl = String(url);
+            capturedInit = init;
+            return Response.json({ ok: true, presence: { state: "thinking" } });
+          },
+        },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+
+    expect(capturedUrl).toBe("http://127.0.0.1:8080/presence");
+    expect(capturedInit?.method).toBe("POST");
+    expect((capturedInit?.headers as Record<string, string>)["X-Samoagent-Presence-Token"]).toBe(
+      "presence-secret",
+    );
+    expect(JSON.parse(capturedInit?.body as string)).toEqual({
+      state: "thinking",
+      message: "Checking indexes",
+    });
+    expect(writes.join("")).toContain("Presence: thinking");
+  });
+
+  it("throws ExitError when no active presence server is in state", async () => {
+    writeFileSync(join(tmp, "state.json"), JSON.stringify({ bot_id: "bot-123" }));
+
+    await expect(
+      cmdPresence({ command: "presence", presence_state: "speaking" }),
+    ).rejects.toBeInstanceOf(ExitError);
+  });
+
+  it("rejects invalid presence state before network call", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_token: "presence-secret",
+      }),
+    );
+
+    let called = false;
+    await expect(
+      cmdPresence(
+        { command: "presence", presence_state: "confused" },
+        { fetchFn: async () => { called = true; return Response.json({ ok: true }); } },
+      ),
+    ).rejects.toBeInstanceOf(ExitError);
+    expect(called).toBe(false);
+  });
+});

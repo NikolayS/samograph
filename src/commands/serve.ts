@@ -7,6 +7,7 @@ export async function cmdServe(args: ParsedArgs): Promise<void> {
   serve(port, transcriptPath, {
     webhookToken: args.webhook_token,
     frameToken: args.frame_token,
+    presenceToken: args.presence_token,
     currentCallId: () => callIdFromStateFile(args.call_id_file),
   });
   // Keep the process alive — Bun.serve does not block on its own.

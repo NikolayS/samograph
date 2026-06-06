@@ -84,6 +84,17 @@ describe("argParsing", () => {
     expect(parseArgs(["chat", "Hello meeting"]).message).toBe("Hello meeting");
   });
 
+  it("presence parses state and message", () => {
+    const args = parseArgs(["presence", "thinking", "Checking", "indexes"]);
+    expect(args.command).toBe("presence");
+    expect(args.presence_state).toBe("thinking");
+    expect(args.message).toBe("Checking indexes");
+  });
+
+  it("presence requires state", () => {
+    expect(() => parseArgs(["presence"])).toThrow();
+  });
+
   it("dicts subcommand", () => {
     expect(parseArgs(["dicts"]).command).toBe("dicts");
   });
@@ -175,9 +186,12 @@ describe("argParsing", () => {
       "/tmp/state.json",
       "--frame-token",
       "secret",
+      "--presence-token",
+      "presence-secret",
     ]);
     expect(args.call_id_file).toBe("/tmp/state.json");
     expect(args.frame_token).toBe("secret");
+    expect(args.presence_token).toBe("presence-secret");
   });
 
   it("invalid command throws", () => {
@@ -234,6 +248,14 @@ describe("argParsing", () => {
     expect(stdout).toContain("usage: samoagent join <url>");
     expect(stdout).toContain("--no-ws-video");
     expect(stdout).toContain("--rtmp-url URL");
+  });
+
+  it("presence --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "presence", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent presence <state>");
+    expect(stdout).toContain("listening|thinking|speaking|acting|idle");
   });
 
   it("frame --help shows command-specific help", () => {

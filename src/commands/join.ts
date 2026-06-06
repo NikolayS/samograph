@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { AVATAR_URL, RECALL_BASE, ExitError, stateFile } from "../config.ts";
+import { RECALL_BASE, ExitError, stateFile } from "../config.ts";
 import { resolveNewTranscriptFile } from "../transcript.ts";
 import { resolveVideoFrameDir, resolveVideoFrameFile } from "../frameStore.ts";
 import { loadDict } from "../dict.ts";
@@ -105,6 +105,7 @@ export async function cmdJoin(
   writeFileSync(transcriptFile, "", { flag: "wx", mode: 0o600 });
   const webhookToken = randomUUID();
   const frameToken = randomUUID();
+  const presenceToken = randomUUID();
 
   const keyterms = loadDict(args.dict);
   const name = botName(args.name);
@@ -142,6 +143,8 @@ export async function cmdJoin(
     stateFile(),
     "--frame-token",
     frameToken,
+    "--presence-token",
+    presenceToken,
   ]);
   const started = new Set<SpawnedProc>([server]);
   let stateSaved = false;
@@ -207,8 +210,11 @@ export async function cmdJoin(
       cleanupUnsaved();
       throw new ExitError(1);
     }
-    webhookUrl = webhookUrl.replace(/\/+$/, "") + `/webhook?token=${encodeURIComponent(webhookToken)}`;
+    const publicBaseUrl = webhookUrl.replace(/\/+$/, "");
+    const presencePageUrl = `${publicBaseUrl}/presence?token=${encodeURIComponent(presenceToken)}`;
+    webhookUrl = `${publicBaseUrl}/webhook?token=${encodeURIComponent(webhookToken)}`;
     process.stdout.write(`Webhook: ${webhookUrl}\n`);
+    process.stdout.write(`Presence camera: ${presencePageUrl}\n`);
 
     let mediamtxAuto: SpawnedProc | null = null;
     let rtmpViaNgrok = false;
@@ -352,7 +358,7 @@ export async function cmdJoin(
     output_media: {
       camera: {
         kind: "webpage",
-        config: { url: AVATAR_URL },
+        config: { url: presencePageUrl },
       },
     },
     recording_config: recordingConfig,
@@ -366,6 +372,10 @@ export async function cmdJoin(
     agent_name: args.name || "samoagent",
     bot_name: name,
     webhook_url: webhookUrl,
+    presence_page_url: presencePageUrl,
+    local_presence_url: `http://127.0.0.1:${port}/presence`,
+    local_presence_update_url: `http://127.0.0.1:${port}/presence`,
+    presence_token: presenceToken,
     server_pid: server.pid,
     ngrok_pid: ngrok ? ngrok.pid : null,
     started_at: new Date().toISOString(),
@@ -414,6 +424,9 @@ export async function cmdJoin(
   );
   process.stdout.write(
     `To send a message in the meeting chat: samoagent chat 'your message'\n`,
+  );
+  process.stdout.write(
+    `To update bot presence:       samoagent presence thinking 'short status'\n`,
   );
   if (rtmpLocalUrl) {
     process.stdout.write(

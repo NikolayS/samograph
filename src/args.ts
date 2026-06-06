@@ -21,6 +21,8 @@ export interface ParsedArgs {
   webhook_token?: string;
   call_id_file?: string;
   frame_token?: string;
+  presence_token?: string;
+  presence_state?: string;
   doc_id?: string | null;
   credentials?: string | null;
   from_start?: boolean;

@@ -7,6 +7,13 @@ import {
   type DecodedVideoFrame,
   type VideoFrameMetadata,
 } from "./frameStore.ts";
+import {
+  newPresenceSnapshot,
+  normalizePresenceState,
+  presencePageHtml,
+  sanitizePresenceMessage,
+  type PresenceSnapshot,
+} from "./presence.ts";
 
 export const WEBHOOK_MAX_BYTES = 1024 * 1024;
 
@@ -27,6 +34,7 @@ export async function handleWebhook(
 export interface ServeOptions {
   webhookToken?: string | null;
   frameToken?: string | null;
+  presenceToken?: string | null;
   currentCallId?: () => string | null;
 }
 
@@ -59,8 +67,15 @@ export function serve(
       ? { webhookToken: options }
       : options;
   const latestVideoFrame: LatestVideoFrame = { raw: null, metadata: null };
+  let presence: PresenceSnapshot = newPresenceSnapshot();
   const frameAuthorized = (req: Request): boolean =>
     Boolean(opts.frameToken) && req.headers.get("X-Samoagent-Frame-Token") === opts.frameToken;
+  const presenceAuthorized = (req: Request, url: URL, allowQueryToken: boolean): boolean =>
+    Boolean(opts.presenceToken) &&
+    (
+      req.headers.get("X-Samoagent-Presence-Token") === opts.presenceToken ||
+      (allowQueryToken && url.searchParams.get("token") === opts.presenceToken)
+    );
   return Bun.serve({
     port,
     hostname: "0.0.0.0",
@@ -106,6 +121,46 @@ export function serve(
           return Response.json({ error: "no frame" }, { status: 404 });
         }
         return Response.json(latestVideoFrame.metadata);
+      }
+      if (req.method === "GET" && url.pathname === "/presence") {
+        if (!presenceAuthorized(req, url, true)) {
+          return new Response("", { status: 403 });
+        }
+        return new Response(presencePageHtml(), {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+      if (req.method === "GET" && url.pathname === "/presence.json") {
+        if (!presenceAuthorized(req, url, true)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        return Response.json(presence, {
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/presence") {
+        if (!presenceAuthorized(req, url, false)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        let payload: unknown = {};
+        try {
+          payload = await req.json();
+        } catch {
+          payload = {};
+        }
+        const rawPayload = payload as { state?: unknown; message?: unknown };
+        const state = normalizePresenceState(rawPayload.state);
+        if (state === null) {
+          return Response.json({ error: "invalid presence state" }, { status: 400 });
+        }
+        presence = newPresenceSnapshot(
+          state,
+          sanitizePresenceMessage(rawPayload.message, state),
+        );
+        return Response.json({ ok: true, presence });
       }
       if (url.pathname === "/video-ws") {
         if (!opts.frameToken || url.searchParams.get("token") !== opts.frameToken) {
