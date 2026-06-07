@@ -68,7 +68,7 @@ export function newPresenceSnapshot(
   };
 }
 
-const ACTIVITY_LIMIT = 8;
+const ACTIVITY_LIMIT = 16;
 
 export function appendPresenceActivity(
   snapshot: PresenceSnapshot,
@@ -209,8 +209,8 @@ export function presencePageHtml(): string {
       width: 120%;
       height: 120%;
       z-index: 1;
-      opacity: 0.96;
-      filter: saturate(1.12) contrast(1.08);
+      opacity: 0.34;
+      filter: blur(12px) saturate(1.18) contrast(1.04);
       pointer-events: none;
     }
     .header {
@@ -339,26 +339,27 @@ export function presencePageHtml(): string {
       display: grid;
       align-content: start;
       gap: clamp(8px, 1.1vh, 12px);
-      grid-template-rows: minmax(0, 1fr);
       min-height: 0;
       overflow: hidden;
+      display: flex;
+      flex-direction: column-reverse;
+      justify-content: flex-start;
     }
     .item {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 6px;
+      display: block;
       min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-      border-left: 4px solid currentColor;
-      padding: 0 0 0 12px;
+      flex: 0 0 auto;
+      border-left: 2px solid currentColor;
+      padding: 0 0 0 9px;
       color: #e2e8f0;
+      opacity: 0.92;
     }
     .label {
       color: #94a3b8;
       font-size: clamp(10px, 1.1vw, 14px);
       font-weight: 900;
       text-transform: uppercase;
+      line-height: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -368,13 +369,13 @@ export function presencePageHtml(): string {
     }
     .text {
       color: #f8fafc;
-      font-size: clamp(14px, 1.45vw, 20px);
+      font-size: clamp(12px, 1.18vw, 17px);
       line-height: 1.04;
       min-height: 0;
       overflow-wrap: anywhere;
       display: -webkit-box;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 6;
+      -webkit-line-clamp: 2;
       overflow: hidden;
     }
     .empty {
@@ -627,7 +628,7 @@ export function presencePageHtml(): string {
         return;
       }
       let lastLabel = "";
-      for (const item of items.slice(0, 1)) {
+      for (const item of items.slice(0, 14)) {
         const row = document.createElement("div");
         row.className = "item";
         const label = document.createElement("div");
