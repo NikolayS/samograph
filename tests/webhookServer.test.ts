@@ -210,9 +210,12 @@ describe("webhook handler", () => {
       expect(html).toContain("initPlasma");
       expect(html).toContain("drawSpherePlasma");
       expect(html).toContain("backgroundMode");
-      expect(html).toContain("const frameMs = 82");
-      expect(html).toContain("-webkit-line-clamp: 5");
-      expect(html).toContain("animation: meter");
+      expect(html).toContain("params.get(\"bg\") || \"static\"");
+      expect(html).toContain("const frameMs = 250");
+      expect(html).toContain("-webkit-line-clamp: 7");
+      expect(html).toContain("grid-template-rows: repeat(2, minmax(0, 1fr))");
+      expect(html).toContain("label.classList.add(\"repeated\")");
+      expect(html).toContain("backgroundMode !== \"static\"");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
       expect(jsonResp.status).toBe(200);

@@ -172,7 +172,7 @@ export function presencePageHtml(): string {
       justify-self: center;
       border-radius: 8px;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
       gap: clamp(12px, 2vh, 20px);
       border: 1px solid rgba(226, 232, 240, 0.14);
       box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 28px 80px rgba(0, 0, 0, 0.56);
@@ -200,9 +200,9 @@ export function presencePageHtml(): string {
       width: 118%;
       height: 118%;
       z-index: 0;
-      opacity: 0.78;
-      filter: blur(18px) saturate(1.25) contrast(1.08);
-      transform: scale(1.02);
+      opacity: 0.58;
+      filter: blur(16px) saturate(1.12) contrast(1.04);
+      transform: scale(1.01);
       pointer-events: none;
     }
     .scan {
@@ -211,8 +211,7 @@ export function presencePageHtml(): string {
       background: linear-gradient(180deg, transparent, rgba(248, 250, 252, 0.07), transparent);
       height: 26%;
       transform: translateY(-110%);
-      animation: scan 6s linear infinite;
-      opacity: 0.55;
+      opacity: 0.22;
       pointer-events: none;
       z-index: 1;
     }
@@ -288,14 +287,13 @@ export function presencePageHtml(): string {
     .pulse span {
       display: block;
       min-width: 3px;
-      height: 28%;
+      height: 42%;
       background: var(--accent);
-      animation: meter 1.8s steps(4, end) infinite;
       box-shadow: 0 0 18px var(--accent-mid);
     }
-    .pulse span:nth-child(3n) { animation-delay: 0.14s; }
-    .pulse span:nth-child(3n + 1) { animation-delay: 0.28s; }
-    .pulse span:nth-child(5n) { animation-duration: 1.65s; }
+    .pulse span:nth-child(3n) { height: 72%; }
+    .pulse span:nth-child(3n + 1) { height: 54%; }
+    .pulse span:nth-child(5n) { height: 88%; }
     .lanes {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -342,13 +340,17 @@ export function presencePageHtml(): string {
       display: grid;
       align-content: start;
       gap: clamp(8px, 1.1vh, 12px);
+      grid-template-rows: repeat(2, minmax(0, 1fr));
       min-height: 0;
       overflow: hidden;
     }
     .item {
       display: grid;
-      gap: 4px;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 6px;
       min-width: 0;
+      min-height: 0;
+      overflow: hidden;
       border-left: 4px solid currentColor;
       padding: 0 0 0 12px;
       color: #e2e8f0;
@@ -363,14 +365,18 @@ export function presencePageHtml(): string {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .label.repeated {
+      display: none;
+    }
     .text {
       color: #f8fafc;
       font-size: clamp(15px, 1.75vw, 24px);
       line-height: 1.12;
+      min-height: 0;
       overflow-wrap: anywhere;
       display: -webkit-box;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 5;
+      -webkit-line-clamp: 7;
       overflow: hidden;
     }
     .empty {
@@ -393,10 +399,6 @@ export function presencePageHtml(): string {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-    @keyframes meter {
-      0%, 100% { height: 24%; opacity: 0.45; }
-      45% { height: 92%; opacity: 1; }
     }
     @keyframes scan {
       to { transform: translateY(410%); }
@@ -470,7 +472,7 @@ export function presencePageHtml(): string {
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
-    const backgroundMode = params.get("bg") || "cycle";
+    const backgroundMode = params.get("bg") || "static";
     const styles = {
       idle: ["#94a3b8", "rgba(148, 163, 184, 0.2)", "rgba(148, 163, 184, 0.42)"],
       listening: ["#a3e635", "rgba(163, 230, 53, 0.16)", "rgba(163, 230, 53, 0.46)"],
@@ -508,12 +510,12 @@ export function presencePageHtml(): string {
       let image = null;
       let lastFrame = 0;
       const scale = 1.2;
-      const frameMs = 82;
+      const frameMs = 250;
       const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       function resize() {
         const rect = canvas.getBoundingClientRect();
-        w = Math.max(44, Math.min(260, Math.floor(rect.width / 5)));
-        h = Math.max(28, Math.min(150, Math.floor(rect.height / 5)));
+        w = Math.max(32, Math.min(140, Math.floor(rect.width / 10)));
+        h = Math.max(20, Math.min(80, Math.floor(rect.height / 10)));
         canvas.width = w;
         canvas.height = h;
         image = ctx.createImageData(w, h);
@@ -594,15 +596,16 @@ export function presencePageHtml(): string {
         lastFrame = now;
         if (!image) resize();
         const accent = cssVarRgb("--accent");
-        const t = now * 0.00028;
+        const t = backgroundMode === "static" ? 420 : now * 0.0002;
         const data = image.data;
         const cycle = (now * 0.00005) % 1;
-        if (backgroundMode === "field") drawFieldPlasma(data, accent, t);
+        if (backgroundMode === "static") drawSpherePlasma(data, accent, t);
+        else if (backgroundMode === "field") drawFieldPlasma(data, accent, t);
         else if (backgroundMode === "sphere") drawSpherePlasma(data, accent, t);
         else if (cycle < 0.5) drawFieldPlasma(data, accent, t);
         else drawSpherePlasma(data, accent, t);
         ctx.putImageData(image, 0, 0);
-        if (!reduce) requestAnimationFrame(draw);
+        if (!reduce && backgroundMode !== "static") requestAnimationFrame(draw);
       }
       const ro = new ResizeObserver(resize);
       ro.observe(canvas);
@@ -623,12 +626,16 @@ export function presencePageHtml(): string {
         element.append(empty);
         return;
       }
+      let lastLabel = "";
       for (const item of items.slice(0, 2)) {
         const row = document.createElement("div");
         row.className = "item";
         const label = document.createElement("div");
         label.className = "label";
-        label.textContent = String(item.label || item.kind || "event");
+        const labelText = String(item.label || item.kind || "event");
+        if (labelText === lastLabel) label.classList.add("repeated");
+        label.textContent = labelText;
+        lastLabel = labelText;
         const text = document.createElement("div");
         text.className = "text";
         text.textContent = String(item.text || "");
