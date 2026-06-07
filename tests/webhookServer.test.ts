@@ -210,6 +210,8 @@ describe("webhook handler", () => {
       expect(html).toContain("initPlasma");
       expect(html).toContain("drawSpherePlasma");
       expect(html).toContain("backgroundMode");
+      expect(html).toContain("const frameMs = 82");
+      expect(html).toContain("-webkit-line-clamp: 5");
       expect(html).toContain("animation: meter");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);

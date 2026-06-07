@@ -290,7 +290,7 @@ export function presencePageHtml(): string {
       min-width: 3px;
       height: 28%;
       background: var(--accent);
-      animation: meter 1.25s ease-in-out infinite;
+      animation: meter 1.8s steps(4, end) infinite;
       box-shadow: 0 0 18px var(--accent-mid);
     }
     .pulse span:nth-child(3n) { animation-delay: 0.14s; }
@@ -300,10 +300,14 @@ export function presencePageHtml(): string {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: clamp(10px, 1.6vw, 18px);
+      align-self: stretch;
+      align-items: stretch;
+      height: 100%;
       min-height: 0;
     }
     .lane {
       min-width: 0;
+      height: 100%;
       min-height: 0;
       display: grid;
       grid-template-rows: auto 1fr;
@@ -366,7 +370,7 @@ export function presencePageHtml(): string {
       overflow-wrap: anywhere;
       display: -webkit-box;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
+      -webkit-line-clamp: 5;
       overflow: hidden;
     }
     .empty {
@@ -502,12 +506,14 @@ export function presencePageHtml(): string {
       let w = 1;
       let h = 1;
       let image = null;
+      let lastFrame = 0;
       const scale = 1.2;
+      const frameMs = 82;
       const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       function resize() {
         const rect = canvas.getBoundingClientRect();
-        w = Math.max(48, Math.min(440, Math.floor(rect.width / 3)));
-        h = Math.max(32, Math.min(260, Math.floor(rect.height / 3)));
+        w = Math.max(44, Math.min(260, Math.floor(rect.width / 5)));
+        h = Math.max(28, Math.min(150, Math.floor(rect.height / 5)));
         canvas.width = w;
         canvas.height = h;
         image = ctx.createImageData(w, h);
@@ -581,6 +587,11 @@ export function presencePageHtml(): string {
         }
       }
       function draw(now) {
+        if (!reduce && now - lastFrame < frameMs) {
+          requestAnimationFrame(draw);
+          return;
+        }
+        lastFrame = now;
         if (!image) resize();
         const accent = cssVarRgb("--accent");
         const t = now * 0.00028;
