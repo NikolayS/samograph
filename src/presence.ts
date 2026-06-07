@@ -466,6 +466,7 @@ export function presencePageHtml(): string {
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
+    const backgroundMode = params.get("bg") || "cycle";
     const styles = {
       idle: ["#94a3b8", "rgba(148, 163, 184, 0.2)", "rgba(148, 163, 184, 0.42)"],
       listening: ["#a3e635", "rgba(163, 230, 53, 0.16)", "rgba(163, 230, 53, 0.46)"],
@@ -511,34 +512,84 @@ export function presencePageHtml(): string {
         canvas.height = h;
         image = ctx.createImageData(w, h);
       }
-      function draw(now) {
-        if (!image) resize();
-        const accent = cssVarRgb("--accent");
-        const t = now * 0.00028;
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+      function plasmaValue(x, y, t, cx, cy) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        const v =
+          Math.sin(x * 0.035 * scale + t * 2.4) +
+          Math.sin(y * 0.043 * scale - t * 2.0) +
+          Math.sin((x + y) * 0.026 * scale + t * 1.6) +
+          Math.sin(r * 0.055 * scale - t * 3.2);
+        return clamp((v + 4) / 8, 0, 1);
+      }
+      function writePlasmaPixel(data, p, accent, n, alphaScale = 1) {
+        const hot = Math.pow(n, 1.8);
+        const cool = Math.pow(1 - n, 2.4);
+        const mid = Math.sin(p * 0.0007) * 0.5 + 0.5;
+        data[p] = Math.round(8 + accent[0] * 0.3 + 126 * hot + 42 * mid + 44 * cool);
+        data[p + 1] = Math.round(12 + accent[1] * 0.34 + 72 * hot + 98 * mid + 26 * cool);
+        data[p + 2] = Math.round(34 + accent[2] * 0.4 + 94 * hot + 112 * cool);
+        data[p + 3] = Math.round((126 + hot * 116) * alphaScale);
+      }
+      function drawFieldPlasma(data, accent, t) {
         const cx = w * 0.58;
         const cy = h * 0.46;
-        const data = image.data;
+        let p = 0;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            writePlasmaPixel(data, p, accent, plasmaValue(x, y, t, cx, cy));
+            p += 4;
+          }
+        }
+      }
+      function drawSpherePlasma(data, accent, t) {
+        const cx = w * 0.52;
+        const cy = h * 0.47;
+        const radius = Math.min(w, h) * 0.36;
         let p = 0;
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
             const dx = x - cx;
             const dy = y - cy;
-            const r = Math.sqrt(dx * dx + dy * dy);
-            const v =
-              Math.sin(x * 0.035 * scale + t * 2.4) +
-              Math.sin(y * 0.043 * scale - t * 2.0) +
-              Math.sin((x + y) * 0.026 * scale + t * 1.6) +
-              Math.sin(r * 0.055 * scale - t * 3.2);
-            const n = Math.max(0, Math.min(1, (v + 4) / 8));
-            const hot = Math.pow(n, 1.8);
-            const cool = Math.pow(1 - n, 2.4);
-            const mid = Math.sin((x - y) * 0.018 + t * 1.7) * 0.5 + 0.5;
-            data[p++] = Math.round(8 + accent[0] * 0.3 + 126 * hot + 42 * mid + 44 * cool);
-            data[p++] = Math.round(12 + accent[1] * 0.34 + 72 * hot + 98 * mid + 26 * cool);
-            data[p++] = Math.round(34 + accent[2] * 0.4 + 94 * hot + 112 * cool);
-            data[p++] = Math.round(126 + hot * 116);
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const base = plasmaValue(x, y, t * 0.72, cx, cy);
+            if (dist < radius) {
+              const edge = 1 - dist / radius;
+              const z = Math.sqrt(Math.max(0, 1 - (dist / radius) ** 2));
+              const latitude = Math.atan2(dy, radius * z + 0.001);
+              const longitude = Math.atan2(dx, radius * z + 0.001);
+              const bands = Math.sin(longitude * 5.0 + t * 3.0) * Math.cos(latitude * 4.0 - t * 1.6);
+              const n = clamp(base * 0.65 + bands * 0.22 + edge * 0.38, 0, 1);
+              const rim = Math.pow(1 - edge, 5);
+              writePlasmaPixel(data, p, accent, n, 0.78 + rim * 0.45);
+              data[p] = Math.min(255, data[p] + Math.round(rim * 80));
+              data[p + 1] = Math.min(255, data[p + 1] + Math.round(rim * 52));
+              data[p + 2] = Math.min(255, data[p + 2] + Math.round(rim * 96));
+            } else {
+              const orbit = Math.abs(dist - radius * (1.15 + 0.08 * Math.sin(t + Math.atan2(dy, dx) * 3)));
+              const tendril = Math.max(0, 1 - orbit / (radius * 0.11));
+              const fade = Math.max(0, 1 - dist / (radius * 2.2));
+              const n = clamp(base * 0.36 + tendril * 0.9, 0, 1);
+              writePlasmaPixel(data, p, accent, n, 0.28 * fade + tendril * 0.54);
+            }
+            p += 4;
           }
         }
+      }
+      function draw(now) {
+        if (!image) resize();
+        const accent = cssVarRgb("--accent");
+        const t = now * 0.00028;
+        const data = image.data;
+        const cycle = (now * 0.00005) % 1;
+        if (backgroundMode === "field") drawFieldPlasma(data, accent, t);
+        else if (backgroundMode === "sphere") drawSpherePlasma(data, accent, t);
+        else if (cycle < 0.5) drawFieldPlasma(data, accent, t);
+        else drawSpherePlasma(data, accent, t);
         ctx.putImageData(image, 0, 0);
         if (!reduce) requestAnimationFrame(draw);
       }
