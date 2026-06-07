@@ -14,6 +14,7 @@ import { samoagentDir } from "./config.ts";
 export interface VideoFrameMetadata {
   event?: string;
   call_id?: string | null;
+  source_key?: string;
   type?: string | null;
   participant?: {
     id?: string | number | null;
@@ -22,6 +23,8 @@ export interface VideoFrameMetadata {
   };
   timestamp?: { absolute?: string } | null;
   updated_at?: string;
+  raw_bytes?: number;
+  visual_status?: string;
   archive_file?: string;
   archived_at?: string;
 }
@@ -29,6 +32,10 @@ export interface VideoFrameMetadata {
 export interface DecodedVideoFrame {
   raw: Uint8Array;
   metadata: VideoFrameMetadata;
+}
+
+export interface FrameInventory {
+  frames: VideoFrameMetadata[];
 }
 
 function expandUser(path: string): string {
@@ -93,6 +100,39 @@ export function archivedFramePath(frameDir: string, metadata: VideoFrameMetadata
   const sourceType = safeFilenamePart(metadata.type, "frame");
   const participantId = safeFilenamePart(participant.id, "unknown");
   return join(frameDir, `${callPart}_${timestampPart}_${sourceType}_${participantId}.png`);
+}
+
+export function frameSourceKey(metadata: VideoFrameMetadata): string {
+  const type = metadata.type ?? null;
+  const participantId = metadata.participant?.id;
+  if (type === "screen_share") return "type:screen_share";
+  if (participantId !== undefined && participantId !== null && String(participantId) !== "") {
+    return `participant:${participantId}`;
+  }
+  if (type) return `type:${type}`;
+  return "latest";
+}
+
+export function frameSourceAliases(metadata: VideoFrameMetadata): string[] {
+  const aliases = new Set<string>([frameSourceKey(metadata)]);
+  if (metadata.type) {
+    aliases.add(`type:${metadata.type}`);
+  }
+  return [...aliases];
+}
+
+export function normalizeFrameSource(source?: string | null): string | null {
+  if (!source || source === "latest") return null;
+  if (source === "screen" || source === "screen_share") return "type:screen_share";
+  if (source === "webcam") return "type:webcam";
+  if (source.startsWith("participant:") || source.startsWith("type:")) return source;
+  return `participant:${source}`;
+}
+
+export function frameVisualStatus(raw: Uint8Array): string {
+  if (raw.byteLength === 0) return "empty";
+  if (raw.byteLength < 2048) return "tiny_or_placeholder";
+  return "unknown";
 }
 
 export function writeFrameFiles(
@@ -185,20 +225,24 @@ export function decodeVideoSeparatePng(
   if (!inner.buffer) return null;
   const raw = new Uint8Array(Buffer.from(inner.buffer, "base64"));
   const participant = inner.participant ?? {};
+  const metadata: VideoFrameMetadata = {
+    event: p.event,
+    call_id: callId ?? null,
+    type: inner.type ?? null,
+    participant: {
+      id: participant.id ?? null,
+      name: participant.name ?? null,
+      is_host: participant.is_host ?? null,
+    },
+    timestamp: inner.timestamp ?? null,
+    updated_at: new Date().toISOString(),
+    raw_bytes: raw.byteLength,
+    visual_status: frameVisualStatus(raw),
+  };
+  metadata.source_key = frameSourceKey(metadata);
   return {
     raw,
-    metadata: {
-      event: p.event,
-      call_id: callId ?? null,
-      type: inner.type ?? null,
-      participant: {
-        id: participant.id ?? null,
-        name: participant.name ?? null,
-        is_host: participant.is_host ?? null,
-      },
-      timestamp: inner.timestamp ?? null,
-      updated_at: new Date().toISOString(),
-    },
+    metadata,
   };
 }
 

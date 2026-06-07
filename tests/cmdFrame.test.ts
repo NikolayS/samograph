@@ -201,6 +201,46 @@ describe("cmdFrame — no RTMP", () => {
     expect(existsSync(join(tmp, "latest.png"))).toBe(false);
   });
 
+  it("requests selected WebSocket frame source from local frame server", async () => {
+    const out = join(tmp, "screen.png");
+    writeFileSync(
+      sf,
+      JSON.stringify({
+        local_frame_url: "http://127.0.0.1:18080/frame",
+        local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+        frame_token: "secret-token",
+        video_frame_file: join(tmp, "latest.png"),
+      }),
+    );
+    const calls: string[] = [];
+
+    await cmdFrame(
+      { command: "frame", out, frame_source: "screen", bot_id: null },
+      {
+        fetchFn: async (url) => {
+          calls.push(String(url));
+          if (String(url).includes("/frame.json")) {
+            return Response.json({
+              call_id: "bot-123",
+              type: "screen_share",
+              source_key: "type:screen_share",
+            });
+          }
+          return new Response(new Uint8Array([9, 8, 7]), {
+            headers: { "content-type": "image/png" },
+          });
+        },
+      },
+    );
+
+    expect(calls).toEqual([
+      "http://127.0.0.1:18080/frame?source=screen",
+      "http://127.0.0.1:18080/frame.json?source=screen",
+    ]);
+    expect(new Uint8Array(readFileSync(out))).toEqual(new Uint8Array([9, 8, 7]));
+    expect(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).toContain("screen_share");
+  });
+
   it("writes metadata as sibling when --out has no extension", async () => {
     const out = join(tmp, "nested.with.dot", "frame");
     writeFileSync(

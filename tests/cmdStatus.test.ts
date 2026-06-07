@@ -95,13 +95,18 @@ describe("cmdStatus", () => {
       frame_token: "frame-secret",
     }));
     const seenHeaders: string[] = [];
-    const fetchFn = async (_url: string | URL | Request, init?: RequestInit) => {
+    const fetchFn = async (url: string | URL | Request, init?: RequestInit) => {
       seenHeaders.push((init?.headers as Record<string, string>)["X-Samoagent-Frame-Token"]);
+      if (String(url).endsWith("/frames.json")) {
+        return Response.json({ frames: [] });
+      }
       return Response.json({
         type: "webcam",
+        source_key: "participant:100",
         participant: { id: 100, name: "Nik - PostgresAI", is_host: true },
         timestamp: { absolute: "2026-06-04T00:48:16.443351Z" },
         updated_at: "2026-06-04T00:48:17.334Z",
+        visual_status: "unknown",
       });
     };
 
@@ -113,9 +118,11 @@ describe("cmdStatus", () => {
       })
     );
 
-    expect(seenHeaders).toEqual(["frame-secret"]);
+    expect(seenHeaders).toEqual(["frame-secret", "frame-secret"]);
     expect(out).toContain("Last frame at: 2026-06-04T00:48:16.443351Z");
     expect(out).toContain("Last frame source: webcam / Nik - PostgresAI");
+    expect(out).toContain("Last frame source key: participant:100");
+    expect(out).toContain("Last frame visual status: unknown");
     expect(out).toContain("Last frame received at: 2026-06-04T00:48:17.334Z");
   });
 

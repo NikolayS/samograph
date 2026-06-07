@@ -493,6 +493,9 @@ export async function cmdJoin(
     );
   } else if (useWsVideo) {
     process.stdout.write(
+      `To list frame sources:       samoagent frames\n`,
+    );
+    process.stdout.write(
       `To capture call frame:        samoagent frame  (latest WebSocket PNG, written on demand)\n`,
     );
   } else {

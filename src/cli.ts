@@ -8,6 +8,7 @@ import { cmdScreenshot } from "./commands/screenshot.ts";
 import { cmdTranscript } from "./commands/transcript.ts";
 import { cmdChat } from "./commands/chat.ts";
 import { cmdFrame } from "./commands/frame.ts";
+import { cmdFrames } from "./commands/frames.ts";
 import { cmdDicts } from "./commands/dicts.ts";
 import { cmdWatch } from "./commands/watch.ts";
 import { cmdServe } from "./commands/serve.ts";
@@ -34,7 +35,8 @@ commands:
   dicts
   watch
   notes <init|point|decision|action|transcript> [options]
-  frame [--out FILE] [--archive] [bot_id]
+  frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
+  frames
   doctor
 
 flags:
@@ -67,19 +69,26 @@ examples:
   samoagent join "https://zoom.us/j/123" --dict postgresfm
   samoagent join "https://zoom.us/j/123" --variant web_4_core
 `,
-  frame: `usage: samoagent frame [--out FILE] [--archive] [bot_id]
+  frame: `usage: samoagent frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
 
 Write the latest call frame to disk.
 With the default WebSocket path, frames stay in memory until this command is run.
 
 options:
-  --out FILE   Output path. Defaults to latest frame path from active state.
-  --archive    Also write a timestamped PNG+JSON archive copy.
+  --source SOURCE  Frame source: latest, screen, webcam, participant:<id>, type:<type>
+  --out FILE       Output path. Defaults to latest frame path from active state.
+  --archive        Also write a timestamped PNG+JSON archive copy.
 
 examples:
   samoagent frame
+  samoagent frame --source screen --out /tmp/screen.png
   samoagent frame --out /tmp/current-call.png
   samoagent frame --archive
+`,
+  frames: `usage: samoagent frames
+
+List WebSocket frame sources currently buffered in memory.
+Use the source keys with: samoagent frame --source SOURCE
 `,
   doctor: `usage: samoagent doctor
 
@@ -165,7 +174,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
-    frame: new Set(["--out"]),
+    frame: new Set(["--out", "--source"]),
+    frames: new Set(),
     doctor: new Set(),
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token"]),
   };
@@ -181,6 +191,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     watch: new Set(),
     notes: new Set(["--from-start"]),
     frame: new Set(["--archive"]),
+    frames: new Set(),
     doctor: new Set(),
     _serve: new Set(),
   };
@@ -293,6 +304,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "frame": {
       result.out = (opts["--out"] as string) ?? null;
       result.archive = opts["--archive"] === true;
+      result.frame_source = (opts["--source"] as string) ?? null;
       result.bot_id = positionals.length ? positionals[0] : null;
       break;
     }
@@ -315,6 +327,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "dicts":
     case "watch":
     case "doctor":
+    case "frames":
       break;
     case "notes": {
       result.doc_id = (opts["--doc-id"] as string) ?? null;
@@ -375,6 +388,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdPresence(args);
     case "frame":
       return cmdFrame(args);
+    case "frames":
+      return cmdFrames();
     case "dicts":
       return cmdDicts();
     case "watch":

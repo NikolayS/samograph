@@ -179,6 +179,16 @@ describe("argParsing", () => {
     expect(parseArgs(["frame", "--archive"]).archive).toBe(true);
   });
 
+  it("frame source option", () => {
+    const args = parseArgs(["frame", "--source", "screen", "--out", "screen.png"]);
+    expect(args.frame_source).toBe("screen");
+    expect(args.out).toBe("screen.png");
+  });
+
+  it("frames command", () => {
+    expect(parseArgs(["frames"]).command).toBe("frames");
+  });
+
   it("screenshot default out", () => {
     expect(parseArgs(["screenshot"]).out).toBe("screenshot.png");
   });
@@ -280,7 +290,16 @@ describe("argParsing", () => {
     expect(proc.exitCode).toBe(0);
     expect(stdout).toContain("usage: samoagent frame");
     expect(stdout).toContain("frames stay in memory");
+    expect(stdout).toContain("--source SOURCE");
     expect(stdout).toContain("--archive");
+  });
+
+  it("frames --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frames", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samoagent frames");
+    expect(stdout).toContain("List WebSocket frame sources");
   });
 
   it("doctor --help shows command-specific help", () => {

@@ -128,11 +128,12 @@ samoagent notes transcript --from-start
 
 ## Frames
 
-Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samoagent keeps the latest in memory and only writes to disk when you call `frame`.
+Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samoagent keeps the latest frames in memory, indexed by source, and only writes to disk when you call `frame`.
 
 `frame` fails with `FRAME_UNAVAILABLE` if no frame has arrived yet — call it after the bot has been in the meeting for a few seconds.
 
 ```bash
+samoagent frames
 samoagent frame
 ```
 
@@ -146,9 +147,13 @@ By default it writes outside the repo:
 Use `--out` for an explicit path, or `--archive` to create a timestamped copy alongside the latest:
 
 ```bash
+samoagent frame --source screen --out /tmp/screen.png
+samoagent frame --source participant:100
 samoagent frame --out /tmp/call.png
 samoagent frame --archive
 ```
+
+`frames` lists buffered source keys such as `type:screen_share` or `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
 
 Archive filenames include call id, UTC timestamp, source type, and participant id. Source type and participant id come from the Recall event metadata and may be `unknown` if Recall does not provide them.
 
@@ -168,6 +173,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes --speaker NAME` - speaker prefix for `notes point`.
 - `notes --owner NAME` and `--due DATE` - action-item metadata.
 - `notes --from-start` - with `notes transcript`, replay existing transcript lines before tailing live lines.
+- `frame --source SOURCE` - select `latest`, `screen`, `webcam`, `type:<type>`, or `participant:<id>`.
 
 ## Commands
 
@@ -180,8 +186,9 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat.
 - `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; `thinking`/`speaking`/`acting` messages are shown as live activity on the camera page, and transcript webhooks add recent "heard" lines automatically.
-- `frame [--out FILE] [--archive]` - write latest in-memory frame to disk on demand.
-- `status` - show bot id, name, Recall status code, transcript line count, and transcript file path.
+- `frames` - list buffered WebSocket frame sources and metadata.
+- `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
+- `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.
 - `screenshot [--out FILE]` - capture the local Mac screen with `screencapture`; use as a fallback when frame is not available.
 - `leave` - remove bot, stop local processes, and clean state.
