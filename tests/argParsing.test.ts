@@ -68,6 +68,22 @@ describe("argParsing", () => {
     ).toBe("/tmp/frames");
   });
 
+  it("join variant optional", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).variant).toBeNull();
+  });
+
+  it("join variant parsed", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "web_4_core"]).variant,
+    ).toBe("web_4_core");
+  });
+
+  it("join variant rejects unknown values", () => {
+    expect(() =>
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "big-box"]),
+    ).toThrow("invalid choice");
+  });
+
   it("leave bot_id optional", () => {
     expect(parseArgs(["leave"]).bot_id).toBeNull();
   });

@@ -80,6 +80,7 @@ function joinArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
     transcript_dir: null,
     rtmp_url: null,
     rtmp: false,
+    variant: null,
     ...over,
   } as ParsedArgs;
 }
@@ -139,6 +140,21 @@ describe("cmdJoin payload + saved state", () => {
       Array.isArray(e.events) && e.events.includes("video_mixed_flv.data"),
     );
     expect(rtmpEp).toBeUndefined();
+    expect(p.variant).toBeUndefined();
+  });
+
+  it("--variant adds recall bot variant for output media rendering", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ variant: "web_4_core" }), makeDeps(captured));
+
+    expect(captured.payload.variant).toEqual({
+      zoom: "web_4_core",
+      google_meet: "web_4_core",
+      microsoft_teams: "web_4_core",
+    });
+
+    const state = JSON.parse(readFileSync(sf, "utf8"));
+    expect(state.variant).toBe("web_4_core");
   });
 
   it("--dict with an existing dict file adds keyterms", async () => {

@@ -10,6 +10,7 @@ export interface ParsedArgs {
   ws_video?: boolean;
   webhook_base?: string | null;
   frame_dir?: string | null;
+  variant?: string | null;
   bot_id?: string | null;
   transcript_cursor?: number;
   transcript_limit?: number;

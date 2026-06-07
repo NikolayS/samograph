@@ -24,7 +24,7 @@ captures call frames on demand, and sends explicit chat messages.
 Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL] [--variant web|web_4_core|web_gpu]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
@@ -57,12 +57,15 @@ options:
   --no-ws-video          Disable WebSocket call-frame capture
   --webhook-base URL     Use an existing public tunnel URL instead of starting ngrok
                          (e.g. localtunnel/cloudflared pointing at --port)
+  --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
+                         Use web_4_core when webpage camera rendering is choppy
   --rtmp                 Use local RTMP path through ngrok TCP
   --rtmp-url URL         Use an existing RTMP endpoint
 
 examples:
   samoagent join "https://meet.google.com/abc-defg-hij" --name Leo
   samoagent join "https://zoom.us/j/123" --dict postgresfm
+  samoagent join "https://zoom.us/j/123" --variant web_4_core
 `,
   frame: `usage: samoagent frame [--out FILE] [--archive] [bot_id]
 
@@ -152,7 +155,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--variant"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
@@ -250,6 +253,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.ws_video = opts["--no-ws-video"] !== true;
       result.webhook_base = (opts["--webhook-base"] as string) ?? null;
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
+      result.variant = (opts["--variant"] as string) ?? null;
+      if (result.variant !== null && !["web", "web_4_core", "web_gpu"].includes(result.variant)) {
+        throw new ArgError(
+          `argument --variant: invalid choice: '${result.variant}' (choose from web, web_4_core, web_gpu)`,
+        );
+      }
       break;
     }
     case "leave":

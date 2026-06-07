@@ -403,7 +403,7 @@ export async function cmdJoin(
     recordingConfig.video_separate_png = {};
   }
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     meeting_url: args.url,
     bot_name: name,
     output_media: {
@@ -414,6 +414,13 @@ export async function cmdJoin(
     },
     recording_config: recordingConfig,
   };
+  if (args.variant) {
+    payload.variant = {
+      zoom: args.variant,
+      google_meet: args.variant,
+      microsoft_teams: args.variant,
+    };
+  }
 
   const bot = (await recall.createBot(payload)) as { id: string };
   const bid = bot.id;
@@ -431,6 +438,7 @@ export async function cmdJoin(
     ngrok_pid: ngrok ? ngrok.pid : null,
     started_at: new Date().toISOString(),
     dict: args.dict ?? null,
+    variant: args.variant ?? null,
     meeting_url: args.url,
     transcript_file: transcriptFile,
   };
