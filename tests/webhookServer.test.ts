@@ -216,7 +216,7 @@ describe("webhook handler", () => {
       expect(html).toContain("grid-template-rows: repeat(2, minmax(0, 1fr))");
       expect(html).toContain("label.classList.add(\"repeated\")");
       expect(html).toContain("backgroundMode !== \"static\"");
-      expect(html).toContain("animation: drift 9s steps(60, end)");
+      expect(html).toContain("animation: drift 7s linear");
       expect(html).toContain("@keyframes drift");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);

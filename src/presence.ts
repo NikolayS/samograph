@@ -204,7 +204,7 @@ export function presencePageHtml(): string {
         conic-gradient(from 20deg at 50% 50%, transparent, var(--accent-soft), transparent 34%, rgba(245, 158, 11, 0.2), transparent 68%);
       transform: translate3d(-7%, -4%, 0) scale(1.04) rotate(-4deg);
       will-change: transform;
-      animation: drift 9s steps(60, end) infinite alternate;
+      animation: drift 7s linear infinite alternate;
     }
     .tile > * {
       position: relative;
