@@ -216,6 +216,8 @@ describe("webhook handler", () => {
       expect(html).toContain("grid-template-rows: repeat(2, minmax(0, 1fr))");
       expect(html).toContain("label.classList.add(\"repeated\")");
       expect(html).toContain("backgroundMode !== \"static\"");
+      expect(html).toContain("animation: drift 16s steps(48, end)");
+      expect(html).toContain("@keyframes drift");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
       expect(jsonResp.status).toBe(200);
@@ -256,6 +258,11 @@ describe("webhook handler", () => {
         message: "Heard Nik: We need action",
       });
       expect(json.activities[0]).toMatchObject({
+        kind: "thought",
+        label: "Thinking",
+        text: "Processing latest speech: We need action",
+      });
+      expect(json.activities[1]).toMatchObject({
         kind: "heard",
         label: "Nik",
         text: "We need action",

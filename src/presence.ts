@@ -190,6 +190,21 @@ export function presencePageHtml(): string {
       pointer-events: none;
       z-index: 0;
     }
+    .tile::after {
+      content: "";
+      position: absolute;
+      inset: -32%;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.58;
+      background:
+        radial-gradient(circle at 22% 32%, var(--accent-mid), transparent 28%),
+        radial-gradient(circle at 72% 42%, rgba(245, 158, 11, 0.32), transparent 30%),
+        radial-gradient(circle at 48% 78%, rgba(56, 189, 248, 0.28), transparent 34%);
+      transform: translate3d(-2%, -1%, 0) scale(1.02);
+      will-change: transform;
+      animation: drift 16s steps(48, end) infinite alternate;
+    }
     .tile > * {
       position: relative;
       z-index: 2;
@@ -403,6 +418,9 @@ export function presencePageHtml(): string {
     @keyframes scan {
       to { transform: translateY(410%); }
     }
+    @keyframes drift {
+      to { transform: translate3d(3%, 2%, 0) scale(1.05) rotate(4deg); }
+    }
     @keyframes enter {
       from { opacity: 1; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
@@ -424,6 +442,7 @@ export function presencePageHtml(): string {
     @media (prefers-reduced-motion: reduce) {
       .scan,
       .plasma-canvas,
+      .tile::after,
       .pulse span,
       .item {
         animation: none;
