@@ -213,7 +213,7 @@ describe("webhook handler", () => {
       expect(html).toContain("params.get(\"bg\") || \"sphere\"");
       expect(html).toContain("const frameMs = 100");
       expect(html).toContain("-webkit-line-clamp: 2");
-      expect(html).toContain("flex-direction: column-reverse");
+      expect(html).toContain("flex-direction: column");
       expect(html).toContain("items.slice(0, 14)");
       expect(html).toContain("label.classList.add(\"repeated\")");
       expect(html).toContain("backgroundMode !== \"static\"");

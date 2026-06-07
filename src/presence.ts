@@ -273,8 +273,8 @@ export function presencePageHtml(): string {
       border: 1px solid rgba(226, 232, 240, 0.18);
       box-shadow:
         0 0 0 1px rgba(15, 23, 42, 0.85),
-        0 0 46px var(--accent-mid),
-        inset 0 0 42px rgba(248, 250, 252, 0.12);
+        0 0 42px rgba(56, 189, 248, 0.32),
+        inset 0 0 48px rgba(15, 23, 42, 0.86);
       background: #020617;
     }
     .mind::after {
@@ -283,12 +283,12 @@ export function presencePageHtml(): string {
       inset: 0;
       border-radius: 50%;
       background:
-        radial-gradient(circle at 32% 22%, rgba(255, 255, 255, 0.34), transparent 12%),
-        radial-gradient(circle at 68% 78%, transparent 45%, rgba(0, 0, 0, 0.4) 82%),
-        radial-gradient(circle at 50% 50%, transparent 58%, rgba(248, 250, 252, 0.2) 61%, transparent 68%);
+        radial-gradient(circle at 30% 22%, rgba(191, 219, 254, 0.22), transparent 14%),
+        radial-gradient(circle at 68% 80%, transparent 42%, rgba(0, 0, 0, 0.58) 84%),
+        radial-gradient(circle at 50% 50%, transparent 59%, rgba(147, 197, 253, 0.18) 62%, transparent 70%);
       box-shadow:
-        inset -24px -28px 54px rgba(0, 0, 0, 0.42),
-        inset 18px 16px 42px rgba(255, 255, 255, 0.08);
+        inset -28px -32px 62px rgba(0, 0, 0, 0.58),
+        inset 16px 14px 36px rgba(147, 197, 253, 0.08);
       z-index: 3;
       pointer-events: none;
     }
@@ -331,7 +331,7 @@ export function presencePageHtml(): string {
       min-height: 0;
       overflow: hidden;
       display: flex;
-      flex-direction: column-reverse;
+      flex-direction: column;
       justify-content: flex-start;
     }
     .item {
@@ -448,11 +448,11 @@ export function presencePageHtml(): string {
     const token = params.get("token") || "";
     const backgroundMode = params.get("bg") || "sphere";
     const styles = {
-      idle: ["#94a3b8", "rgba(148, 163, 184, 0.2)", "rgba(148, 163, 184, 0.42)"],
-      listening: ["#a3e635", "rgba(163, 230, 53, 0.16)", "rgba(163, 230, 53, 0.46)"],
-      thinking: ["#38bdf8", "rgba(56, 189, 248, 0.17)", "rgba(56, 189, 248, 0.48)"],
-      speaking: ["#f59e0b", "rgba(245, 158, 11, 0.18)", "rgba(245, 158, 11, 0.48)"],
-      acting: ["#fb7185", "rgba(251, 113, 133, 0.18)", "rgba(251, 113, 133, 0.5)"]
+      idle: ["#64748b", "rgba(100, 116, 139, 0.18)", "rgba(100, 116, 139, 0.36)"],
+      listening: ["#38bdf8", "rgba(56, 189, 248, 0.16)", "rgba(56, 189, 248, 0.44)"],
+      thinking: ["#818cf8", "rgba(129, 140, 248, 0.18)", "rgba(129, 140, 248, 0.48)"],
+      speaking: ["#a78bfa", "rgba(167, 139, 250, 0.2)", "rgba(167, 139, 250, 0.5)"],
+      acting: ["#60a5fa", "rgba(96, 165, 250, 0.18)", "rgba(96, 165, 250, 0.46)"]
     };
     const laneConfig = [
       ["heard", document.getElementById("heard"), "No speech yet"],
@@ -523,7 +523,7 @@ export function presencePageHtml(): string {
       function drawSpherePlasma(data, accent, t, energy) {
         const cx = w * 0.5;
         const cy = h * 0.5;
-        const pulse = 1 + Math.sin(t * 3.2) * 0.018 * energy;
+        const pulse = 1 + Math.sin(t * 3.2) * (0.035 + energy * 0.045);
         const radius = Math.min(w, h) * 0.44 * pulse;
         let p = 0;
         for (let y = 0; y < h; y++) {
@@ -540,54 +540,23 @@ export function presencePageHtml(): string {
               const rz = dx * sin + z * cos;
               const bands = plasmaBands(rx, dy, rz, t, energy) * 0.5 + 0.5;
               const rim = Math.pow(dist, 3.4);
-              const light = clamp(0.34 + z * 0.54 - dx * 0.12 - dy * 0.18 + energy * 0.08, 0, 1.15);
-              const hot = Math.pow(bands, 1.7);
-              const cool = Math.pow(1 - bands, 1.2);
-              data[p] = Math.round(clamp((accent[0] * 0.28 + 54 + hot * 180 + cool * 16) * light + rim * 42, 0, 255));
-              data[p + 1] = Math.round(clamp((accent[1] * 0.34 + 46 + hot * 88 + cool * 140) * light + rim * 52, 0, 255));
-              data[p + 2] = Math.round(clamp((accent[2] * 0.36 + 64 + hot * 54 + cool * 190) * light + rim * 68, 0, 255));
+              const light = clamp(0.22 + z * 0.5 - dx * 0.1 - dy * 0.15 + energy * 0.1, 0, 1.05);
+              const glow = Math.pow(bands, 1.45);
+              const depth = Math.pow(1 - bands, 1.15);
+              data[p] = Math.round(clamp((24 + glow * 96 + depth * 16) * light + rim * 24, 0, 190));
+              data[p + 1] = Math.round(clamp((48 + glow * 142 + depth * 54) * light + rim * 48, 0, 228));
+              data[p + 2] = Math.round(clamp((116 + glow * 156 + depth * 120) * light + rim * 72, 0, 255));
               data[p + 3] = 255;
             } else {
               const halo = clamp(1 - (dist - 1) / 0.42, 0, 1);
-              data[p] = Math.round(accent[0] * 0.38 * halo);
-              data[p + 1] = Math.round(accent[1] * 0.34 * halo);
-              data[p + 2] = Math.round((accent[2] * 0.44 + 42) * halo);
+              data[p] = Math.round(34 * halo);
+              data[p + 1] = Math.round(82 * halo);
+              data[p + 2] = Math.round(180 * halo);
               data[p + 3] = Math.round(120 * halo * halo);
             }
             p += 4;
           }
         }
-      }
-      function drawTendrils(accent, t, energy) {
-        const cx = w * 0.5;
-        const cy = h * 0.5;
-        const radius = Math.min(w, h) * 0.36;
-        const count = 7 + Math.round(energy * 5);
-        ctx.save();
-        ctx.globalCompositeOperation = "lighter";
-        ctx.lineCap = "round";
-        for (let i = 0; i < count; i++) {
-          const seed = i * 1.714;
-          const angle = seed + t * (0.42 + energy * 0.7);
-          const bend = Math.sin(t * 1.9 + seed) * radius * (0.16 + energy * 0.1);
-          const reach = radius * (0.58 + 0.32 * (Math.sin(seed * 2.1 + t * 1.3) * 0.5 + 0.5));
-          const endX = cx + Math.cos(angle) * reach;
-          const endY = cy + Math.sin(angle) * reach;
-          const midAngle = angle + Math.PI / 2;
-          const midX = cx + Math.cos(angle) * reach * 0.45 + Math.cos(midAngle) * bend;
-          const midY = cy + Math.sin(angle) * reach * 0.45 + Math.sin(midAngle) * bend;
-          const alpha = 0.16 + energy * 0.16;
-          ctx.strokeStyle = "rgba(" + Math.round(clamp(accent[0] + 80, 0, 255)) + "," + Math.round(clamp(accent[1] + 90, 0, 255)) + ",255," + alpha + ")";
-          ctx.lineWidth = 1.2 + energy * 1.3;
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.quadraticCurveTo(midX, midY, endX, endY);
-          ctx.stroke();
-          ctx.strokeStyle = "rgba(255,255,255," + (0.12 + energy * 0.1) + ")";
-          ctx.lineWidth = 0.55 + energy * 0.55;
-          ctx.stroke();
-        }
-        ctx.restore();
       }
       function draw(now) {
         if (!reduce && now - lastFrame < frameMs) {
@@ -607,7 +576,6 @@ export function presencePageHtml(): string {
         else if (cycle < 0.5) drawFieldPlasma(data, accent, t, energy);
         else drawSpherePlasma(data, accent, t, energy);
         ctx.putImageData(image, 0, 0);
-        if (backgroundMode !== "field") drawTendrils(accent, t, energy);
         if (!reduce && backgroundMode !== "static") requestAnimationFrame(draw);
       }
       const ro = new ResizeObserver(resize);
