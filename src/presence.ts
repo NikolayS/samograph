@@ -176,7 +176,7 @@ export function presencePageHtml(): string {
       gap: clamp(12px, 2vh, 20px);
       border: 1px solid rgba(226, 232, 240, 0.14);
       box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 28px 80px rgba(0, 0, 0, 0.56);
-      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(8, 13, 23, 0.98) 52%, rgba(2, 6, 23, 0.98));
+      background: #050914;
       padding: clamp(18px, 3.2vh, 34px);
       overflow: hidden;
       isolation: isolate;
@@ -192,7 +192,18 @@ export function presencePageHtml(): string {
     }
     .tile > * {
       position: relative;
-      z-index: 1;
+      z-index: 2;
+    }
+    .plasma-canvas {
+      position: absolute;
+      inset: -9%;
+      width: 118%;
+      height: 118%;
+      z-index: 0;
+      opacity: 0.78;
+      filter: blur(18px) saturate(1.25) contrast(1.08);
+      transform: scale(1.02);
+      pointer-events: none;
     }
     .scan {
       position: absolute;
@@ -203,7 +214,7 @@ export function presencePageHtml(): string {
       animation: scan 6s linear infinite;
       opacity: 0.55;
       pointer-events: none;
-      z-index: 0;
+      z-index: 1;
     }
     .header {
       display: grid;
@@ -299,7 +310,8 @@ export function presencePageHtml(): string {
       gap: clamp(8px, 1.2vh, 12px);
       padding: clamp(12px, 1.8vw, 18px);
       border: 1px solid rgba(226, 232, 240, 0.12);
-      background: rgba(2, 6, 23, 0.42);
+      background: rgba(2, 6, 23, 0.58);
+      backdrop-filter: blur(14px);
       box-shadow: inset 0 1px 0 rgba(248, 250, 252, 0.06);
     }
     .lane-title {
@@ -405,6 +417,7 @@ export function presencePageHtml(): string {
     }
     @media (prefers-reduced-motion: reduce) {
       .scan,
+      .plasma-canvas,
       .pulse span,
       .item {
         animation: none;
@@ -415,6 +428,7 @@ export function presencePageHtml(): string {
 <body>
   <main class="samoagent-presence">
     <section class="tile" aria-live="polite">
+      <canvas class="plasma-canvas" id="plasma" aria-hidden="true"></canvas>
       <div class="scan"></div>
       <header class="header">
         <div class="brand"><span class="mark">S</span><span>samoagent live presence</span></div>
@@ -472,6 +486,67 @@ export function presencePageHtml(): string {
       if (item && speechKinds.has(item.kind)) return "speech";
       return "speech";
     };
+    function hexToRgb(hex) {
+      const match = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(String(hex || ""));
+      if (!match) return [56, 189, 248];
+      return [parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16)];
+    }
+    function cssVarRgb(name) {
+      return hexToRgb(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+    }
+    function initPlasma() {
+      const canvas = document.getElementById("plasma");
+      const ctx = canvas && canvas.getContext("2d", { alpha: true });
+      if (!canvas || !ctx) return;
+      let w = 1;
+      let h = 1;
+      let image = null;
+      const scale = 1.2;
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        w = Math.max(48, Math.min(440, Math.floor(rect.width / 3)));
+        h = Math.max(32, Math.min(260, Math.floor(rect.height / 3)));
+        canvas.width = w;
+        canvas.height = h;
+        image = ctx.createImageData(w, h);
+      }
+      function draw(now) {
+        if (!image) resize();
+        const accent = cssVarRgb("--accent");
+        const t = now * 0.00028;
+        const cx = w * 0.58;
+        const cy = h * 0.46;
+        const data = image.data;
+        let p = 0;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const dx = x - cx;
+            const dy = y - cy;
+            const r = Math.sqrt(dx * dx + dy * dy);
+            const v =
+              Math.sin(x * 0.035 * scale + t * 2.4) +
+              Math.sin(y * 0.043 * scale - t * 2.0) +
+              Math.sin((x + y) * 0.026 * scale + t * 1.6) +
+              Math.sin(r * 0.055 * scale - t * 3.2);
+            const n = Math.max(0, Math.min(1, (v + 4) / 8));
+            const hot = Math.pow(n, 1.8);
+            const cool = Math.pow(1 - n, 2.4);
+            const mid = Math.sin((x - y) * 0.018 + t * 1.7) * 0.5 + 0.5;
+            data[p++] = Math.round(8 + accent[0] * 0.3 + 126 * hot + 42 * mid + 44 * cool);
+            data[p++] = Math.round(12 + accent[1] * 0.34 + 72 * hot + 98 * mid + 26 * cool);
+            data[p++] = Math.round(34 + accent[2] * 0.4 + 94 * hot + 112 * cool);
+            data[p++] = Math.round(126 + hot * 116);
+          }
+        }
+        ctx.putImageData(image, 0, 0);
+        if (!reduce) requestAnimationFrame(draw);
+      }
+      const ro = new ResizeObserver(resize);
+      ro.observe(canvas);
+      resize();
+      requestAnimationFrame(draw);
+    }
     function formatUpdated(value) {
       const date = new Date(String(value || ""));
       if (Number.isNaN(date.getTime())) return "Waiting for live signal";
@@ -522,6 +597,7 @@ export function presencePageHtml(): string {
         document.documentElement.style.setProperty("--accent-mid", pair[2]);
       } catch {}
     }
+    initPlasma();
     refresh();
     setInterval(refresh, 1000);
   </script>

@@ -206,6 +206,8 @@ describe("webhook handler", () => {
       expect(html).toContain("Heard");
       expect(html).toContain("Thinks");
       expect(html).toContain("Says");
+      expect(html).toContain("plasma-canvas");
+      expect(html).toContain("initPlasma");
       expect(html).toContain("animation: meter");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
