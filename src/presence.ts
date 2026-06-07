@@ -135,120 +135,391 @@ export function presencePageHtml(): string {
     :root {
       color-scheme: dark;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0b0f19;
+      background: #070a0f;
       color: #f8fafc;
+      --accent: #2dd4bf;
+      --accent-soft: rgba(45, 212, 191, 0.2);
+      --accent-mid: rgba(45, 212, 191, 0.46);
+      --heard: #a3e635;
+      --thought: #38bdf8;
+      --speech: #f59e0b;
+      --action: #fb7185;
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #0b0f19;
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+        #070a0f;
+      background-size: 56px 56px;
     }
     .samoagent-presence {
-      width: min(92vmin, 860px);
-      min-height: min(92vmin, 860px);
+      width: 100vw;
+      min-height: 100vh;
       display: grid;
-      place-items: center;
-      text-align: center;
+      place-items: stretch;
+      padding: min(3.2vh, 28px);
     }
-    .panel {
-      width: 82%;
-      min-height: 72%;
-      border-radius: 16px;
+    .tile {
+      position: relative;
+      width: min(100%, calc((100vh - min(6.4vh, 56px)) * 16 / 9));
+      max-height: calc(100vh - min(6.4vh, 56px));
+      aspect-ratio: 16 / 9;
+      align-self: center;
+      justify-self: center;
+      border-radius: 8px;
       display: grid;
-      align-content: center;
-      gap: 28px;
-      border: 14px solid var(--accent, #22c55e);
-      box-shadow: 0 0 56px var(--glow, rgba(34, 197, 94, 0.45)), inset 0 0 48px rgba(15, 23, 42, 0.9);
-      background: rgba(15, 23, 42, 0.72);
-      padding: 46px 42px;
-      box-sizing: border-box;
+      grid-template-rows: auto 1fr auto;
+      gap: clamp(12px, 2vh, 20px);
+      border: 1px solid rgba(226, 232, 240, 0.14);
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 28px 80px rgba(0, 0, 0, 0.56);
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(8, 13, 23, 0.98) 52%, rgba(2, 6, 23, 0.98));
+      padding: clamp(18px, 3.2vh, 34px);
+      overflow: hidden;
+      isolation: isolate;
     }
-    .state {
-      font-size: clamp(42px, 10vmin, 92px);
+    .tile::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-top: 4px solid var(--accent);
+      box-shadow: inset 0 0 90px rgba(2, 6, 23, 0.75), inset 0 0 28px var(--accent-soft);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .tile > * {
+      position: relative;
+      z-index: 1;
+    }
+    .scan {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent, rgba(248, 250, 252, 0.07), transparent);
+      height: 26%;
+      transform: translateY(-110%);
+      animation: scan 6s linear infinite;
+      opacity: 0.55;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: start;
+      gap: 20px;
+      min-height: 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      color: #cbd5e1;
+      font-size: clamp(13px, 1.45vw, 18px);
       font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0;
     }
-    .message {
-      margin-top: 18px;
-      padding: 0 8%;
-      font-size: clamp(22px, 4.5vmin, 40px);
-      line-height: 1.16;
-      color: #cbd5e1;
+    .mark {
+      width: clamp(30px, 3.8vw, 46px);
+      height: clamp(30px, 3.8vw, 46px);
+      border: 2px solid var(--accent);
+      display: grid;
+      place-items: center;
+      font-size: clamp(14px, 1.8vw, 22px);
+      color: #ffffff;
+      background: rgba(15, 23, 42, 0.8);
+      box-shadow: 0 0 26px var(--accent-mid);
+      flex: 0 0 auto;
+    }
+    .live {
+      color: var(--accent);
+      border: 1px solid var(--accent-mid);
+      background: rgba(15, 23, 42, 0.74);
+      padding: 8px 12px;
+      font-size: clamp(11px, 1.2vw, 15px);
+      font-weight: 900;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .status {
+      min-width: 0;
+    }
+    .state {
+      color: #ffffff;
+      font-size: clamp(32px, 5vw, 68px);
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      line-height: 0.92;
       overflow-wrap: anywhere;
     }
+    .message {
+      margin-top: clamp(8px, 1.4vh, 14px);
+      max-width: 58ch;
+      font-size: clamp(18px, 2.25vw, 30px);
+      line-height: 1.14;
+      color: #cbd5e1;
+      overflow-wrap: anywhere;
+      text-wrap: balance;
+    }
+    .pulse {
+      display: grid;
+      grid-template-columns: repeat(18, 1fr);
+      gap: 5px;
+      align-items: end;
+      height: clamp(38px, 6vh, 66px);
+      margin-top: clamp(10px, 1.6vh, 18px);
+      opacity: 0.9;
+    }
+    .pulse span {
+      display: block;
+      min-width: 3px;
+      height: 28%;
+      background: var(--accent);
+      animation: meter 1.25s ease-in-out infinite;
+      box-shadow: 0 0 18px var(--accent-mid);
+    }
+    .pulse span:nth-child(3n) { animation-delay: 0.14s; }
+    .pulse span:nth-child(3n + 1) { animation-delay: 0.28s; }
+    .pulse span:nth-child(5n) { animation-duration: 1.65s; }
+    .lanes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: clamp(10px, 1.6vw, 18px);
+      min-height: 0;
+    }
+    .lane {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: clamp(8px, 1.2vh, 12px);
+      padding: clamp(12px, 1.8vw, 18px);
+      border: 1px solid rgba(226, 232, 240, 0.12);
+      background: rgba(2, 6, 23, 0.42);
+      box-shadow: inset 0 1px 0 rgba(248, 250, 252, 0.06);
+    }
+    .lane-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #e2e8f0;
+      font-size: clamp(12px, 1.3vw, 17px);
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .lane-title::after {
+      content: "";
+      height: 3px;
+      flex: 1 1 auto;
+      background: currentColor;
+      opacity: 0.62;
+    }
+    .lane[data-kind="heard"] .lane-title { color: var(--heard); }
+    .lane[data-kind="thought"] .lane-title { color: var(--thought); }
+    .lane[data-kind="speech"] .lane-title { color: var(--speech); }
     .activity {
       display: grid;
-      gap: 12px;
-      text-align: left;
+      align-content: start;
+      gap: clamp(8px, 1.1vh, 12px);
+      min-height: 0;
+      overflow: hidden;
     }
     .item {
       display: grid;
       gap: 4px;
-      border-left: 6px solid var(--accent, #22c55e);
-      padding-left: 14px;
+      min-width: 0;
+      border-left: 4px solid currentColor;
+      padding: 0 0 0 12px;
+      color: #e2e8f0;
+      animation: enter 360ms ease-out both;
     }
     .label {
       color: #94a3b8;
-      font-size: clamp(14px, 2.3vmin, 20px);
-      font-weight: 800;
+      font-size: clamp(10px, 1.1vw, 14px);
+      font-weight: 900;
       text-transform: uppercase;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .text {
       color: #f8fafc;
-      font-size: clamp(18px, 3.2vmin, 30px);
-      line-height: 1.14;
+      font-size: clamp(15px, 1.75vw, 24px);
+      line-height: 1.12;
       overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      overflow: hidden;
+    }
+    .empty {
+      color: #64748b;
+      font-size: clamp(14px, 1.5vw, 20px);
+      line-height: 1.2;
+      align-self: center;
+    }
+    .footer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+      color: #94a3b8;
+      font-size: clamp(11px, 1.15vw, 15px);
+      font-weight: 700;
+      min-width: 0;
+    }
+    .timestamp {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    @keyframes meter {
+      0%, 100% { height: 24%; opacity: 0.45; }
+      45% { height: 92%; opacity: 1; }
+    }
+    @keyframes scan {
+      to { transform: translateY(410%); }
+    }
+    @keyframes enter {
+      from { opacity: 1; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-aspect-ratio: 1/1) {
+      .tile {
+        width: 100%;
+        max-height: none;
+        min-height: calc(100vh - min(6.4vh, 56px));
+        aspect-ratio: auto;
+      }
+      .lanes {
+        grid-template-columns: 1fr;
+      }
+      .pulse {
+        height: 34px;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .scan,
+      .pulse span,
+      .item {
+        animation: none;
+      }
     }
   </style>
 </head>
 <body>
   <main class="samoagent-presence">
-    <section class="panel" aria-live="polite">
-      <div>
-        <div class="state" id="state">listening</div>
+    <section class="tile" aria-live="polite">
+      <div class="scan"></div>
+      <header class="header">
+        <div class="brand"><span class="mark">S</span><span>samoagent live presence</span></div>
+        <div class="live" id="live">listening</div>
+      </header>
+      <div class="status">
+        <div class="state" id="state">Listening</div>
         <div class="message" id="message">Listening</div>
-        <div class="activity" id="activity" aria-live="polite"></div>
+        <div class="pulse" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
       </div>
+      <div class="lanes">
+        <section class="lane" data-kind="heard">
+          <div class="lane-title">Heard</div>
+          <div class="activity" id="heard"></div>
+        </section>
+        <section class="lane" data-kind="thought">
+          <div class="lane-title">Thinks</div>
+          <div class="activity" id="thought"></div>
+        </section>
+        <section class="lane" data-kind="speech">
+          <div class="lane-title">Says</div>
+          <div class="activity" id="speech"></div>
+        </section>
+      </div>
+      <footer class="footer">
+        <div class="timestamp" id="updated">Waiting for live signal</div>
+        <div id="count">0 events</div>
+      </footer>
     </section>
   </main>
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
     const styles = {
-      idle: ["#94a3b8", "rgba(148, 163, 184, 0.38)"],
-      listening: ["#22c55e", "rgba(34, 197, 94, 0.45)"],
-      thinking: ["#38bdf8", "rgba(56, 189, 248, 0.48)"],
-      speaking: ["#f59e0b", "rgba(245, 158, 11, 0.48)"],
-      acting: ["#f43f5e", "rgba(244, 63, 94, 0.48)"]
+      idle: ["#94a3b8", "rgba(148, 163, 184, 0.2)", "rgba(148, 163, 184, 0.42)"],
+      listening: ["#a3e635", "rgba(163, 230, 53, 0.16)", "rgba(163, 230, 53, 0.46)"],
+      thinking: ["#38bdf8", "rgba(56, 189, 248, 0.17)", "rgba(56, 189, 248, 0.48)"],
+      speaking: ["#f59e0b", "rgba(245, 158, 11, 0.18)", "rgba(245, 158, 11, 0.48)"],
+      acting: ["#fb7185", "rgba(251, 113, 133, 0.18)", "rgba(251, 113, 133, 0.5)"]
     };
+    const titles = { idle: "Idle", listening: "Listening", thinking: "Thinking", speaking: "Speaking", acting: "Acting" };
+    const laneConfig = [
+      ["heard", document.getElementById("heard"), "No speech yet"],
+      ["thought", document.getElementById("thought"), "No thought yet"],
+      ["speech", document.getElementById("speech"), "No reply yet"]
+    ];
+    const speechKinds = new Set(["speech", "action", "status"]);
+    const classify = (item) => {
+      if (item && item.kind === "heard") return "heard";
+      if (item && item.kind === "thought") return "thought";
+      if (item && speechKinds.has(item.kind)) return "speech";
+      return "speech";
+    };
+    function formatUpdated(value) {
+      const date = new Date(String(value || ""));
+      if (Number.isNaN(date.getTime())) return "Waiting for live signal";
+      return "Updated " + date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    function renderLane(element, items, fallback) {
+      element.replaceChildren();
+      if (items.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = fallback;
+        element.append(empty);
+        return;
+      }
+      for (const item of items.slice(0, 2)) {
+        const row = document.createElement("div");
+        row.className = "item";
+        const label = document.createElement("div");
+        label.className = "label";
+        label.textContent = String(item.label || item.kind || "event");
+        const text = document.createElement("div");
+        text.className = "text";
+        text.textContent = String(item.text || "");
+        row.append(label, text);
+        element.append(row);
+      }
+    }
     async function refresh() {
       try {
         const response = await fetch("/presence.json?token=" + encodeURIComponent(token), { cache: "no-store" });
         if (!response.ok) return;
         const data = await response.json();
         const state = String(data.state || "listening");
-        document.getElementById("state").textContent = state;
+        document.getElementById("state").textContent = titles[state] || state;
+        document.getElementById("live").textContent = state;
         document.getElementById("message").textContent = String(data.message || "");
-        const activity = document.getElementById("activity");
-        activity.replaceChildren();
-        for (const item of (Array.isArray(data.activities) ? data.activities.slice(0, 3) : [])) {
-          const row = document.createElement("div");
-          row.className = "item";
-          const label = document.createElement("div");
-          label.className = "label";
-          label.textContent = String(item.label || item.kind || "event");
-          const text = document.createElement("div");
-          text.className = "text";
-          text.textContent = String(item.text || "");
-          row.append(label, text);
-          activity.append(row);
+        const buckets = { heard: [], thought: [], speech: [] };
+        const activities = Array.isArray(data.activities) ? data.activities : [];
+        for (const item of activities) {
+          buckets[classify(item)].push(item);
         }
+        for (const [kind, element, fallback] of laneConfig) renderLane(element, buckets[kind], fallback);
+        document.getElementById("updated").textContent = formatUpdated(data.updated_at);
+        document.getElementById("count").textContent = activities.length + (activities.length === 1 ? " event" : " events");
         const pair = styles[state] || styles.listening;
         document.documentElement.style.setProperty("--accent", pair[0]);
-        document.documentElement.style.setProperty("--glow", pair[1]);
+        document.documentElement.style.setProperty("--accent-soft", pair[1]);
+        document.documentElement.style.setProperty("--accent-mid", pair[2]);
       } catch {}
     }
     refresh();

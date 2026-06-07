@@ -201,7 +201,12 @@ describe("webhook handler", () => {
       const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
       expect(page.status).toBe(200);
       expect(page.headers.get("Content-Type")).toContain("text/html");
-      expect(await page.text()).toContain("samoagent-presence");
+      const html = await page.text();
+      expect(html).toContain("samoagent-presence");
+      expect(html).toContain("Heard");
+      expect(html).toContain("Thinks");
+      expect(html).toContain("Says");
+      expect(html).toContain("animation: meter");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
       expect(jsonResp.status).toBe(200);
