@@ -16,6 +16,7 @@ export interface ParsedArgs {
   transcript_local?: boolean;
   out?: string | null;
   archive?: boolean;
+  frame_source?: string | null;
   message?: string;
   transcript_file?: string;
   webhook_token?: string;

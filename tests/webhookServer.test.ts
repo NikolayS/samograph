@@ -239,6 +239,71 @@ describe("webhook handler", () => {
     }
   });
 
+  it("video websocket stores latest frame per source and exposes inventory", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      frameToken: "frame-token",
+      currentCallId: () => "bot-123",
+    });
+    try {
+      const ws = new WebSocket(`ws://localhost:${server.port}/video-ws?token=frame-token`);
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error("websocket open failed"));
+      });
+      ws.send(JSON.stringify({
+        event: "video_separate_png.data",
+        data: {
+          data: {
+            buffer: Buffer.from([1, 1, 1]).toString("base64"),
+            type: "webcam",
+            participant: { id: "p1", name: "Alice", is_host: true },
+            timestamp: { absolute: "2026-05-30T15:00:00Z" },
+          },
+        },
+      }));
+      ws.send(JSON.stringify({
+        event: "video_separate_png.data",
+        data: {
+          data: {
+            buffer: Buffer.from([2, 2, 2]).toString("base64"),
+            type: "screen_share",
+            participant: { id: "screen", name: "Screen", is_host: false },
+            timestamp: { absolute: "2026-05-30T15:00:01Z" },
+          },
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const inventory = await fetch(`http://localhost:${server.port}/frames.json`, {
+        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+      });
+      expect(inventory.status).toBe(200);
+      const json = (await inventory.json()) as {
+        frames: Array<{ source_key: string; type: string; participant: { id: string } }>;
+      };
+      expect(json.frames.map((f) => f.source_key).sort()).toEqual([
+        "participant:p1",
+        "type:screen_share",
+      ]);
+
+      const screen = await fetch(`http://localhost:${server.port}/frame?source=screen`, {
+        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+      });
+      expect(screen.status).toBe(200);
+      expect(new Uint8Array(await screen.arrayBuffer())).toEqual(new Uint8Array([2, 2, 2]));
+
+      const webcam = await fetch(`http://localhost:${server.port}/frame?source=participant:p1`, {
+        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+      });
+      expect(webcam.status).toBe(200);
+      expect(new Uint8Array(await webcam.arrayBuffer())).toEqual(new Uint8Array([1, 1, 1]));
+      ws.close();
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("Bun.serve rejects all requests when no token configured", async () => {
     const server = serve(0, tf, "");
     try {

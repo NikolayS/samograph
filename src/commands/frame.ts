@@ -8,6 +8,7 @@ import {
   archiveExistingFrame,
   archiveFrameBytes,
   frameMetadataPath,
+  normalizeFrameSource,
   resolveFrameOutput,
   writeFrameFiles,
   type VideoFrameMetadata,
@@ -23,6 +24,14 @@ export interface FrameDeps {
 function defaultRun(cmd: string[]): { returncode: number; stderr: Uint8Array } {
   const proc = Bun.spawnSync(cmd, { timeout: 15000 });
   return { returncode: proc.exitCode, stderr: proc.stderr };
+}
+
+function withFrameSource(url: string, source?: string | null): string {
+  const key = normalizeFrameSource(source);
+  if (!key) return url;
+  const u = new URL(url);
+  u.searchParams.set("source", source!);
+  return u.toString();
 }
 
 export async function cmdFrame(
@@ -78,7 +87,7 @@ export async function cmdFrame(
     }
     let resp: Response;
     try {
-      resp = await fetchFn(localFrameUrl, { headers });
+      resp = await fetchFn(withFrameSource(localFrameUrl, args.frame_source), { headers });
     } catch (e) {
       process.stderr.write(
         `FRAME_UNAVAILABLE: local WebSocket frame server is not reachable: ${e instanceof Error ? e.message : String(e)}\n`,
@@ -91,7 +100,7 @@ export async function cmdFrame(
       const metadataUrl = state.local_frame_metadata_url;
       if (typeof metadataUrl === "string" && metadataUrl) {
         try {
-          const metaResp = await fetchFn(metadataUrl, { headers });
+          const metaResp = await fetchFn(withFrameSource(metadataUrl, args.frame_source), { headers });
           if (metaResp.status === 200) {
             metadata = (await metaResp.json()) as VideoFrameMetadata;
           }

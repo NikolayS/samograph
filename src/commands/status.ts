@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { defaultTranscriptFile } from "../config.ts";
-import type { VideoFrameMetadata } from "../frameStore.ts";
+import type { FrameInventory, VideoFrameMetadata } from "../frameStore.ts";
 import { loadState, botIdFromArgsOrState } from "../state.ts";
 import { SENTINEL_RE } from "../transcript.ts";
 import type { ParsedArgs } from "../args.ts";
@@ -71,6 +71,12 @@ export async function cmdStatus(
         const frameAt = metadata.timestamp?.absolute ?? metadata.updated_at ?? "?";
         process.stdout.write(`Last frame at: ${frameAt}\n`);
         process.stdout.write(`Last frame source: ${sourceType} / ${participant}\n`);
+        if (metadata.source_key) {
+          process.stdout.write(`Last frame source key: ${metadata.source_key}\n`);
+        }
+        if (metadata.visual_status) {
+          process.stdout.write(`Last frame visual status: ${metadata.visual_status}\n`);
+        }
         if (metadata.updated_at) {
           process.stdout.write(`Last frame received at: ${metadata.updated_at}\n`);
         }
@@ -80,6 +86,26 @@ export async function cmdStatus(
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       process.stdout.write(`Last frame: unavailable (${message})\n`);
+    }
+    try {
+      const framesUrl = frameMetadataUrl.replace(/\/frame\.json(?:\?.*)?$/, "/frames.json");
+      const resp = await fetchFn(framesUrl, { headers });
+      if (resp.ok) {
+        const inventory = (await resp.json()) as FrameInventory;
+        const frames = inventory.frames ?? [];
+        if (frames.length) {
+          process.stdout.write(`Frame sources: ${frames.length}\n`);
+          for (const frame of frames) {
+            const source = frame.source_key ?? "?";
+            const type = frame.type ?? "?";
+            const participant = frame.participant?.name ?? frame.participant?.id ?? "?";
+            const visual = frame.visual_status ?? "unknown";
+            process.stdout.write(`  ${source}: ${type} / ${participant} (${visual})\n`);
+          }
+        }
+      }
+    } catch {
+      // Older local servers do not expose inventory; last-frame metadata is enough.
     }
   }
 }
