@@ -64,6 +64,8 @@ function makeDeps(
     waitForNgrok: async () => WEBHOOK_BASE,
     startMediamtx: async () => fakeProc(7000, opts.killed),
     startNgrokTcpTunnel: async () => "tcp://ngrok.tcp:12345",
+    fetch: async () => new Response("<main class=\"samoagent-presence\"></main>"),
+    sleep: async () => {},
   };
 }
 
@@ -425,6 +427,38 @@ describe("cmdJoin payload + saved state", () => {
     ).rejects.toBeInstanceOf(ExitError);
 
     expect(killed).toEqual([4242]);
+    expect(captured.payload).toBeUndefined();
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("rejects unreachable presence camera pages before creating the recall bot", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async () => new Response("Not Found", { status: 404 }),
+    };
+    const { ExitError } = await import("../src/config.ts");
+
+    await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+
+    expect(killed).toEqual([4242, 4243]);
+    expect(captured.payload).toBeUndefined();
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("rejects tunnel interstitial pages before creating the recall bot", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async () => new Response("<title>You are about to visit</title>"),
+    };
+    const { ExitError } = await import("../src/config.ts");
+
+    await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+
+    expect(killed).toEqual([4242, 4243]);
     expect(captured.payload).toBeUndefined();
     expect(existsSync(sf)).toBe(false);
   });

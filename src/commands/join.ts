@@ -23,6 +23,8 @@ export interface SpawnedProc {
   kill(): void;
 }
 
+export type PresenceFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
 /**
  * Injectable seams for cmdJoin. All default to the real implementations so
  * production behavior is unchanged; tests override them to run hermetically
@@ -39,6 +41,10 @@ export interface JoinDeps {
   startMediamtx?: () => Promise<SpawnedProc | null>;
   /** Open a ngrok TCP tunnel to a local port; returns the public tcp:// URL. */
   startNgrokTcpTunnel?: (localPort: number) => Promise<string | null>;
+  /** Fetch used for public camera-page preflight. */
+  fetch?: PresenceFetch;
+  /** Delay used between public camera-page preflight attempts. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 function defaultKill(pid: number, signal: string): void {
@@ -90,6 +96,37 @@ export function spawnDetached(
   };
 }
 
+const PRESENCE_PAGE_MARKER = "samoagent-presence";
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function waitForPresenceCamera(
+  url: string,
+  fetchFn: PresenceFetch = fetch,
+  sleepFn: (ms: number) => Promise<void> = sleep,
+  attempts = 12,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetchFn(url, { cache: "no-store" });
+      if (response.ok) {
+        const text = await response.text();
+        if (text.includes(PRESENCE_PAGE_MARKER)) {
+          return true;
+        }
+      }
+    } catch {
+      // Tunnel/server may still be coming up.
+    }
+    if (i < attempts - 1) {
+      await sleepFn(250);
+    }
+  }
+  return false;
+}
+
 export async function cmdJoin(
   args: ParsedArgs,
   deps: JoinDeps = {},
@@ -100,6 +137,8 @@ export async function cmdJoin(
   const waitForNgrokFn = deps.waitForNgrok ?? waitForNgrok;
   const startMediamtxFn = deps.startMediamtx ?? startMediamtx;
   const startNgrokTcpTunnelFn = deps.startNgrokTcpTunnel ?? startNgrokTcpTunnel;
+  const fetchFn = deps.fetch ?? fetch;
+  const sleepFn = deps.sleep ?? sleep;
 
   const transcriptFile = resolveNewTranscriptFile(args.transcript_dir);
   writeFileSync(transcriptFile, "", { flag: "wx", mode: 0o600 });
@@ -215,6 +254,18 @@ export async function cmdJoin(
     webhookUrl = `${publicBaseUrl}/webhook?token=${encodeURIComponent(webhookToken)}`;
     process.stdout.write(`Webhook: ${webhookUrl}\n`);
     process.stdout.write(`Presence camera: ${presencePageUrl}\n`);
+    const presenceReachable = await waitForPresenceCamera(
+      presencePageUrl,
+      fetchFn,
+      sleepFn,
+    );
+    if (!presenceReachable) {
+      process.stderr.write(
+        "Error: presence camera URL did not return the samoagent page; refusing to join.\n",
+      );
+      cleanupUnsaved();
+      throw new ExitError(1);
+    }
 
     let mediamtxAuto: SpawnedProc | null = null;
     let rtmpViaNgrok = false;
