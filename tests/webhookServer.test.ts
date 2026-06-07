@@ -218,6 +218,8 @@ describe("webhook handler", () => {
       expect(html).toContain("backgroundMode !== \"static\"");
       expect(html).toContain("animation: drift 7s linear");
       expect(html).toContain("@keyframes drift");
+      expect(html).toContain("Render FPS");
+      expect(html).toContain("initFpsProbe");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
       expect(jsonResp.status).toBe(200);

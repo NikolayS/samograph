@@ -403,7 +403,7 @@ export function presencePageHtml(): string {
     }
     .footer {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr auto auto;
       gap: 16px;
       align-items: end;
       color: #94a3b8;
@@ -414,6 +414,10 @@ export function presencePageHtml(): string {
     .timestamp {
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .diagnostic {
+      color: var(--accent);
       white-space: nowrap;
     }
     @keyframes scan {
@@ -485,6 +489,7 @@ export function presencePageHtml(): string {
       </div>
       <footer class="footer">
         <div class="timestamp" id="updated">Waiting for live signal</div>
+        <div class="diagnostic" id="render-fps">Render FPS --</div>
         <div id="count">0 events</div>
       </footer>
     </section>
@@ -637,6 +642,23 @@ export function presencePageHtml(): string {
       if (Number.isNaN(date.getTime())) return "Waiting for live signal";
       return "Updated " + date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     }
+    function initFpsProbe() {
+      const target = document.getElementById("render-fps");
+      if (!target) return;
+      let frames = 0;
+      let last = performance.now();
+      function tick(now) {
+        frames += 1;
+        const elapsed = now - last;
+        if (elapsed >= 1000) {
+          target.textContent = "Render FPS " + Math.round((frames * 1000) / elapsed);
+          frames = 0;
+          last = now;
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
     function renderLane(element, items, fallback) {
       element.replaceChildren();
       if (items.length === 0) {
@@ -687,6 +709,7 @@ export function presencePageHtml(): string {
       } catch {}
     }
     initPlasma();
+    initFpsProbe();
     refresh();
     setInterval(refresh, 1000);
   </script>
