@@ -109,11 +109,6 @@ export function serve(
           const activity = activityFromTranscriptLine(transcriptLine);
           if (activity !== null) {
             presence = appendPresenceActivity(presence, activity);
-            presence = appendPresenceActivity(presence, {
-              kind: "thought",
-              label: "Thinking",
-              text: `Processing latest speech: ${activity.text}`,
-            });
             presence = newPresenceSnapshot(
               "listening",
               `Heard ${activity.label}: ${activity.text}`,

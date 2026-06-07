@@ -204,20 +204,18 @@ describe("webhook handler", () => {
       const html = await page.text();
       expect(html).toContain("samoagent-presence");
       expect(html).toContain("Heard");
-      expect(html).toContain("Thinks");
-      expect(html).toContain("Says");
+      expect(html).toContain("Comments");
+      expect(html).toContain("AI mind");
       expect(html).toContain("plasma-canvas");
       expect(html).toContain("initPlasma");
       expect(html).toContain("drawSpherePlasma");
       expect(html).toContain("backgroundMode");
       expect(html).toContain("params.get(\"bg\") || \"static\"");
       expect(html).toContain("const frameMs = 250");
-      expect(html).toContain("-webkit-line-clamp: 7");
-      expect(html).toContain("grid-template-rows: repeat(2, minmax(0, 1fr))");
+      expect(html).toContain("-webkit-line-clamp: 5");
+      expect(html).toContain("grid-template-rows: repeat(3, minmax(0, 1fr))");
       expect(html).toContain("label.classList.add(\"repeated\")");
       expect(html).toContain("backgroundMode !== \"static\"");
-      expect(html).toContain("animation: drift 7s linear");
-      expect(html).toContain("@keyframes drift");
       expect(html).toContain("Render FPS");
       expect(html).toContain("initFpsProbe");
 
@@ -260,15 +258,11 @@ describe("webhook handler", () => {
         message: "Heard Nik: We need action",
       });
       expect(json.activities[0]).toMatchObject({
-        kind: "thought",
-        label: "Thinking",
-        text: "Processing latest speech: We need action",
-      });
-      expect(json.activities[1]).toMatchObject({
         kind: "heard",
         label: "Nik",
         text: "We need action",
       });
+      expect(json.activities).toHaveLength(1);
     } finally {
       server.stop(true);
     }
@@ -315,8 +309,8 @@ describe("webhook handler", () => {
         message: "Checking indexes",
       });
       expect(json.activities[0]).toMatchObject({
-        kind: "thought",
-        label: "Thinking",
+        kind: "comment",
+        label: "Comment",
         text: "Checking indexes",
       });
     } finally {

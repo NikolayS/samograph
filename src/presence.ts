@@ -15,7 +15,7 @@ export interface PresenceSnapshot {
   activities: PresenceActivity[];
 }
 
-export type PresenceActivityKind = "heard" | "thought" | "speech" | "action" | "status";
+export type PresenceActivityKind = "heard" | "comment";
 
 export interface PresenceActivity {
   kind: PresenceActivityKind;
@@ -27,9 +27,9 @@ export interface PresenceActivity {
 const DEFAULT_MESSAGES: Record<PresenceState, string> = {
   idle: "Idle",
   listening: "Listening",
-  thinking: "Thinking",
-  speaking: "Speaking",
-  acting: "Acting",
+  thinking: "Checking",
+  speaking: "Commenting",
+  acting: "Working",
 };
 
 export function normalizePresenceState(value: unknown): PresenceState | null {
@@ -90,28 +90,28 @@ export function appendPresenceActivity(
 export function activityKindForState(state: PresenceState): PresenceActivityKind {
   switch (state) {
     case "thinking":
-      return "thought";
+      return "comment";
     case "speaking":
-      return "speech";
+      return "comment";
     case "acting":
-      return "action";
+      return "comment";
     default:
-      return "status";
+      return "comment";
   }
 }
 
 export function labelForPresenceState(state: PresenceState): string {
   switch (state) {
     case "thinking":
-      return "Thinking";
+      return "Comment";
     case "speaking":
-      return "Speaking";
+      return "Comment";
     case "acting":
-      return "Acting";
+      return "Comment";
     case "idle":
-      return "Idle";
+      return "Comment";
     case "listening":
-      return "Listening";
+      return "Comment";
   }
 }
 
@@ -141,9 +141,7 @@ export function presencePageHtml(): string {
       --accent-soft: rgba(45, 212, 191, 0.2);
       --accent-mid: rgba(45, 212, 191, 0.46);
       --heard: #a3e635;
-      --thought: #38bdf8;
-      --speech: #f59e0b;
-      --action: #fb7185;
+      --comment: #38bdf8;
     }
     * { box-sizing: border-box; }
     body {
@@ -172,7 +170,7 @@ export function presencePageHtml(): string {
       justify-self: center;
       border-radius: 8px;
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr) auto;
       gap: clamp(12px, 2vh, 20px);
       border: 1px solid rgba(226, 232, 240, 0.14);
       box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 28px 80px rgba(0, 0, 0, 0.56);
@@ -193,18 +191,13 @@ export function presencePageHtml(): string {
     .tile::after {
       content: "";
       position: absolute;
-      inset: -42%;
+      inset: 0;
       z-index: 0;
       pointer-events: none;
-      opacity: 0.82;
+      opacity: 0.54;
       background:
-        radial-gradient(circle at 18% 28%, var(--accent-mid), transparent 24%),
-        radial-gradient(circle at 80% 36%, rgba(245, 158, 11, 0.44), transparent 28%),
-        radial-gradient(circle at 48% 82%, rgba(56, 189, 248, 0.4), transparent 30%),
-        conic-gradient(from 20deg at 50% 50%, transparent, var(--accent-soft), transparent 34%, rgba(245, 158, 11, 0.2), transparent 68%);
-      transform: translate3d(-7%, -4%, 0) scale(1.04) rotate(-4deg);
-      will-change: transform;
-      animation: drift 7s linear infinite alternate;
+        radial-gradient(circle at 50% 50%, var(--accent-soft), transparent 34%),
+        linear-gradient(90deg, rgba(15, 23, 42, 0.7), transparent 42%, transparent 58%, rgba(15, 23, 42, 0.7));
     }
     .tile > * {
       position: relative;
@@ -212,29 +205,18 @@ export function presencePageHtml(): string {
     }
     .plasma-canvas {
       position: absolute;
-      inset: -9%;
-      width: 118%;
-      height: 118%;
-      z-index: 0;
-      opacity: 0.58;
-      filter: blur(16px) saturate(1.12) contrast(1.04);
-      transform: scale(1.01);
-      pointer-events: none;
-    }
-    .scan {
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(180deg, transparent, rgba(248, 250, 252, 0.07), transparent);
-      height: 26%;
-      transform: translateY(-110%);
-      opacity: 0.22;
-      pointer-events: none;
+      inset: -10%;
+      width: 120%;
+      height: 120%;
       z-index: 1;
+      opacity: 0.96;
+      filter: saturate(1.12) contrast(1.08);
+      pointer-events: none;
     }
     .header {
       display: grid;
       grid-template-columns: 1fr auto;
-      align-items: start;
+      align-items: center;
       gap: 20px;
       min-height: 0;
     }
@@ -270,54 +252,55 @@ export function presencePageHtml(): string {
       text-transform: uppercase;
       white-space: nowrap;
     }
-    .status {
-      min-width: 0;
-    }
-    .state {
-      color: #ffffff;
-      font-size: clamp(32px, 5vw, 68px);
-      font-weight: 900;
-      text-transform: uppercase;
-      letter-spacing: 0;
-      line-height: 0.92;
-      overflow-wrap: anywhere;
-    }
-    .message {
-      margin-top: clamp(8px, 1.4vh, 14px);
-      max-width: 58ch;
-      font-size: clamp(18px, 2.25vw, 30px);
-      line-height: 1.14;
-      color: #cbd5e1;
-      overflow-wrap: anywhere;
-      text-wrap: balance;
-    }
-    .pulse {
-      display: grid;
-      grid-template-columns: repeat(18, 1fr);
-      gap: 5px;
-      align-items: end;
-      height: clamp(38px, 6vh, 66px);
-      margin-top: clamp(10px, 1.6vh, 18px);
-      opacity: 0.9;
-    }
-    .pulse span {
-      display: block;
-      min-width: 3px;
-      height: 42%;
-      background: var(--accent);
-      box-shadow: 0 0 18px var(--accent-mid);
-    }
-    .pulse span:nth-child(3n) { height: 72%; }
-    .pulse span:nth-child(3n + 1) { height: 54%; }
-    .pulse span:nth-child(5n) { height: 88%; }
     .lanes {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: clamp(10px, 1.6vw, 18px);
+      grid-template-columns: minmax(0, 1fr) minmax(210px, 0.82fr) minmax(0, 1fr);
+      gap: clamp(16px, 2.2vw, 30px);
       align-self: stretch;
-      align-items: stretch;
+      align-items: center;
       height: 100%;
       min-height: 0;
+    }
+    .mind {
+      position: relative;
+      width: min(100%, clamp(210px, 27vw, 360px));
+      aspect-ratio: 1;
+      justify-self: center;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 1px solid rgba(226, 232, 240, 0.18);
+      box-shadow:
+        0 0 0 1px rgba(15, 23, 42, 0.85),
+        0 0 46px var(--accent-mid),
+        inset 0 0 42px rgba(248, 250, 252, 0.12);
+      background: #020617;
+    }
+    .mind::before {
+      content: "";
+      position: absolute;
+      inset: -8%;
+      z-index: 1;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.38), transparent 14%),
+        radial-gradient(circle at 68% 32%, rgba(56, 189, 248, 0.86), transparent 24%),
+        radial-gradient(circle at 36% 72%, rgba(163, 230, 53, 0.66), transparent 24%),
+        radial-gradient(circle at 76% 76%, rgba(245, 158, 11, 0.72), transparent 22%),
+        conic-gradient(from 24deg, rgba(45, 212, 191, 0.78), rgba(56, 189, 248, 0.56), rgba(245, 158, 11, 0.62), rgba(163, 230, 53, 0.62), rgba(45, 212, 191, 0.78));
+      filter: blur(8px) saturate(1.22);
+      opacity: 0.88;
+    }
+    .mind::after {
+      content: "";
+      position: absolute;
+      inset: 10%;
+      border-radius: 50%;
+      border: 1px solid rgba(248, 250, 252, 0.18);
+      box-shadow: inset 0 0 26px rgba(255, 255, 255, 0.08);
+      z-index: 3;
+      pointer-events: none;
     }
     .lane {
       min-width: 0;
@@ -327,10 +310,10 @@ export function presencePageHtml(): string {
       grid-template-rows: auto 1fr;
       gap: clamp(8px, 1.2vh, 12px);
       padding: clamp(12px, 1.8vw, 18px);
-      border: 1px solid rgba(226, 232, 240, 0.12);
-      background: rgba(2, 6, 23, 0.58);
-      backdrop-filter: blur(14px);
-      box-shadow: inset 0 1px 0 rgba(248, 250, 252, 0.06);
+      border-left: 2px solid rgba(226, 232, 240, 0.14);
+      border-right: 2px solid rgba(226, 232, 240, 0.08);
+      background: rgba(2, 6, 23, 0.42);
+      box-shadow: inset 0 1px 0 rgba(248, 250, 252, 0.05);
     }
     .lane-title {
       display: flex;
@@ -350,13 +333,12 @@ export function presencePageHtml(): string {
       opacity: 0.62;
     }
     .lane[data-kind="heard"] .lane-title { color: var(--heard); }
-    .lane[data-kind="thought"] .lane-title { color: var(--thought); }
-    .lane[data-kind="speech"] .lane-title { color: var(--speech); }
+    .lane[data-kind="comment"] .lane-title { color: var(--comment); }
     .activity {
       display: grid;
       align-content: start;
       gap: clamp(8px, 1.1vh, 12px);
-      grid-template-rows: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(3, minmax(0, 1fr));
       min-height: 0;
       overflow: hidden;
     }
@@ -392,7 +374,7 @@ export function presencePageHtml(): string {
       overflow-wrap: anywhere;
       display: -webkit-box;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 7;
+      -webkit-line-clamp: 5;
       overflow: hidden;
     }
     .empty {
@@ -420,12 +402,6 @@ export function presencePageHtml(): string {
       color: var(--accent);
       white-space: nowrap;
     }
-    @keyframes scan {
-      to { transform: translateY(410%); }
-    }
-    @keyframes drift {
-      to { transform: translate3d(8%, 5%, 0) scale(1.1) rotate(9deg); }
-    }
     @keyframes enter {
       from { opacity: 1; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
@@ -440,15 +416,14 @@ export function presencePageHtml(): string {
       .lanes {
         grid-template-columns: 1fr;
       }
-      .pulse {
-        height: 34px;
+      .mind {
+        width: min(64vw, 300px);
+        order: -1;
       }
     }
     @media (prefers-reduced-motion: reduce) {
-      .scan,
       .plasma-canvas,
       .tile::after,
-      .pulse span,
       .item {
         animation: none;
       }
@@ -458,33 +433,21 @@ export function presencePageHtml(): string {
 <body>
   <main class="samoagent-presence">
     <section class="tile" aria-live="polite">
-      <canvas class="plasma-canvas" id="plasma" aria-hidden="true"></canvas>
-      <div class="scan"></div>
       <header class="header">
         <div class="brand"><span class="mark">S</span><span>samoagent live presence</span></div>
         <div class="live" id="live">listening</div>
       </header>
-      <div class="status">
-        <div class="state" id="state">Listening</div>
-        <div class="message" id="message">Listening</div>
-        <div class="pulse" aria-hidden="true">
-          <span></span><span></span><span></span><span></span><span></span><span></span>
-          <span></span><span></span><span></span><span></span><span></span><span></span>
-          <span></span><span></span><span></span><span></span><span></span><span></span>
-        </div>
-      </div>
       <div class="lanes">
         <section class="lane" data-kind="heard">
           <div class="lane-title">Heard</div>
           <div class="activity" id="heard"></div>
         </section>
-        <section class="lane" data-kind="thought">
-          <div class="lane-title">Thinks</div>
-          <div class="activity" id="thought"></div>
-        </section>
-        <section class="lane" data-kind="speech">
-          <div class="lane-title">Says</div>
-          <div class="activity" id="speech"></div>
+      <div class="mind" aria-label="AI mind plasma ball">
+        <canvas class="plasma-canvas" id="plasma" aria-hidden="true"></canvas>
+      </div>
+        <section class="lane" data-kind="comment">
+          <div class="lane-title">Comments</div>
+          <div class="activity" id="comment"></div>
         </section>
       </div>
       <footer class="footer">
@@ -505,18 +468,13 @@ export function presencePageHtml(): string {
       speaking: ["#f59e0b", "rgba(245, 158, 11, 0.18)", "rgba(245, 158, 11, 0.48)"],
       acting: ["#fb7185", "rgba(251, 113, 133, 0.18)", "rgba(251, 113, 133, 0.5)"]
     };
-    const titles = { idle: "Idle", listening: "Listening", thinking: "Thinking", speaking: "Speaking", acting: "Acting" };
     const laneConfig = [
       ["heard", document.getElementById("heard"), "No speech yet"],
-      ["thought", document.getElementById("thought"), "No thought yet"],
-      ["speech", document.getElementById("speech"), "No reply yet"]
+      ["comment", document.getElementById("comment"), "No comments yet"]
     ];
-    const speechKinds = new Set(["speech", "action", "status"]);
     const classify = (item) => {
       if (item && item.kind === "heard") return "heard";
-      if (item && item.kind === "thought") return "thought";
-      if (item && speechKinds.has(item.kind)) return "speech";
-      return "speech";
+      return "comment";
     };
     function hexToRgb(hex) {
       const match = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(String(hex || ""));
@@ -669,7 +627,7 @@ export function presencePageHtml(): string {
         return;
       }
       let lastLabel = "";
-      for (const item of items.slice(0, 2)) {
+      for (const item of items.slice(0, 3)) {
         const row = document.createElement("div");
         row.className = "item";
         const label = document.createElement("div");
@@ -691,10 +649,8 @@ export function presencePageHtml(): string {
         if (!response.ok) return;
         const data = await response.json();
         const state = String(data.state || "listening");
-        document.getElementById("state").textContent = titles[state] || state;
         document.getElementById("live").textContent = state;
-        document.getElementById("message").textContent = String(data.message || "");
-        const buckets = { heard: [], thought: [], speech: [] };
+        const buckets = { heard: [], comment: [] };
         const activities = Array.isArray(data.activities) ? data.activities : [];
         for (const item of activities) {
           buckets[classify(item)].push(item);
