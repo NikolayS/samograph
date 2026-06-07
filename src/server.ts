@@ -8,6 +8,10 @@ import {
   type VideoFrameMetadata,
 } from "./frameStore.ts";
 import {
+  activityFromTranscriptLine,
+  activityKindForState,
+  appendPresenceActivity,
+  labelForPresenceState,
   newPresenceSnapshot,
   normalizePresenceState,
   presencePageHtml,
@@ -24,11 +28,12 @@ export const WEBHOOK_MAX_BYTES = 1024 * 1024;
 export async function handleWebhook(
   payload: unknown,
   transcriptPath: string,
-): Promise<void> {
+): Promise<string | null> {
   const line = formatTranscriptLine(payload);
   if (line !== null) {
     appendFileSync(transcriptPath, line + "\n");
   }
+  return line;
 }
 
 export interface ServeOptions {
@@ -99,7 +104,18 @@ export function serve(
         } catch {
           payload = {};
         }
-        await handleWebhook(payload, transcriptPath);
+        const transcriptLine = await handleWebhook(payload, transcriptPath);
+        if (transcriptLine !== null) {
+          const activity = activityFromTranscriptLine(transcriptLine);
+          if (activity !== null) {
+            presence = appendPresenceActivity(presence, activity);
+            presence = newPresenceSnapshot(
+              "listening",
+              `Heard ${activity.label}: ${activity.text}`,
+              presence.activities,
+            );
+          }
+        }
         return Response.json({ ok: true });
       }
       if (req.method === "GET" && url.pathname === "/frame") {
@@ -156,9 +172,16 @@ export function serve(
         if (state === null) {
           return Response.json({ error: "invalid presence state" }, { status: 400 });
         }
+        const message = sanitizePresenceMessage(rawPayload.message, state);
+        presence = appendPresenceActivity(presence, {
+          kind: activityKindForState(state),
+          label: labelForPresenceState(state),
+          text: message,
+        });
         presence = newPresenceSnapshot(
           state,
-          sanitizePresenceMessage(rawPayload.message, state),
+          message,
+          presence.activities,
         );
         return Response.json({ ok: true, presence });
       }

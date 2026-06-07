@@ -205,9 +205,47 @@ describe("webhook handler", () => {
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
       expect(jsonResp.status).toBe(200);
-      const json = await jsonResp.json() as { state: string; message: string };
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: unknown[];
+      };
       expect(json.state).toBe("listening");
       expect(json.message).toBe("Listening");
+      expect(json.activities).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("transcript webhook updates presence with heard activity", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeTranscriptEvent("Nik", ["We", "need", "action"])),
+      });
+      expect(resp.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: Array<{ kind: string; label: string; text: string }>;
+      };
+      expect(json).toMatchObject({
+        state: "listening",
+        message: "Heard Nik: We need action",
+      });
+      expect(json.activities[0]).toMatchObject({
+        kind: "heard",
+        label: "Nik",
+        text: "We need action",
+      });
     } finally {
       server.stop(true);
     }
@@ -244,10 +282,19 @@ describe("webhook handler", () => {
       expect(updated.status).toBe(200);
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
-      const json = await jsonResp.json() as { state: string; message: string };
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: Array<{ kind: string; label: string; text: string }>;
+      };
       expect(json).toMatchObject({
         state: "thinking",
         message: "Checking indexes",
+      });
+      expect(json.activities[0]).toMatchObject({
+        kind: "thought",
+        label: "Thinking",
+        text: "Checking indexes",
       });
     } finally {
       server.stop(true);

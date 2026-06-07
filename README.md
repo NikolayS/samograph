@@ -178,7 +178,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes action <text>` - add an action item.
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat.
-- `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state.
+- `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; `thinking`/`speaking`/`acting` messages are shown as live activity on the camera page, and transcript webhooks add recent "heard" lines automatically.
 - `frame [--out FILE] [--archive]` - write latest in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, and transcript file path.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.

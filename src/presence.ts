@@ -12,6 +12,16 @@ export interface PresenceSnapshot {
   state: PresenceState;
   message: string;
   updated_at: string;
+  activities: PresenceActivity[];
+}
+
+export type PresenceActivityKind = "heard" | "thought" | "speech" | "action" | "status";
+
+export interface PresenceActivity {
+  kind: PresenceActivityKind;
+  label: string;
+  text: string;
+  at: string;
 }
 
 const DEFAULT_MESSAGES: Record<PresenceState, string> = {
@@ -40,15 +50,78 @@ export function sanitizePresenceMessage(value: unknown, state: PresenceState): s
   return cleaned ? cleaned.slice(0, 160) : defaultPresenceMessage(state);
 }
 
+export function sanitizePresenceText(value: unknown, maxLen = 220): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, maxLen);
+}
+
 export function newPresenceSnapshot(
   state: PresenceState = "listening",
   message = defaultPresenceMessage(state),
+  activities: PresenceActivity[] = [],
 ): PresenceSnapshot {
   return {
     state,
     message,
     updated_at: new Date().toISOString(),
+    activities,
   };
+}
+
+const ACTIVITY_LIMIT = 8;
+
+export function appendPresenceActivity(
+  snapshot: PresenceSnapshot,
+  activity: Omit<PresenceActivity, "at">,
+): PresenceSnapshot {
+  const text = sanitizePresenceText(activity.text);
+  if (!text) return snapshot;
+  const label = sanitizePresenceText(activity.label, 40) || activity.kind;
+  return {
+    ...snapshot,
+    updated_at: new Date().toISOString(),
+    activities: [
+      { kind: activity.kind, label, text, at: new Date().toISOString() },
+      ...snapshot.activities,
+    ].slice(0, ACTIVITY_LIMIT),
+  };
+}
+
+export function activityKindForState(state: PresenceState): PresenceActivityKind {
+  switch (state) {
+    case "thinking":
+      return "thought";
+    case "speaking":
+      return "speech";
+    case "acting":
+      return "action";
+    default:
+      return "status";
+  }
+}
+
+export function labelForPresenceState(state: PresenceState): string {
+  switch (state) {
+    case "thinking":
+      return "Thinking";
+    case "speaking":
+      return "Speaking";
+    case "acting":
+      return "Acting";
+    case "idle":
+      return "Idle";
+    case "listening":
+      return "Listening";
+  }
+}
+
+export function activityFromTranscriptLine(line: string): Omit<PresenceActivity, "at"> | null {
+  const match = line.match(/^\[[^\]]+\]\s+([^:]+):\s*(.*)$/);
+  if (match === null) return null;
+  const label = sanitizePresenceText(match[1], 40);
+  const text = sanitizePresenceText(match[2]);
+  if (!text) return null;
+  return { kind: "heard", label, text };
 }
 
 export function presencePageHtml(): string {
@@ -73,21 +146,24 @@ export function presencePageHtml(): string {
       background: #0b0f19;
     }
     .samoagent-presence {
-      width: min(82vmin, 720px);
-      aspect-ratio: 1;
+      width: min(92vmin, 860px);
+      min-height: min(92vmin, 860px);
       display: grid;
       place-items: center;
       text-align: center;
     }
     .panel {
-      width: 74%;
-      aspect-ratio: 1;
+      width: 82%;
+      min-height: 72%;
       border-radius: 16px;
       display: grid;
-      place-items: center;
+      align-content: center;
+      gap: 28px;
       border: 14px solid var(--accent, #22c55e);
       box-shadow: 0 0 56px var(--glow, rgba(34, 197, 94, 0.45)), inset 0 0 48px rgba(15, 23, 42, 0.9);
       background: rgba(15, 23, 42, 0.72);
+      padding: 46px 42px;
+      box-sizing: border-box;
     }
     .state {
       font-size: clamp(42px, 10vmin, 92px);
@@ -103,6 +179,29 @@ export function presencePageHtml(): string {
       color: #cbd5e1;
       overflow-wrap: anywhere;
     }
+    .activity {
+      display: grid;
+      gap: 12px;
+      text-align: left;
+    }
+    .item {
+      display: grid;
+      gap: 4px;
+      border-left: 6px solid var(--accent, #22c55e);
+      padding-left: 14px;
+    }
+    .label {
+      color: #94a3b8;
+      font-size: clamp(14px, 2.3vmin, 20px);
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .text {
+      color: #f8fafc;
+      font-size: clamp(18px, 3.2vmin, 30px);
+      line-height: 1.14;
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 <body>
@@ -111,6 +210,7 @@ export function presencePageHtml(): string {
       <div>
         <div class="state" id="state">listening</div>
         <div class="message" id="message">Listening</div>
+        <div class="activity" id="activity" aria-live="polite"></div>
       </div>
     </section>
   </main>
@@ -132,6 +232,20 @@ export function presencePageHtml(): string {
         const state = String(data.state || "listening");
         document.getElementById("state").textContent = state;
         document.getElementById("message").textContent = String(data.message || "");
+        const activity = document.getElementById("activity");
+        activity.replaceChildren();
+        for (const item of (Array.isArray(data.activities) ? data.activities.slice(0, 3) : [])) {
+          const row = document.createElement("div");
+          row.className = "item";
+          const label = document.createElement("div");
+          label.className = "label";
+          label.textContent = String(item.label || item.kind || "event");
+          const text = document.createElement("div");
+          text.className = "text";
+          text.textContent = String(item.text || "");
+          row.append(label, text);
+          activity.append(row);
+        }
         const pair = styles[state] || styles.listening;
         document.documentElement.style.setProperty("--accent", pair[0]);
         document.documentElement.style.setProperty("--glow", pair[1]);
