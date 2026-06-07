@@ -193,17 +193,18 @@ export function presencePageHtml(): string {
     .tile::after {
       content: "";
       position: absolute;
-      inset: -32%;
+      inset: -42%;
       z-index: 0;
       pointer-events: none;
-      opacity: 0.58;
+      opacity: 0.82;
       background:
-        radial-gradient(circle at 22% 32%, var(--accent-mid), transparent 28%),
-        radial-gradient(circle at 72% 42%, rgba(245, 158, 11, 0.32), transparent 30%),
-        radial-gradient(circle at 48% 78%, rgba(56, 189, 248, 0.28), transparent 34%);
-      transform: translate3d(-2%, -1%, 0) scale(1.02);
+        radial-gradient(circle at 18% 28%, var(--accent-mid), transparent 24%),
+        radial-gradient(circle at 80% 36%, rgba(245, 158, 11, 0.44), transparent 28%),
+        radial-gradient(circle at 48% 82%, rgba(56, 189, 248, 0.4), transparent 30%),
+        conic-gradient(from 20deg at 50% 50%, transparent, var(--accent-soft), transparent 34%, rgba(245, 158, 11, 0.2), transparent 68%);
+      transform: translate3d(-7%, -4%, 0) scale(1.04) rotate(-4deg);
       will-change: transform;
-      animation: drift 16s steps(48, end) infinite alternate;
+      animation: drift 9s steps(60, end) infinite alternate;
     }
     .tile > * {
       position: relative;
@@ -419,7 +420,7 @@ export function presencePageHtml(): string {
       to { transform: translateY(410%); }
     }
     @keyframes drift {
-      to { transform: translate3d(3%, 2%, 0) scale(1.05) rotate(4deg); }
+      to { transform: translate3d(8%, 5%, 0) scale(1.1) rotate(9deg); }
     }
     @keyframes enter {
       from { opacity: 1; transform: translateY(8px); }
