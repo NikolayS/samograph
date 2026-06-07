@@ -205,12 +205,12 @@ export function presencePageHtml(): string {
     }
     .plasma-canvas {
       position: absolute;
-      inset: -10%;
-      width: 120%;
-      height: 120%;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       z-index: 1;
-      opacity: 0.34;
-      filter: blur(12px) saturate(1.18) contrast(1.04);
+      opacity: 1;
+      filter: saturate(1.1) contrast(1.08);
       pointer-events: none;
     }
     .header {
@@ -277,29 +277,18 @@ export function presencePageHtml(): string {
         inset 0 0 42px rgba(248, 250, 252, 0.12);
       background: #020617;
     }
-    .mind::before {
-      content: "";
-      position: absolute;
-      inset: -8%;
-      z-index: 1;
-      border-radius: 50%;
-      background:
-        radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.38), transparent 14%),
-        radial-gradient(circle at 68% 32%, rgba(56, 189, 248, 0.86), transparent 24%),
-        radial-gradient(circle at 36% 72%, rgba(163, 230, 53, 0.66), transparent 24%),
-        radial-gradient(circle at 76% 76%, rgba(245, 158, 11, 0.72), transparent 22%),
-        conic-gradient(from 24deg, rgba(45, 212, 191, 0.78), rgba(56, 189, 248, 0.56), rgba(245, 158, 11, 0.62), rgba(163, 230, 53, 0.62), rgba(45, 212, 191, 0.78));
-      filter: blur(8px) saturate(1.22);
-      opacity: 0.88;
-      animation: plasma-turn 9s linear infinite;
-    }
     .mind::after {
       content: "";
       position: absolute;
-      inset: 10%;
+      inset: 0;
       border-radius: 50%;
-      border: 1px solid rgba(248, 250, 252, 0.18);
-      box-shadow: inset 0 0 26px rgba(255, 255, 255, 0.08);
+      background:
+        radial-gradient(circle at 32% 22%, rgba(255, 255, 255, 0.34), transparent 12%),
+        radial-gradient(circle at 68% 78%, transparent 45%, rgba(0, 0, 0, 0.4) 82%),
+        radial-gradient(circle at 50% 50%, transparent 58%, rgba(248, 250, 252, 0.2) 61%, transparent 68%);
+      box-shadow:
+        inset -24px -28px 54px rgba(0, 0, 0, 0.42),
+        inset 18px 16px 42px rgba(255, 255, 255, 0.08);
       z-index: 3;
       pointer-events: none;
     }
@@ -403,9 +392,6 @@ export function presencePageHtml(): string {
       color: var(--accent);
       white-space: nowrap;
     }
-    @keyframes plasma-turn {
-      to { transform: rotate(360deg) scale(1.04); }
-    }
     @media (max-aspect-ratio: 1/1) {
       .tile {
         width: 100%;
@@ -424,7 +410,6 @@ export function presencePageHtml(): string {
     @media (prefers-reduced-motion: reduce) {
       .plasma-canvas,
       .tile::after,
-      .mind::before,
       .item {
         animation: none;
       }
@@ -473,6 +458,7 @@ export function presencePageHtml(): string {
       ["heard", document.getElementById("heard"), "No speech yet"],
       ["comment", document.getElementById("comment"), "No comments yet"]
     ];
+    let activityEnergy = 0;
     const classify = (item) => {
       if (item && item.kind === "heard") return "heard";
       return "comment";
@@ -493,13 +479,12 @@ export function presencePageHtml(): string {
       let h = 1;
       let image = null;
       let lastFrame = 0;
-      const scale = 1.2;
-      const frameMs = 166;
+      const frameMs = 100;
       const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       function resize() {
         const rect = canvas.getBoundingClientRect();
-        w = Math.max(32, Math.min(140, Math.floor(rect.width / 10)));
-        h = Math.max(20, Math.min(80, Math.floor(rect.height / 10)));
+        w = Math.max(96, Math.min(220, Math.floor(rect.width / 3.2)));
+        h = Math.max(96, Math.min(220, Math.floor(rect.height / 3.2)));
         canvas.width = w;
         canvas.height = h;
         image = ctx.createImageData(w, h);
@@ -507,70 +492,102 @@ export function presencePageHtml(): string {
       function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
       }
-      function plasmaValue(x, y, t, cx, cy) {
-        const dx = x - cx;
-        const dy = y - cy;
-        const r = Math.sqrt(dx * dx + dy * dy);
-        const v =
-          Math.sin(x * 0.035 * scale + t * 2.4) +
-          Math.sin(y * 0.043 * scale - t * 2.0) +
-          Math.sin((x + y) * 0.026 * scale + t * 1.6) +
-          Math.sin(r * 0.055 * scale - t * 3.2);
-        return clamp((v + 4) / 8, 0, 1);
+      function mix(a, b, n) {
+        return a + (b - a) * n;
       }
-      function writePlasmaPixel(data, p, accent, n, alphaScale = 1) {
-        const hot = Math.pow(n, 1.8);
-        const cool = Math.pow(1 - n, 2.4);
-        const mid = Math.sin(p * 0.0007) * 0.5 + 0.5;
-        data[p] = Math.round(8 + accent[0] * 0.3 + 126 * hot + 42 * mid + 44 * cool);
-        data[p + 1] = Math.round(12 + accent[1] * 0.34 + 72 * hot + 98 * mid + 26 * cool);
-        data[p + 2] = Math.round(34 + accent[2] * 0.4 + 94 * hot + 112 * cool);
-        data[p + 3] = Math.round((126 + hot * 116) * alphaScale);
+      function plasmaBands(x, y, z, t, energy) {
+        return (
+          Math.sin(x * 6.0 + y * 2.2 + t * (1.9 + energy * 2.2)) +
+          Math.sin(y * 7.2 - z * 3.8 - t * (1.4 + energy * 1.6)) +
+          Math.sin((x + z) * 8.4 + t * (2.4 + energy * 2.8)) +
+          Math.sin(Math.atan2(y, x) * 5.0 + z * 4.2 - t * (1.7 + energy * 2.0))
+        ) / 4;
       }
-      function drawFieldPlasma(data, accent, t) {
-        const cx = w * 0.58;
-        const cy = h * 0.46;
+      function drawFieldPlasma(data, accent, t, energy) {
+        const cx = w * 0.5;
+        const cy = h * 0.5;
         let p = 0;
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            writePlasmaPixel(data, p, accent, plasmaValue(x, y, t, cx, cy));
+            const nx = (x - cx) / cx;
+            const ny = (y - cy) / cy;
+            const n = plasmaBands(nx, ny, Math.hypot(nx, ny), t, energy) * 0.5 + 0.5;
+            data[p] = Math.round(mix(12, accent[0] + 100, n));
+            data[p + 1] = Math.round(mix(20, accent[1] + 62, 1 - Math.abs(n - 0.55)));
+            data[p + 2] = Math.round(mix(46, accent[2] + 76, 1 - n));
+            data[p + 3] = 190;
             p += 4;
           }
         }
       }
-      function drawSpherePlasma(data, accent, t) {
-        const cx = w * 0.52;
-        const cy = h * 0.47;
-        const radius = Math.min(w, h) * 0.36;
+      function drawSpherePlasma(data, accent, t, energy) {
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+        const pulse = 1 + Math.sin(t * 3.2) * 0.018 * energy;
+        const radius = Math.min(w, h) * 0.44 * pulse;
         let p = 0;
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            const dx = x - cx;
-            const dy = y - cy;
+            const dx = (x - cx) / radius;
+            const dy = (y - cy) / radius;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            const base = plasmaValue(x, y, t * 0.72, cx, cy);
-            if (dist < radius) {
-              const edge = 1 - dist / radius;
-              const z = Math.sqrt(Math.max(0, 1 - (dist / radius) ** 2));
-              const latitude = Math.atan2(dy, radius * z + 0.001);
-              const longitude = Math.atan2(dx, radius * z + 0.001);
-              const bands = Math.sin(longitude * 5.0 + t * 3.0) * Math.cos(latitude * 4.0 - t * 1.6);
-              const n = clamp(base * 0.65 + bands * 0.22 + edge * 0.38, 0, 1);
-              const rim = Math.pow(1 - edge, 5);
-              writePlasmaPixel(data, p, accent, n, 0.78 + rim * 0.45);
-              data[p] = Math.min(255, data[p] + Math.round(rim * 80));
-              data[p + 1] = Math.min(255, data[p + 1] + Math.round(rim * 52));
-              data[p + 2] = Math.min(255, data[p + 2] + Math.round(rim * 96));
+            if (dist < 1) {
+              const z = Math.sqrt(Math.max(0, 1 - dist * dist));
+              const spin = t * (0.55 + energy * 0.7);
+              const cos = Math.cos(spin);
+              const sin = Math.sin(spin);
+              const rx = dx * cos - z * sin;
+              const rz = dx * sin + z * cos;
+              const bands = plasmaBands(rx, dy, rz, t, energy) * 0.5 + 0.5;
+              const rim = Math.pow(dist, 3.4);
+              const light = clamp(0.34 + z * 0.54 - dx * 0.12 - dy * 0.18 + energy * 0.08, 0, 1.15);
+              const hot = Math.pow(bands, 1.7);
+              const cool = Math.pow(1 - bands, 1.2);
+              data[p] = Math.round(clamp((accent[0] * 0.28 + 54 + hot * 180 + cool * 16) * light + rim * 42, 0, 255));
+              data[p + 1] = Math.round(clamp((accent[1] * 0.34 + 46 + hot * 88 + cool * 140) * light + rim * 52, 0, 255));
+              data[p + 2] = Math.round(clamp((accent[2] * 0.36 + 64 + hot * 54 + cool * 190) * light + rim * 68, 0, 255));
+              data[p + 3] = 255;
             } else {
-              const orbit = Math.abs(dist - radius * (1.15 + 0.08 * Math.sin(t + Math.atan2(dy, dx) * 3)));
-              const tendril = Math.max(0, 1 - orbit / (radius * 0.11));
-              const fade = Math.max(0, 1 - dist / (radius * 2.2));
-              const n = clamp(base * 0.36 + tendril * 0.9, 0, 1);
-              writePlasmaPixel(data, p, accent, n, 0.28 * fade + tendril * 0.54);
+              const halo = clamp(1 - (dist - 1) / 0.42, 0, 1);
+              data[p] = Math.round(accent[0] * 0.38 * halo);
+              data[p + 1] = Math.round(accent[1] * 0.34 * halo);
+              data[p + 2] = Math.round((accent[2] * 0.44 + 42) * halo);
+              data[p + 3] = Math.round(120 * halo * halo);
             }
             p += 4;
           }
         }
+      }
+      function drawTendrils(accent, t, energy) {
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+        const radius = Math.min(w, h) * 0.36;
+        const count = 7 + Math.round(energy * 5);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.lineCap = "round";
+        for (let i = 0; i < count; i++) {
+          const seed = i * 1.714;
+          const angle = seed + t * (0.42 + energy * 0.7);
+          const bend = Math.sin(t * 1.9 + seed) * radius * (0.16 + energy * 0.1);
+          const reach = radius * (0.58 + 0.32 * (Math.sin(seed * 2.1 + t * 1.3) * 0.5 + 0.5));
+          const endX = cx + Math.cos(angle) * reach;
+          const endY = cy + Math.sin(angle) * reach;
+          const midAngle = angle + Math.PI / 2;
+          const midX = cx + Math.cos(angle) * reach * 0.45 + Math.cos(midAngle) * bend;
+          const midY = cy + Math.sin(angle) * reach * 0.45 + Math.sin(midAngle) * bend;
+          const alpha = 0.16 + energy * 0.16;
+          ctx.strokeStyle = "rgba(" + Math.round(clamp(accent[0] + 80, 0, 255)) + "," + Math.round(clamp(accent[1] + 90, 0, 255)) + ",255," + alpha + ")";
+          ctx.lineWidth = 1.2 + energy * 1.3;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.quadraticCurveTo(midX, midY, endX, endY);
+          ctx.stroke();
+          ctx.strokeStyle = "rgba(255,255,255," + (0.12 + energy * 0.1) + ")";
+          ctx.lineWidth = 0.55 + energy * 0.55;
+          ctx.stroke();
+        }
+        ctx.restore();
       }
       function draw(now) {
         if (!reduce && now - lastFrame < frameMs) {
@@ -580,15 +597,17 @@ export function presencePageHtml(): string {
         lastFrame = now;
         if (!image) resize();
         const accent = cssVarRgb("--accent");
-        const t = backgroundMode === "static" ? 420 : now * 0.0002;
+        const energy = activityEnergy;
+        const t = backgroundMode === "static" ? 420 : now * (0.00055 + energy * 0.0007);
         const data = image.data;
         const cycle = (now * 0.00005) % 1;
-        if (backgroundMode === "static") drawSpherePlasma(data, accent, t);
-        else if (backgroundMode === "field") drawFieldPlasma(data, accent, t);
-        else if (backgroundMode === "sphere") drawSpherePlasma(data, accent, t);
-        else if (cycle < 0.5) drawFieldPlasma(data, accent, t);
-        else drawSpherePlasma(data, accent, t);
+        if (backgroundMode === "static") drawSpherePlasma(data, accent, t, 0);
+        else if (backgroundMode === "field") drawFieldPlasma(data, accent, t, energy);
+        else if (backgroundMode === "sphere") drawSpherePlasma(data, accent, t, energy);
+        else if (cycle < 0.5) drawFieldPlasma(data, accent, t, energy);
+        else drawSpherePlasma(data, accent, t, energy);
         ctx.putImageData(image, 0, 0);
+        if (backgroundMode !== "field") drawTendrils(accent, t, energy);
         if (!reduce && backgroundMode !== "static") requestAnimationFrame(draw);
       }
       const ro = new ResizeObserver(resize);
@@ -653,6 +672,12 @@ export function presencePageHtml(): string {
         document.getElementById("live").textContent = state;
         const buckets = { heard: [], comment: [] };
         const activities = Array.isArray(data.activities) ? data.activities : [];
+        const now = Date.now();
+        const recent = activities.filter((item) => {
+          const at = Date.parse(String(item && item.at || ""));
+          return Number.isFinite(at) && now - at < 12000;
+        }).length;
+        activityEnergy = Math.max(activityEnergy * 0.78, Math.min(1, recent / 5));
         for (const item of activities) {
           buckets[classify(item)].push(item);
         }

@@ -211,7 +211,7 @@ describe("webhook handler", () => {
       expect(html).toContain("drawSpherePlasma");
       expect(html).toContain("backgroundMode");
       expect(html).toContain("params.get(\"bg\") || \"sphere\"");
-      expect(html).toContain("const frameMs = 166");
+      expect(html).toContain("const frameMs = 100");
       expect(html).toContain("-webkit-line-clamp: 2");
       expect(html).toContain("flex-direction: column-reverse");
       expect(html).toContain("items.slice(0, 14)");
