@@ -291,6 +291,7 @@ export function presencePageHtml(): string {
         conic-gradient(from 24deg, rgba(45, 212, 191, 0.78), rgba(56, 189, 248, 0.56), rgba(245, 158, 11, 0.62), rgba(163, 230, 53, 0.62), rgba(45, 212, 191, 0.78));
       filter: blur(8px) saturate(1.22);
       opacity: 0.88;
+      animation: plasma-turn 9s linear infinite;
     }
     .mind::after {
       content: "";
@@ -338,7 +339,7 @@ export function presencePageHtml(): string {
       display: grid;
       align-content: start;
       gap: clamp(8px, 1.1vh, 12px);
-      grid-template-rows: repeat(3, minmax(0, 1fr));
+      grid-template-rows: minmax(0, 1fr);
       min-height: 0;
       overflow: hidden;
     }
@@ -352,7 +353,6 @@ export function presencePageHtml(): string {
       border-left: 4px solid currentColor;
       padding: 0 0 0 12px;
       color: #e2e8f0;
-      animation: enter 360ms ease-out both;
     }
     .label {
       color: #94a3b8;
@@ -368,19 +368,19 @@ export function presencePageHtml(): string {
     }
     .text {
       color: #f8fafc;
-      font-size: clamp(15px, 1.75vw, 24px);
-      line-height: 1.12;
+      font-size: clamp(14px, 1.45vw, 20px);
+      line-height: 1.04;
       min-height: 0;
       overflow-wrap: anywhere;
       display: -webkit-box;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 5;
+      -webkit-line-clamp: 6;
       overflow: hidden;
     }
     .empty {
       color: #64748b;
-      font-size: clamp(14px, 1.5vw, 20px);
-      line-height: 1.2;
+      font-size: clamp(13px, 1.35vw, 18px);
+      line-height: 1.1;
       align-self: center;
     }
     .footer {
@@ -402,9 +402,8 @@ export function presencePageHtml(): string {
       color: var(--accent);
       white-space: nowrap;
     }
-    @keyframes enter {
-      from { opacity: 1; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
+    @keyframes plasma-turn {
+      to { transform: rotate(360deg) scale(1.04); }
     }
     @media (max-aspect-ratio: 1/1) {
       .tile {
@@ -424,6 +423,7 @@ export function presencePageHtml(): string {
     @media (prefers-reduced-motion: reduce) {
       .plasma-canvas,
       .tile::after,
+      .mind::before,
       .item {
         animation: none;
       }
@@ -460,7 +460,7 @@ export function presencePageHtml(): string {
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
-    const backgroundMode = params.get("bg") || "static";
+    const backgroundMode = params.get("bg") || "sphere";
     const styles = {
       idle: ["#94a3b8", "rgba(148, 163, 184, 0.2)", "rgba(148, 163, 184, 0.42)"],
       listening: ["#a3e635", "rgba(163, 230, 53, 0.16)", "rgba(163, 230, 53, 0.46)"],
@@ -493,7 +493,7 @@ export function presencePageHtml(): string {
       let image = null;
       let lastFrame = 0;
       const scale = 1.2;
-      const frameMs = 250;
+      const frameMs = 166;
       const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       function resize() {
         const rect = canvas.getBoundingClientRect();
@@ -627,7 +627,7 @@ export function presencePageHtml(): string {
         return;
       }
       let lastLabel = "";
-      for (const item of items.slice(0, 3)) {
+      for (const item of items.slice(0, 1)) {
         const row = document.createElement("div");
         row.className = "item";
         const label = document.createElement("div");

@@ -210,10 +210,10 @@ describe("webhook handler", () => {
       expect(html).toContain("initPlasma");
       expect(html).toContain("drawSpherePlasma");
       expect(html).toContain("backgroundMode");
-      expect(html).toContain("params.get(\"bg\") || \"static\"");
-      expect(html).toContain("const frameMs = 250");
-      expect(html).toContain("-webkit-line-clamp: 5");
-      expect(html).toContain("grid-template-rows: repeat(3, minmax(0, 1fr))");
+      expect(html).toContain("params.get(\"bg\") || \"sphere\"");
+      expect(html).toContain("const frameMs = 166");
+      expect(html).toContain("-webkit-line-clamp: 6");
+      expect(html).toContain("grid-template-rows: minmax(0, 1fr)");
       expect(html).toContain("label.classList.add(\"repeated\")");
       expect(html).toContain("backgroundMode !== \"static\"");
       expect(html).toContain("Render FPS");
