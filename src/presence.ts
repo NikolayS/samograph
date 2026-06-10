@@ -631,7 +631,10 @@ export function presencePageHtml(): string {
     }
     async function refresh() {
       try {
-        const response = await fetch("/presence.json?token=" + encodeURIComponent(token), { cache: "no-store" });
+        const response = await fetch("/presence.json", {
+          cache: "no-store",
+          headers: { "X-Samocall-Presence-Token": token },
+        });
         if (!response.ok) return;
         const data = await response.json();
         const state = String(data.state || "listening");

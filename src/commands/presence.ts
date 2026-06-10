@@ -34,10 +34,13 @@ export async function cmdPresence(
     throw new ExitError(1);
   }
 
-  const message = sanitizePresenceMessage(
-    args.message ?? defaultPresenceMessage(stateName),
-    stateName,
-  );
+  // Bare state toggles omit message entirely so the server applies the
+  // default without polluting the Comments activity lane.
+  const explicitMessage =
+    args.message === undefined
+      ? null
+      : sanitizePresenceMessage(args.message, stateName);
+  const message = explicitMessage ?? defaultPresenceMessage(stateName);
   try {
     const resp = await fetchFn(updateUrl, {
       method: "POST",
@@ -45,7 +48,11 @@ export async function cmdPresence(
         "Content-Type": "application/json",
         "X-Samocall-Presence-Token": token,
       },
-      body: JSON.stringify({ state: stateName, message }),
+      body: JSON.stringify(
+        explicitMessage === null
+          ? { state: stateName }
+          : { state: stateName, message: explicitMessage },
+      ),
     });
     if (!resp.ok) {
       const body = await resp.text();

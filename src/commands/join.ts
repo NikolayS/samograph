@@ -34,7 +34,7 @@ export interface JoinDeps {
   recall?: RecallClient;
   kill?: (pid: number, signal: string) => void;
   /** Spawn a detached process (webhook server / ngrok). */
-  spawn?: (cmd: string[]) => SpawnedProc;
+  spawn?: (cmd: string[], opts?: SpawnOptions) => SpawnedProc;
   /** Poll ngrok's local API for the public webhook base URL. */
   waitForNgrok?: (port: number) => Promise<string | null>;
   /** Start a local mediamtx RTMP server. */
@@ -61,17 +61,24 @@ interface ChildProcLike {
   unref(): void;
 }
 
+/** Extra spawn options; env entries are merged over the parent environment. */
+export interface SpawnOptions {
+  env?: Record<string, string>;
+}
+
 export type SpawnChildFn = (
   command: string,
   args: string[],
   options: {
     detached: true;
     stdio: "ignore";
+    env?: Record<string, string | undefined>;
   },
 ) => ChildProcLike;
 
 export function spawnDetached(
   cmd: string[],
+  opts: SpawnOptions = {},
   spawnFn: SpawnChildFn = spawnChild,
 ): SpawnedProc {
   const [command, ...args] = cmd;
@@ -81,6 +88,9 @@ export function spawnDetached(
   const proc = spawnFn(command, args, {
     detached: true,
     stdio: "ignore",
+    // Pass secrets via env (merged over the parent env), never via argv,
+    // so they stay out of `ps` output.
+    env: opts.env ? { ...process.env, ...opts.env } : undefined,
   });
   proc.unref();
   if (typeof proc.pid !== "number") {
@@ -98,6 +108,16 @@ export function spawnDetached(
 
 const PRESENCE_PAGE_MARKER = "samocall-presence";
 
+// Browser-like UA so the preflight sees what Recall's Chromium sees —
+// ngrok-free/localtunnel serve their interstitials only to browser UAs.
+const PRESENCE_PREFLIGHT_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+
+// ~30 s budget: fresh tunnel DNS (e.g. *.trycloudflare.com) can take 10–30 s.
+const PRESENCE_PREFLIGHT_ATTEMPTS = 40;
+const PRESENCE_PREFLIGHT_SLEEP_MS = 750;
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -106,11 +126,14 @@ export async function waitForPresenceCamera(
   url: string,
   fetchFn: PresenceFetch = fetch,
   sleepFn: (ms: number) => Promise<void> = sleep,
-  attempts = 12,
+  attempts = PRESENCE_PREFLIGHT_ATTEMPTS,
 ): Promise<boolean> {
   for (let i = 0; i < attempts; i++) {
     try {
-      const response = await fetchFn(url, { cache: "no-store" });
+      const response = await fetchFn(url, {
+        cache: "no-store",
+        headers: { "User-Agent": PRESENCE_PREFLIGHT_USER_AGENT },
+      });
       if (response.ok) {
         const text = await response.text();
         if (text.includes(PRESENCE_PAGE_MARKER)) {
@@ -121,7 +144,7 @@ export async function waitForPresenceCamera(
       // Tunnel/server may still be coming up.
     }
     if (i < attempts - 1) {
-      await sleepFn(250);
+      await sleepFn(PRESENCE_PREFLIGHT_SLEEP_MS);
     }
   }
   return false;
@@ -169,25 +192,27 @@ export async function cmdJoin(
   const selfPath = fileURLToPath(import.meta.url);
   // resolve cli entrypoint: this module is src/commands/join.ts → cli is src/cli.ts
   const cliPath = selfPath.replace(/commands\/join\.ts$/, "cli.ts");
-  const server = spawn([
-    process.execPath,
-    cliPath,
-    "_serve",
-    "--port",
-    String(port),
-    "--transcript-file",
-    transcriptFile,
-    "--webhook-token",
-    webhookToken,
-    "--call-id-file",
-    stateFile(),
-    "--frame-token",
-    frameToken,
-    "--presence-token",
-    presenceToken,
-    "--presence-write-token",
-    presenceWriteToken,
-  ]);
+  const server = spawn(
+    [
+      process.execPath,
+      cliPath,
+      "_serve",
+      "--port",
+      String(port),
+      "--transcript-file",
+      transcriptFile,
+      "--call-id-file",
+      stateFile(),
+    ],
+    {
+      env: {
+        SAMOCALL_WEBHOOK_TOKEN: webhookToken,
+        SAMOCALL_FRAME_TOKEN: frameToken,
+        SAMOCALL_PRESENCE_TOKEN: presenceToken,
+        SAMOCALL_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+      },
+    },
+  );
   const started = new Set<SpawnedProc>([server]);
   let stateSaved = false;
 

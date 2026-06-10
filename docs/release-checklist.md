@@ -48,7 +48,7 @@ Use this checklist for each npm release.
   ```
 
 - Confirm the package page shows Apache-2.0 license, homepage, README, and provenance.
-- Confirm GitHub Pages is healthy at `https://samoagent.dev/`.
+- Confirm GitHub Pages is healthy at `https://samoagent.dev/` (domain intentionally kept as-is during rename transition).
 
 ## Secret Hygiene
 

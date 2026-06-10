@@ -263,6 +263,51 @@ describe("cmdJoin payload + saved state", () => {
     expect(existsSync(join(tmp, "frames"))).toBe(false);
   });
 
+  it("passes _serve tokens via spawn env, never via argv", async () => {
+    const captured: { payload?: any } = {};
+    const spawnCalls: Array<{ cmd: string[]; env?: Record<string, string> }> = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      spawn: (cmd, opts) => {
+        spawnCalls.push({ cmd, env: opts?.env });
+        return fakeProc(5000);
+      },
+    };
+
+    await cmdJoin(joinArgs({ ws_video: true }), deps);
+
+    const serveCall = spawnCalls.find((c) => c.cmd.includes("_serve"));
+    expect(serveCall).toBeDefined();
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    const webhookToken = new URL(state.webhook_url).searchParams.get("token")!;
+    const tokens = [
+      webhookToken,
+      state.frame_token,
+      state.presence_token,
+      state.presence_write_token,
+    ];
+    for (const token of tokens) {
+      expect(typeof token).toBe("string");
+      expect(token.length).toBeGreaterThan(0);
+      expect(serveCall!.cmd).not.toContain(token);
+    }
+    for (const flag of [
+      "--webhook-token",
+      "--frame-token",
+      "--presence-token",
+      "--presence-write-token",
+    ]) {
+      expect(serveCall!.cmd).not.toContain(flag);
+    }
+    expect(serveCall!.env).toMatchObject({
+      SAMOCALL_WEBHOOK_TOKEN: webhookToken,
+      SAMOCALL_FRAME_TOKEN: state.frame_token,
+      SAMOCALL_PRESENCE_TOKEN: state.presence_token,
+      SAMOCALL_PRESENCE_WRITE_TOKEN: state.presence_write_token,
+    });
+  });
+
   it("cleans up server and ngrok when recall createBot fails before state is saved", async () => {
     const killed: number[] = [];
     const captured: { payload?: any; rejectCreateBot?: boolean } = { rejectCreateBot: true };
@@ -500,6 +545,22 @@ describe("waitForPresenceCamera", () => {
     expect(sleeps).toEqual([]);
   });
 
+  it("sends a browser-like Chrome User-Agent so UA-gated tunnel interstitials are visible", async () => {
+    let capturedInit: RequestInit | undefined;
+    const result = await waitForPresenceCamera(
+      URL,
+      async (_url, init) => {
+        capturedInit = init;
+        return new Response(MARKER_PAGE);
+      },
+      async () => {},
+    );
+    expect(result).toBe(true);
+    const ua = (capturedInit?.headers as Record<string, string>)["User-Agent"];
+    expect(ua).toContain("Mozilla/5.0");
+    expect(ua).toContain("Chrome/");
+  });
+
   it("retries through fetch errors and succeeds once the page comes up", async () => {
     const sleeps: number[] = [];
     let calls = 0;
@@ -514,7 +575,7 @@ describe("waitForPresenceCamera", () => {
     );
     expect(result).toBe(true);
     expect(calls).toBe(4);
-    expect(sleeps).toEqual([250, 250, 250]);
+    expect(sleeps).toEqual([750, 750, 750]);
   });
 
   it("returns false when every attempt throws", async () => {
@@ -528,7 +589,7 @@ describe("waitForPresenceCamera", () => {
       async () => {},
     );
     expect(result).toBe(false);
-    expect(calls).toBe(12);
+    expect(calls).toBe(40);
   });
 
   it("returns false when responses are 200 but never contain the marker", async () => {
@@ -542,7 +603,7 @@ describe("waitForPresenceCamera", () => {
       async () => {},
     );
     expect(result).toBe(false);
-    expect(calls).toBe(12);
+    expect(calls).toBe(40);
   });
 });
 
@@ -570,14 +631,14 @@ describe("spawnDetached", () => {
       };
     };
 
-    const proc = spawnDetached(["ngrok", "http", "18080"], fakeSpawn);
+    const proc = spawnDetached(["ngrok", "http", "18080"], {}, fakeSpawn);
 
     expect(proc.pid).toBe(1234);
     expect(calls).toEqual([
       {
         command: "ngrok",
         args: ["http", "18080"],
-        options: { detached: true, stdio: "ignore" },
+        options: { detached: true, stdio: "ignore", env: undefined },
         unref: true,
         killedWith: [],
       },

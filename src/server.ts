@@ -1,6 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { formatTranscriptLine } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
@@ -13,6 +14,7 @@ import {
   activityFromTranscriptLine,
   activityKindForState,
   appendPresenceActivity,
+  defaultPresenceMessage,
   labelForPresenceState,
   newPresenceSnapshot,
   normalizePresenceState,
@@ -22,6 +24,21 @@ import {
 } from "./presence.ts";
 
 export const WEBHOOK_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Constant-time token comparison. Both sides are hashed to a fixed length so
+ * timingSafeEqual never leaks length information; empty/missing tokens never
+ * match anything (fail closed).
+ */
+export function tokensEqual(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (!a || !b) return false;
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
 
 /**
  * Process a webhook payload, appending a formatted transcript line to the
@@ -100,25 +117,25 @@ export function serve(
   let presence: PresenceSnapshot = newPresenceSnapshot();
   const framesBySource = new Map<string, LatestVideoFrame>();
   const frameAuthorized = (req: Request): boolean =>
-    Boolean(opts.frameToken) && req.headers.get("X-Samocall-Frame-Token") === opts.frameToken;
+    tokensEqual(req.headers.get("X-Samocall-Frame-Token"), opts.frameToken);
   // The read token rides in the page URL handed to Recall, so it must never
   // grant write access; presence updates require the separate write token.
-  const presenceReadAuthorized = (req: Request, url: URL): boolean =>
-    Boolean(opts.presenceToken) &&
-    (
-      req.headers.get("X-Samocall-Presence-Token") === opts.presenceToken ||
-      url.searchParams.get("token") === opts.presenceToken
-    );
+  // Only the HTML page accepts the query token (Recall navigates there and
+  // cannot set headers); /presence.json requires the header.
+  const presencePageAuthorized = (req: Request, url: URL): boolean =>
+    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceToken) ||
+    tokensEqual(url.searchParams.get("token"), opts.presenceToken);
+  const presenceJsonAuthorized = (req: Request): boolean =>
+    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceToken);
   const presenceWriteAuthorized = (req: Request): boolean =>
-    Boolean(opts.presenceWriteToken) &&
-    req.headers.get("X-Samocall-Presence-Token") === opts.presenceWriteToken;
+    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceWriteToken);
   return Bun.serve({
     port,
-    hostname: "0.0.0.0",
+    hostname: "127.0.0.1",
     async fetch(req, server) {
       const url = new URL(req.url);
       if (req.method === "POST" && url.pathname === "/webhook") {
-        if (!opts.webhookToken || url.searchParams.get("token") !== opts.webhookToken) {
+        if (!tokensEqual(url.searchParams.get("token"), opts.webhookToken)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
         const contentLength = req.headers.get("content-length");
@@ -175,7 +192,7 @@ export function serve(
         return Response.json({ frames: frameInventory(framesBySource) });
       }
       if (req.method === "GET" && url.pathname === "/presence") {
-        if (!presenceReadAuthorized(req, url)) {
+        if (!presencePageAuthorized(req, url)) {
           return new Response("", { status: 403 });
         }
         return new Response(presencePageHtml(), {
@@ -186,7 +203,7 @@ export function serve(
         });
       }
       if (req.method === "GET" && url.pathname === "/presence.json") {
-        if (!presenceReadAuthorized(req, url)) {
+        if (!presenceJsonAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
         return Response.json(presence, {
@@ -197,9 +214,17 @@ export function serve(
         if (!presenceWriteAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
+        const contentLength = req.headers.get("content-length");
+        if (contentLength !== null && Number(contentLength) > WEBHOOK_MAX_BYTES) {
+          return Response.json({ error: "payload too large" }, { status: 413 });
+        }
         let payload: unknown = {};
         try {
-          payload = await req.json();
+          const body = await req.text();
+          if (new TextEncoder().encode(body).byteLength > WEBHOOK_MAX_BYTES) {
+            return Response.json({ error: "payload too large" }, { status: 413 });
+          }
+          payload = body ? JSON.parse(body) : {};
         } catch {
           payload = {};
         }
@@ -208,12 +233,19 @@ export function serve(
         if (state === null) {
           return Response.json({ error: "invalid presence state" }, { status: 400 });
         }
-        const message = sanitizePresenceMessage(rawPayload.message, state);
-        presence = appendPresenceActivity(presence, {
-          kind: activityKindForState(state),
-          label: labelForPresenceState(state),
-          text: message,
-        });
+        // Bare state toggles (no message in the payload) take the default
+        // message and never land in the Comments activity lane.
+        const hasMessage = rawPayload.message !== undefined;
+        const message = hasMessage
+          ? sanitizePresenceMessage(rawPayload.message, state)
+          : defaultPresenceMessage(state);
+        if (hasMessage) {
+          presence = appendPresenceActivity(presence, {
+            kind: activityKindForState(state),
+            label: labelForPresenceState(state),
+            text: message,
+          });
+        }
         presence = newPresenceSnapshot(
           state,
           message,
@@ -222,7 +254,7 @@ export function serve(
         return Response.json({ ok: true, presence });
       }
       if (url.pathname === "/video-ws") {
-        if (!opts.frameToken || url.searchParams.get("token") !== opts.frameToken) {
+        if (!tokensEqual(url.searchParams.get("token"), opts.frameToken)) {
           return new Response("", { status: 403 });
         }
         const upgraded = server.upgrade(req);

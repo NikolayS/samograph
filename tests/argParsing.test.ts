@@ -78,6 +78,18 @@ describe("argParsing", () => {
     ).toBe("web_4_core");
   });
 
+  it("join variant accepts web", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "web"]).variant,
+    ).toBe("web");
+  });
+
+  it("join variant accepts web_gpu", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "web_gpu"]).variant,
+    ).toBe("web_gpu");
+  });
+
   it("join variant rejects unknown values", () => {
     expect(() =>
       parseArgs(["join", "https://zoom.us/j/1", "--variant", "big-box"]),
@@ -109,6 +121,18 @@ describe("argParsing", () => {
 
   it("presence requires state", () => {
     expect(() => parseArgs(["presence"])).toThrow();
+  });
+
+  it("presence rejects invalid state at parse time", () => {
+    expect(() => parseArgs(["presence", "confused"])).toThrow(
+      "argument state: invalid choice: 'confused' (choose from idle, listening, thinking, speaking, acting)",
+    );
+  });
+
+  it("presence keeps accepting mixed-case states", () => {
+    const args = parseArgs(["presence", "Thinking", "Checking", "indexes"]);
+    expect(args.presence_state).toBe("Thinking");
+    expect(args.message).toBe("Checking indexes");
   });
 
   it("dicts subcommand", () => {

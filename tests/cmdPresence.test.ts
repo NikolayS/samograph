@@ -52,6 +52,9 @@ describe("cmdPresence", () => {
 
     expect(capturedUrl).toBe("http://127.0.0.1:8080/presence");
     expect(capturedInit?.method).toBe("POST");
+    expect((capturedInit?.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
     expect((capturedInit?.headers as Record<string, string>)["X-Samocall-Presence-Token"]).toBe(
       "write-secret",
     );
@@ -60,6 +63,37 @@ describe("cmdPresence", () => {
       message: "Checking indexes",
     });
     expect(writes.join("")).toContain("Presence: thinking");
+  });
+
+  it("omits message from the POST body for bare state toggles but prints the default", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_write_token: "write-secret",
+      }),
+    );
+
+    let capturedInit: RequestInit | undefined;
+    const writes: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (s: string) => { writes.push(s); return true; };
+    try {
+      await cmdPresence(
+        { command: "presence", presence_state: "idle" },
+        {
+          fetchFn: async (_url, init) => {
+            capturedInit = init;
+            return Response.json({ ok: true, presence: { state: "idle" } });
+          },
+        },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+
+    expect(JSON.parse(capturedInit?.body as string)).toEqual({ state: "idle" });
+    expect(writes.join("")).toContain("Presence: idle - Idle");
   });
 
   it("throws ExitError when no active presence server is in state", async () => {

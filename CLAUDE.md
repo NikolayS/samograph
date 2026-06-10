@@ -7,6 +7,7 @@ Use samocall to join a meeting, watch the live transcript, speak in meeting chat
 ```bash
 samocall join "https://meet.google.com/..." --name Leo --dict postgresfm
 samocall watch
+samocall presence listening
 samocall notes init --doc-id 1abc... --credentials ~/.samocall/google.json --title "Meeting live doc"
 samocall frames
 samocall frame
@@ -37,7 +38,7 @@ samocall presence acting "Opening PR review"
 samocall presence idle
 ```
 
-Presence is in-memory runtime state for lightweight in-call signaling, not persistent memory. Transcript lines appear on the camera page automatically as "heard" activity without changing the state you set.
+Presence is in-memory runtime state for lightweight in-call signaling, not persistent memory. Transcript lines appear on the camera page automatically as "heard" activity without changing the state you set. Bare state toggles (no message) switch the state with its default message and do not add a Comments entry; only explicit messages appear in the Comments lane.
 
 ## Live Google Doc Notes
 

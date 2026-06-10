@@ -91,7 +91,7 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Dynamic Bot Presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page and its JSON); presence updates require a separate write token that `join` keeps in local state and `samocall presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. The camera page URL also accepts `&bg=sphere|field|static` to select the background mode (`sphere` is the default; `static` is the cheapest).
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samocall-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samocall presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. The camera page URL also accepts `&bg=sphere|field|static` to select the background mode (`sphere` is the default; `static` is the cheapest).
 
 Update it from the agent loop:
 
@@ -185,7 +185,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes action <text>` - add an action item.
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat.
-- `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; `thinking`/`speaking`/`acting` messages are shown as live activity on the camera page, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
+- `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; explicit messages are shown as live Comments activity on the camera page, bare state toggles only switch the state with its default message, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
 - `frames` - list buffered WebSocket frame sources and metadata.
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
-import { handleWebhook, serve } from "../src/server.ts";
+import { handleWebhook, serve, tokensEqual } from "../src/server.ts";
 import { makeTmpDir, cleanupTmpDir } from "./helpers.ts";
 
 function makeTranscriptEvent(
@@ -222,7 +222,9 @@ describe("webhook handler", () => {
       expect(html).toContain("scheduleRedraw");
       expect(html).toContain("nextW === w && nextH === h");
 
-      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
       expect(jsonResp.status).toBe(200);
       const json = await jsonResp.json() as {
         state: string;
@@ -244,7 +246,9 @@ describe("webhook handler", () => {
     });
     try {
       const before = await (
-        await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`)
+        await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      })
       ).json() as { updated_at: string };
 
       const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
@@ -254,7 +258,9 @@ describe("webhook handler", () => {
       });
       expect(resp.status).toBe(200);
 
-      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
       const json = await jsonResp.json() as {
         state: string;
         message: string;
@@ -301,7 +307,9 @@ describe("webhook handler", () => {
       });
       expect(resp.status).toBe(200);
 
-      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
       const json = await jsonResp.json() as {
         state: string;
         message: string;
@@ -362,7 +370,9 @@ describe("webhook handler", () => {
       });
       expect(updated.status).toBe(200);
 
-      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
       const json = await jsonResp.json() as {
         state: string;
         message: string;
@@ -377,6 +387,38 @@ describe("webhook handler", () => {
         label: "Comment",
         text: "Checking indexes",
       });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("bare state toggle without message uses the default message and adds no activity", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ state: "idle" }),
+      });
+      expect(updated.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: unknown[];
+      };
+      expect(json).toMatchObject({ state: "idle", message: "Idle" });
+      expect(json.activities).toEqual([]);
     } finally {
       server.stop(true);
     }
@@ -412,9 +454,13 @@ describe("webhook handler", () => {
     try {
       const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
       expect(page.status).toBe(200);
-      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
       expect(jsonResp.status).toBe(200);
-      const writeOnGet = await fetch(`http://localhost:${server.port}/presence.json?token=write-token`);
+      const writeOnGet = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "write-token" },
+      });
       expect(writeOnGet.status).toBe(403);
     } finally {
       server.stop(true);
@@ -456,6 +502,97 @@ describe("webhook handler", () => {
         headers: { "X-Samocall-Presence-Token": "wrong-token" },
       });
       expect(wrongJson.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence.json accepts the read token only via header, never via query", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const viaQuery = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      expect(viaQuery.status).toBe(403);
+      const viaHeader = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(viaHeader.status).toBe(200);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence page polls presence.json with the header token, not the query token", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      const html = await page.text();
+      expect(html).toContain("X-Samocall-Presence-Token");
+      expect(html).not.toContain("/presence.json?token=");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve rejects oversized presence payloads", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const largeBody = "x".repeat(1024 * 1024 + 1);
+      const resp = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: largeBody,
+      });
+      expect(resp.status).toBe(413);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("binds to loopback only", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      expect(server.hostname).toBe("127.0.0.1");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("keeps only the newest ACTIVITY_LIMIT activities end-to-end", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      for (let i = 1; i <= 17; i++) {
+        const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(makeTranscriptEvent("Nik", ["line", String(i)])),
+        });
+        expect(resp.status).toBe(200);
+      }
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as { activities: Array<{ text: string }> };
+      expect(json.activities).toHaveLength(16);
+      expect(json.activities[0]!.text).toBe("line 17");
+      expect(json.activities[15]!.text).toBe("line 2");
+      expect(json.activities.some((a) => a.text === "line 1")).toBe(false);
     } finally {
       server.stop(true);
     }
@@ -629,6 +766,16 @@ describe("webhook handler", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  it("tokensEqual compares tokens in constant time semantics", () => {
+    expect(tokensEqual("secret", "secret")).toBe(true);
+    expect(tokensEqual("secret", "Secret")).toBe(false);
+    expect(tokensEqual("secret", "secret-longer")).toBe(false);
+    expect(tokensEqual("", "")).toBe(false);
+    expect(tokensEqual(null, "secret")).toBe(false);
+    expect(tokensEqual("secret", null)).toBe(false);
+    expect(tokensEqual(undefined, undefined)).toBe(false);
   });
 
   it("Bun.serve rejects wrong token", async () => {

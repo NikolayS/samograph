@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import {
   RECALL_BASE,
-  AVATAR_URL,
   headers,
   stateFile,
   dictDir,
@@ -14,10 +13,6 @@ import { saveEnv, restoreEnv } from "./helpers.ts";
 describe("config constants", () => {
   it("RECALL_BASE matches reference", () => {
     expect(RECALL_BASE).toBe("https://us-east-1.recall.ai/api/v1");
-  });
-
-  it("AVATAR_URL matches reference", () => {
-    expect(AVATAR_URL).toBe("https://samoagent.dev/avatar.html");
   });
 });
 

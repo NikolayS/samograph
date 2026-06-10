@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { ExitError } from "./config.ts";
+import { normalizePresenceState, PRESENCE_STATES } from "./presence.ts";
 import type { ParsedArgs } from "./args.ts";
 import { cmdJoin } from "./commands/join.ts";
 import { cmdLeave } from "./commands/leave.ts";
@@ -319,6 +320,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "presence": {
       if (positionals.length < 1) {
         throw new ArgError("the following arguments are required: state");
+      }
+      // Eager validation mirrors --variant; cmdPresence re-normalizes as
+      // defense in depth. The raw (case-insensitive) value is passed through.
+      if (normalizePresenceState(positionals[0]) === null) {
+        throw new ArgError(
+          `argument state: invalid choice: '${positionals[0]}' (choose from ${PRESENCE_STATES.join(", ")})`,
+        );
       }
       result.presence_state = positionals[0];
       result.message = positionals.slice(1).join(" ") || undefined;
