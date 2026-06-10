@@ -177,6 +177,39 @@ describe("webhook handler", () => {
     }
   });
 
+  it("accepts a webhook body of exactly 1 MB (boundary)", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const body = "x".repeat(1024 * 1024);
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=secret-token`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body,
+      });
+      expect(resp.status).toBe(200);
+      expect(await resp.json()).toEqual({ ok: true });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("rejects oversized bodies at the transport layer, before token checks", async () => {
+    // With maxRequestBodySize set, Bun 1.3.x answers 413 itself when
+    // Content-Length exceeds the cap — the fetch handler (and therefore the
+    // token check, which would otherwise return 403) never runs.
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=wrong-token`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: "x".repeat(1024 * 1024 + 1),
+      });
+      expect(resp.status).toBe(413);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("frame routes reject missing token", async () => {
     const server = serve(0, tf, { webhookToken: "webhook-token", frameToken: "frame-token" });
     try {
@@ -210,7 +243,11 @@ describe("webhook handler", () => {
       expect(html).toContain("initPlasma");
       expect(html).toContain("drawSpherePlasma");
       expect(html).toContain("backgroundMode");
-      expect(html).toContain("params.get(\"bg\") || \"sphere\"");
+      // unknown bg values fall back to sphere; cycle is an explicit named mode
+      expect(html).toContain(
+        "[\"sphere\", \"field\", \"static\", \"cycle\"].includes(bgParam) ? bgParam : \"sphere\"",
+      );
+      expect(html).toContain("backgroundMode === \"cycle\"");
       expect(html).toContain("const frameMs = 100");
       expect(html).toContain("-webkit-line-clamp: 2");
       expect(html).toContain("flex-direction: column");
@@ -424,6 +461,43 @@ describe("webhook handler", () => {
     }
   });
 
+  it("empty and whitespace-only messages behave as bare toggles (no activity)", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      for (const [message, state, defaultMessage] of [
+        ["", "thinking", "Checking"],
+        ["   ", "acting", "Working"],
+      ] as const) {
+        const updated = await fetch(`http://localhost:${server.port}/presence`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Samocall-Presence-Token": "write-token",
+          },
+          body: JSON.stringify({ state, message }),
+        });
+        expect(updated.status).toBe(200);
+
+        const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+          headers: { "X-Samocall-Presence-Token": "presence-token" },
+        });
+        const json = await jsonResp.json() as {
+          state: string;
+          message: string;
+          activities: unknown[];
+        };
+        expect(json).toMatchObject({ state, message: defaultMessage });
+        expect(json.activities).toEqual([]);
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("presence update rejects invalid state", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
@@ -557,6 +631,34 @@ describe("webhook handler", () => {
         body: largeBody,
       });
       expect(resp.status).toBe(413);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("accepts a presence body of exactly 1 MB (boundary)", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const prefix = '{"state":"thinking","message":"';
+      const suffix = '"}';
+      const body =
+        prefix +
+        "x".repeat(1024 * 1024 - prefix.length - suffix.length) +
+        suffix;
+      expect(new TextEncoder().encode(body).byteLength).toBe(1024 * 1024);
+      const resp = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body,
+      });
+      expect(resp.status).toBe(200);
     } finally {
       server.stop(true);
     }

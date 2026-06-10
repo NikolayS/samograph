@@ -1,9 +1,11 @@
+// Order matches help text and docs (listed in typical-use order); the initial
+// snapshot state is set explicitly in newPresenceSnapshot, not from index 0.
 export const PRESENCE_STATES = [
-  "idle",
   "listening",
   "thinking",
   "speaking",
   "acting",
+  "idle",
 ] as const;
 
 export type PresenceState = typeof PRESENCE_STATES[number];
@@ -427,7 +429,9 @@ export function presencePageHtml(): string {
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
-    const backgroundMode = params.get("bg") || "sphere";
+    const bgParam = params.get("bg") || "sphere";
+    // Named modes only; unknown values fall back to sphere.
+    const backgroundMode = ["sphere", "field", "static", "cycle"].includes(bgParam) ? bgParam : "sphere";
     const styles = {
       idle: ["#64748b", "rgba(100, 116, 139, 0.18)", "rgba(100, 116, 139, 0.36)"],
       listening: ["#38bdf8", "rgba(56, 189, 248, 0.16)", "rgba(56, 189, 248, 0.44)"],
@@ -570,9 +574,9 @@ export function presencePageHtml(): string {
         const cycle = (now * 0.00005) % 1;
         if (backgroundMode === "static") drawSpherePlasma(data, accent, t, 0);
         else if (backgroundMode === "field") drawFieldPlasma(data, accent, t, energy);
-        else if (backgroundMode === "sphere") drawSpherePlasma(data, accent, t, energy);
-        else if (cycle < 0.5) drawFieldPlasma(data, accent, t, energy);
-        else drawSpherePlasma(data, accent, t, energy);
+        else if (backgroundMode === "cycle" && cycle < 0.5) drawFieldPlasma(data, accent, t, energy);
+        else if (backgroundMode === "cycle") drawSpherePlasma(data, accent, t, energy);
+        else drawSpherePlasma(data, accent, t, energy); // sphere (and fallback)
         ctx.putImageData(image, 0, 0);
         if (!reduce && backgroundMode !== "static") requestAnimationFrame(draw);
       }

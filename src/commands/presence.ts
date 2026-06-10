@@ -5,6 +5,7 @@ import {
   defaultPresenceMessage,
   normalizePresenceState,
   sanitizePresenceMessage,
+  sanitizePresenceText,
 } from "../presence.ts";
 
 export interface PresenceDeps {
@@ -35,9 +36,10 @@ export async function cmdPresence(
   }
 
   // Bare state toggles omit message entirely so the server applies the
-  // default without polluting the Comments activity lane.
+  // default without polluting the Comments activity lane. A message that
+  // sanitizes to empty (e.g. whitespace-only) is treated as omitted too.
   const explicitMessage =
-    args.message === undefined
+    args.message === undefined || sanitizePresenceText(args.message) === ""
       ? null
       : sanitizePresenceMessage(args.message, stateName);
   const message = explicitMessage ?? defaultPresenceMessage(stateName);

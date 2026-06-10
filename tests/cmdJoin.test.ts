@@ -497,36 +497,122 @@ describe("cmdJoin payload + saved state", () => {
     expect(existsSync(sf)).toBe(false);
   });
 
-  it("rejects unreachable presence camera pages before creating the recall bot", async () => {
+  it("unreachable presence camera page: warns and joins WITHOUT the camera", async () => {
     const killed: number[] = [];
     const captured: { payload?: any } = {};
     const deps: JoinDeps = {
       ...makeDeps(captured, { killed }),
       fetch: async () => new Response("Not Found", { status: 404 }),
     };
-    const { ExitError } = await import("../src/config.ts");
 
-    await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await cmdJoin(joinArgs(), deps);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
 
-    expect(killed).toEqual([4242, 4243]);
-    expect(captured.payload).toBeUndefined();
-    expect(existsSync(sf)).toBe(false);
+    // join proceeded: bot created, state saved, nothing killed
+    expect(killed).toEqual([]);
+    expect(captured.payload).toBeDefined();
+    expect(captured.payload.output_media).toBeUndefined();
+    expect(existsSync(sf)).toBe(true);
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.bot_id).toBe("bot-new");
+    expect(state.presence_page_url).toBeUndefined();
+    expect(state.local_presence_update_url).toBeUndefined();
+    expect(state.presence_token).toBeUndefined();
+    expect(state.presence_write_token).toBeUndefined();
+
+    const stderrOut = errWrites.join("");
+    expect(stderrOut).toContain("Warning");
+    expect(stderrOut).toContain("presence camera");
+    expect(stderrOut).toContain("interstitial");
+    expect(stderrOut).toContain("--no-presence");
   });
 
-  it("rejects tunnel interstitial pages before creating the recall bot", async () => {
+  it("tunnel interstitial page: warns and joins WITHOUT the camera", async () => {
     const killed: number[] = [];
     const captured: { payload?: any } = {};
     const deps: JoinDeps = {
       ...makeDeps(captured, { killed }),
       fetch: async () => new Response("<title>You are about to visit</title>"),
     };
-    const { ExitError } = await import("../src/config.ts");
 
-    await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await cmdJoin(joinArgs(), deps);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
 
-    expect(killed).toEqual([4242, 4243]);
-    expect(captured.payload).toBeUndefined();
-    expect(existsSync(sf)).toBe(false);
+    expect(killed).toEqual([]);
+    expect(captured.payload.output_media).toBeUndefined();
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.bot_id).toBe("bot-new");
+    expect(state.presence_page_url).toBeUndefined();
+    expect(errWrites.join("")).toContain("Warning");
+  });
+
+  it("--no-presence: skips preflight entirely and omits output_media, no warning", async () => {
+    const captured: { payload?: any } = {};
+    let fetchCalls = 0;
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("<main class=\"samocall-presence\"></main>");
+      },
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await cmdJoin(joinArgs({ no_presence: true }), deps);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    expect(fetchCalls).toBe(0);
+    expect(captured.payload.output_media).toBeUndefined();
+    expect(errWrites.join("")).toBe("");
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.bot_id).toBe("bot-new");
+    expect(state.presence_page_url).toBeUndefined();
+    expect(state.local_presence_update_url).toBeUndefined();
+  });
+
+  it("--presence-bg appends bg param to the presence page URL", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ presence_bg: "field" }), makeDeps(captured));
+
+    const cameraUrl = captured.payload.output_media.camera.config.url as string;
+    expect(cameraUrl).toStartWith(PRESENCE_PREFIX);
+    expect(cameraUrl).toContain("&bg=field");
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.presence_page_url).toBe(cameraUrl);
+  });
+
+  it("no --presence-bg: presence page URL has no bg param", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs(), makeDeps(captured));
+    expect(captured.payload.output_media.camera.config.url).not.toContain("bg=");
+  });
+
+  it("preflight success: presence camera config unchanged", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs(), makeDeps(captured));
+
+    expect(captured.payload.output_media.camera.kind).toBe("webpage");
+    expect(captured.payload.output_media.camera.config.url).toStartWith(PRESENCE_PREFIX);
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.presence_page_url).toStartWith(PRESENCE_PREFIX);
+    expect(state.local_presence_update_url).toBe("http://127.0.0.1:8080/presence");
   });
 });
 

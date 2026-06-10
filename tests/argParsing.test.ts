@@ -62,6 +62,32 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--no-ws-video"]).ws_video).toBe(false);
   });
 
+  it("join no-presence default false", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).no_presence).toBe(false);
+  });
+
+  it("join no-presence parsed", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--no-presence"]).no_presence).toBe(true);
+  });
+
+  it("join presence-bg default null", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).presence_bg).toBeNull();
+  });
+
+  it("join presence-bg accepts the four background modes", () => {
+    for (const bg of ["sphere", "field", "static", "cycle"]) {
+      expect(
+        parseArgs(["join", "https://zoom.us/j/1", "--presence-bg", bg]).presence_bg,
+      ).toBe(bg);
+    }
+  });
+
+  it("join presence-bg rejects unknown values", () => {
+    expect(() =>
+      parseArgs(["join", "https://zoom.us/j/1", "--presence-bg", "lava-lamp"]),
+    ).toThrow("invalid choice");
+  });
+
   it("join frame-dir parsed", () => {
     expect(
       parseArgs(["join", "https://zoom.us/j/1", "--frame-dir", "/tmp/frames"]).frame_dir,
@@ -125,7 +151,7 @@ describe("argParsing", () => {
 
   it("presence rejects invalid state at parse time", () => {
     expect(() => parseArgs(["presence", "confused"])).toThrow(
-      "argument state: invalid choice: 'confused' (choose from idle, listening, thinking, speaking, acting)",
+      "argument state: invalid choice: 'confused' (choose from listening, thinking, speaking, acting, idle)",
     );
   });
 
@@ -301,6 +327,9 @@ describe("argParsing", () => {
     expect(stdout).toContain("usage: samocall join <url>");
     expect(stdout).toContain("--no-ws-video");
     expect(stdout).toContain("--rtmp-url URL");
+    expect(stdout).toContain("--no-presence");
+    expect(stdout).toContain("--presence-bg");
+    expect(stdout).toContain("sphere|field|static|cycle");
   });
 
   it("presence --help shows command-specific help", () => {

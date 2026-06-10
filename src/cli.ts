@@ -26,7 +26,7 @@ captures call frames on demand, and sends explicit chat messages.
 Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL] [--variant web|web_4_core|web_gpu]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
@@ -62,6 +62,10 @@ options:
                          (e.g. localtunnel/cloudflared pointing at --port)
   --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
                          Use web_4_core when webpage camera rendering is choppy
+  --no-presence          Join without the presence camera page (skips the
+                         camera-page preflight entirely)
+  --presence-bg MODE     Presence camera background: sphere|field|static|cycle
+                         (default: sphere; static is the cheapest to render)
   --rtmp                 Use local RTMP path through ngrok TCP
   --rtmp-url URL         Use an existing RTMP endpoint
 
@@ -100,6 +104,10 @@ Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samocall state.
 
 Update the bot camera presence shown in the meeting.
 States: listening|thinking|speaking|acting|idle
+
+Without a message, only the state changes (bare toggle): the camera shows the
+state's default label and nothing is added to the Comments lane. With a
+message, the state changes AND the message appears in the Comments lane.
 
 examples:
   samocall presence listening
@@ -165,7 +173,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--variant"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--variant", "--presence-bg"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
@@ -181,7 +189,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--no-ws-video"]),
+    join: new Set(["--rtmp", "--no-ws-video", "--no-presence"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),
@@ -264,6 +272,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.rtmp = opts["--rtmp"] === true;
       result.ws_video = opts["--no-ws-video"] !== true;
       result.webhook_base = (opts["--webhook-base"] as string) ?? null;
+      result.no_presence = opts["--no-presence"] === true;
+      result.presence_bg = (opts["--presence-bg"] as string) ?? null;
+      if (
+        result.presence_bg !== null &&
+        !["sphere", "field", "static", "cycle"].includes(result.presence_bg)
+      ) {
+        throw new ArgError(
+          `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from sphere, field, static, cycle)`,
+        );
+      }
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
       result.variant = (opts["--variant"] as string) ?? null;
       if (result.variant !== null && !["web", "web_4_core", "web_gpu"].includes(result.variant)) {

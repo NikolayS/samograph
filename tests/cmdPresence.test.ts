@@ -96,6 +96,37 @@ describe("cmdPresence", () => {
     expect(writes.join("")).toContain("Presence: idle - Idle");
   });
 
+  it("treats a whitespace-only message as omitted: bare-toggle body, default printed", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_write_token: "write-secret",
+      }),
+    );
+
+    let capturedInit: RequestInit | undefined;
+    const writes: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (s: string) => { writes.push(s); return true; };
+    try {
+      await cmdPresence(
+        { command: "presence", presence_state: "thinking", message: "   " },
+        {
+          fetchFn: async (_url, init) => {
+            capturedInit = init;
+            return Response.json({ ok: true, presence: { state: "thinking" } });
+          },
+        },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+
+    expect(JSON.parse(capturedInit?.body as string)).toEqual({ state: "thinking" });
+    expect(writes.join("")).toContain("Presence: thinking - Checking");
+  });
+
   it("throws ExitError when no active presence server is in state", async () => {
     writeFileSync(join(tmp, "state.json"), JSON.stringify({ bot_id: "bot-123" }));
 

@@ -278,21 +278,33 @@ export async function cmdJoin(
       throw new ExitError(1);
     }
     const publicBaseUrl = webhookUrl.replace(/\/+$/, "");
-    const presencePageUrl = `${publicBaseUrl}/presence?token=${encodeURIComponent(presenceToken)}`;
+    // null = join without the webpage presence camera (opted out via
+    // --no-presence, or degraded after a failed preflight).
+    const presenceBgSuffix = args.presence_bg
+      ? `&bg=${encodeURIComponent(args.presence_bg)}`
+      : "";
+    let presencePageUrl: string | null = args.no_presence
+      ? null
+      : `${publicBaseUrl}/presence?token=${encodeURIComponent(presenceToken)}${presenceBgSuffix}`;
     webhookUrl = `${publicBaseUrl}/webhook?token=${encodeURIComponent(webhookToken)}`;
     process.stdout.write(`Webhook: ${webhookUrl}\n`);
-    process.stdout.write(`Presence camera: ${presencePageUrl}\n`);
-    const presenceReachable = await waitForPresenceCamera(
-      presencePageUrl,
-      fetchFn,
-      sleepFn,
-    );
-    if (!presenceReachable) {
-      process.stderr.write(
-        "Error: presence camera URL did not return the samocall page; refusing to join.\n",
+    if (presencePageUrl) {
+      process.stdout.write(`Presence camera: ${presencePageUrl}\n`);
+      const presenceReachable = await waitForPresenceCamera(
+        presencePageUrl,
+        fetchFn,
+        sleepFn,
       );
-      cleanupUnsaved();
-      throw new ExitError(1);
+      if (!presenceReachable) {
+        process.stderr.write(
+          "Warning: the presence camera page is not reachable by a browser — " +
+            "likely a tunnel interstitial (free ngrok / localtunnel show one to browser " +
+            "user agents). Joining WITHOUT the presence camera; transcription and chat " +
+            "are unaffected, and `samocall presence` will be unavailable for this call. " +
+            "Use a paid/clean tunnel for the camera, or pass --no-presence to skip this check.\n",
+        );
+        presencePageUrl = null;
+      }
     }
 
     let mediamtxAuto: SpawnedProc | null = null;
@@ -434,14 +446,16 @@ export async function cmdJoin(
   const payload: Record<string, unknown> = {
     meeting_url: args.url,
     bot_name: name,
-    output_media: {
+    recording_config: recordingConfig,
+  };
+  if (presencePageUrl) {
+    payload.output_media = {
       camera: {
         kind: "webpage",
         config: { url: presencePageUrl },
       },
-    },
-    recording_config: recordingConfig,
-  };
+    };
+  }
   if (args.variant) {
     payload.variant = {
       zoom: args.variant,
@@ -458,10 +472,6 @@ export async function cmdJoin(
     agent_name: args.name || "samocall",
     bot_name: name,
     webhook_url: webhookUrl,
-    presence_page_url: presencePageUrl,
-    local_presence_update_url: `http://127.0.0.1:${port}/presence`,
-    presence_token: presenceToken,
-    presence_write_token: presenceWriteToken,
     server_pid: server.pid,
     ngrok_pid: ngrok ? ngrok.pid : null,
     started_at: new Date().toISOString(),
@@ -470,6 +480,15 @@ export async function cmdJoin(
     meeting_url: args.url,
     transcript_file: transcriptFile,
   };
+  if (presencePageUrl) {
+    // Presence state is saved only when the camera page is actually in use:
+    // without it, `samocall presence` updates would have no visible effect,
+    // so the command should report "no active dynamic presence server".
+    newState.presence_page_url = presencePageUrl;
+    newState.local_presence_update_url = `http://127.0.0.1:${port}/presence`;
+    newState.presence_token = presenceToken;
+    newState.presence_write_token = presenceWriteToken;
+  }
   if (mediamtxProc) {
     newState.mediamtx_pid = mediamtxProc.pid;
   }
@@ -512,9 +531,11 @@ export async function cmdJoin(
   process.stdout.write(
     `To send a message in the meeting chat: samocall chat 'your message'\n`,
   );
-  process.stdout.write(
-    `To update bot presence:       samocall presence thinking 'short status'\n`,
-  );
+  if (presencePageUrl) {
+    process.stdout.write(
+      `To update bot presence:       samocall presence thinking 'short status'\n`,
+    );
+  }
   if (rtmpLocalUrl) {
     process.stdout.write(
       `To capture call frame:        samocall frame  (ffmpeg from RTMP stream)\n`,

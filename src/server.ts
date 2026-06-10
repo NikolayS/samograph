@@ -20,6 +20,7 @@ import {
   normalizePresenceState,
   presencePageHtml,
   sanitizePresenceMessage,
+  sanitizePresenceText,
   type PresenceSnapshot,
 } from "./presence.ts";
 
@@ -132,6 +133,11 @@ export function serve(
   return Bun.serve({
     port,
     hostname: "127.0.0.1",
+    // Transport-layer cap: Bun answers 413 itself when Content-Length exceeds
+    // this, before the fetch handler runs. Chunked (no Content-Length) bodies
+    // are still buffered by Bun 1.3.x, so the in-handler byte checks below
+    // remain as the guard for that path.
+    maxRequestBodySize: WEBHOOK_MAX_BYTES,
     async fetch(req, server) {
       const url = new URL(req.url);
       if (req.method === "POST" && url.pathname === "/webhook") {
@@ -233,9 +239,12 @@ export function serve(
         if (state === null) {
           return Response.json({ error: "invalid presence state" }, { status: 400 });
         }
-        // Bare state toggles (no message in the payload) take the default
-        // message and never land in the Comments activity lane.
-        const hasMessage = rawPayload.message !== undefined;
+        // Bare state toggles (no message in the payload, or one that
+        // sanitizes to empty) take the default message and never land in
+        // the Comments activity lane.
+        const hasMessage =
+          typeof rawPayload.message === "string" &&
+          sanitizePresenceText(rawPayload.message) !== "";
         const message = hasMessage
           ? sanitizePresenceMessage(rawPayload.message, state)
           : defaultPresenceMessage(state);

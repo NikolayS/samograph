@@ -12,7 +12,7 @@ Requirements:
 
 - Bun.
 - `RECALL_API_KEY`.
-- `ngrok` installed and authenticated (free plan). `join` starts and manages ngrok automatically — you don't run it yourself. ngrok is optional when using `--webhook-base` with an external tunnel (localtunnel, cloudflared, etc.).
+- `ngrok` installed and authenticated (free plan is enough for transcription; the presence camera needs an interstitial-free tunnel — see Dynamic Bot Presence). `join` starts and manages ngrok automatically — you don't run it yourself. ngrok is optional when using `--webhook-base` with an external tunnel (localtunnel, cloudflared, etc.).
 
 Install the CLI from npm:
 
@@ -58,7 +58,7 @@ samocall watch/notes/chat/frame
 
 ## Integration
 
-`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for normal use. Alternatively, pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning ngrok entirely.
+`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for webhooks and transcription, but its browser interstitial blocks the presence camera page — `join` then warns and joins without the camera (see Dynamic Bot Presence). Alternatively, pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning ngrok entirely; localtunnel has the same interstitial limitation.
 
 ngrok TCP is only needed for the optional RTMP path (`--rtmp`) and requires a credit/debit card on file at ngrok.com (free plan — the card is not charged). The standard WebSocket frame path does not need TCP or card verification.
 
@@ -91,7 +91,9 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Dynamic Bot Presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samocall-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samocall presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. The camera page URL also accepts `&bg=sphere|field|static` to select the background mode (`sphere` is the default; `static` is the cheapest).
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samocall-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samocall presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. Pick the background mode with `join --presence-bg <sphere|field|static|cycle>` (`sphere` is the default; `static` is the cheapest to render; `cycle` alternates between field and sphere; unknown values fall back to `sphere`). The mode is fixed at join time.
+
+The presence camera requires the tunnel to serve the page cleanly to a browser. Free-ngrok and localtunnel show an interstitial page to browser user agents, which blocks the camera: `join` detects this in a preflight check, prints a warning, and joins **without** the presence camera — transcription, chat, and frames are unaffected, but `samocall presence` is unavailable for that call. Use a paid/clean tunnel (e.g. a paid ngrok plan or cloudflared) for the presence camera, or pass `join --no-presence` to skip the camera and the preflight entirely.
 
 Update it from the agent loop:
 
@@ -162,6 +164,8 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
 - `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting ngrok. Useful when ngrok is unavailable or its free-tier bandwidth cap is hit (`ERR_NGROK_727`): run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here.
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
+- `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
+- `join --presence-bg MODE` - presence camera background: `sphere` (default), `field`, `static` (cheapest), or `cycle` (alternates field/sphere); fixed at join time.
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
 - `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samocall/`.
@@ -203,6 +207,21 @@ Runtime files live under `~/.samocall/` by default:
 - `frames/latest.png` and `frames/latest.json` - written only by `samocall frame`.
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.
+
+## Environment Variables
+
+`join` sets these automatically when it spawns the callback server (`_serve`); set them yourself only when running `samocall _serve` manually behind your own tunnel:
+
+- `SAMOCALL_WEBHOOK_TOKEN` - token required by `POST /webhook` (`?token=` query parameter).
+- `SAMOCALL_FRAME_TOKEN` - token required by the frame routes and `/video-ws`.
+- `SAMOCALL_PRESENCE_TOKEN` - read token for the presence page and `/presence.json`.
+- `SAMOCALL_PRESENCE_WRITE_TOKEN` - write token required by `POST /presence`.
+
+Path overrides, mainly for tests and packaging:
+
+- `SAMOCALL_HOME` - base directory for runtime files (default: your home directory; files live in `<base>/.samocall/`).
+- `SAMOCALL_STATE_FILE` - path of `state.json` (default: `~/.samocall/state.json`).
+- `SAMOCALL_DICT_DIR` - directory containing keyword dictionaries (default: `dictionaries/` in the package).
 
 ## License
 

@@ -15,11 +15,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NikolayS/samoagent.git"
+    "url": "git+https://github.com/NikolayS/samocall.git"
   },
   "homepage": "https://samoagent.dev/",
   "bugs": {
-    "url": "https://github.com/NikolayS/samoagent/issues"
+    "url": "https://github.com/NikolayS/samocall/issues"
   },
   "keywords": [
     "ai-agent",
