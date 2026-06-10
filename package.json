@@ -1,6 +1,6 @@
 {
   "name": "samocall",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Let AI agents join Zoom and Google Meet calls as active participants.",
   "type": "module",
   "license": "Apache-2.0",
