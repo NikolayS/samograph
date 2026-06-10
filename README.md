@@ -62,7 +62,7 @@ samocall watch/notes/chat/frame
 
 ngrok TCP is only needed for the optional RTMP path (`--rtmp`) and requires a credit/debit card on file at ngrok.com (free plan — the card is not charged). The standard WebSocket frame path does not need TCP or card verification.
 
-Webhook and frame routes are token-protected, and default runtime files stay under `~/.samocall/`.
+Webhook, frame, and presence routes are token-protected, and default runtime files stay under `~/.samocall/`.
 
 ## Agent Workflow
 

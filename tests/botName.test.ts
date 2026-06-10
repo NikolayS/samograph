@@ -27,7 +27,7 @@ describe("botName", () => {
   });
 
   it("exact boundary name not truncated", () => {
-    const suffix = " \u{1F534} (samocall)"; // 15 code points
+    const suffix = " \u{1F534} (samocall)"; // 13 code points
     const namePart = "B".repeat(100 - [...suffix].length);
     const result = botName(namePart);
     expect([...result].length).toBe(100);

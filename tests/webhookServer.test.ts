@@ -421,6 +421,46 @@ describe("webhook handler", () => {
     }
   });
 
+  it("presence routes fail closed when no presence token is configured", async () => {
+    const server = serve(0, tf, { webhookToken: "webhook-token" });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=anything`);
+      expect(page.status).toBe(403);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=anything`);
+      expect(jsonResp.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence GET routes accept the read token via header", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(page.status).toBe(200);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(jsonResp.status).toBe(200);
+
+      const wrongPage = await fetch(`http://localhost:${server.port}/presence`, {
+        headers: { "X-Samocall-Presence-Token": "wrong-token" },
+      });
+      expect(wrongPage.status).toBe(403);
+      const wrongJson = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "wrong-token" },
+      });
+      expect(wrongJson.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("video websocket stores latest frame in memory and frame routes require token", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
