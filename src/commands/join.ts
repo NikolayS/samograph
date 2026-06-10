@@ -145,6 +145,7 @@ export async function cmdJoin(
   const webhookToken = randomUUID();
   const frameToken = randomUUID();
   const presenceToken = randomUUID();
+  const presenceWriteToken = randomUUID();
 
   const keyterms = loadDict(args.dict);
   const name = botName(args.name);
@@ -184,6 +185,8 @@ export async function cmdJoin(
     frameToken,
     "--presence-token",
     presenceToken,
+    "--presence-write-token",
+    presenceWriteToken,
   ]);
   const started = new Set<SpawnedProc>([server]);
   let stateSaved = false;
@@ -431,9 +434,9 @@ export async function cmdJoin(
     bot_name: name,
     webhook_url: webhookUrl,
     presence_page_url: presencePageUrl,
-    local_presence_url: `http://127.0.0.1:${port}/presence`,
     local_presence_update_url: `http://127.0.0.1:${port}/presence`,
     presence_token: presenceToken,
+    presence_write_token: presenceWriteToken,
     server_pid: server.pid,
     ngrok_pid: ngrok ? ngrok.pid : null,
     started_at: new Date().toISOString(),

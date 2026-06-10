@@ -177,7 +177,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
     doctor: new Set(),
-    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token"]),
+    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
     join: new Set(["--rtmp", "--no-ws-video"]),
@@ -363,6 +363,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.call_id_file = (opts["--call-id-file"] as string) ?? "";
       result.frame_token = (opts["--frame-token"] as string) ?? "";
       result.presence_token = (opts["--presence-token"] as string) ?? "";
+      result.presence_write_token = (opts["--presence-write-token"] as string) ?? "";
       break;
     }
   }

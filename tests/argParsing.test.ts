@@ -214,10 +214,13 @@ describe("argParsing", () => {
       "secret",
       "--presence-token",
       "presence-secret",
+      "--presence-write-token",
+      "write-secret",
     ]);
     expect(args.call_id_file).toBe("/tmp/state.json");
     expect(args.frame_token).toBe("secret");
     expect(args.presence_token).toBe("presence-secret");
+    expect(args.presence_write_token).toBe("write-secret");
   });
 
   it("invalid command throws", () => {

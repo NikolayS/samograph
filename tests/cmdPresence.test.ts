@@ -20,12 +20,13 @@ describe("cmdPresence", () => {
     cleanupTmpDir(tmp);
   });
 
-  it("posts state update to the local presence server with token", async () => {
+  it("posts state update to the local presence server with the write token", async () => {
     writeFileSync(
       join(tmp, "state.json"),
       JSON.stringify({
         local_presence_update_url: "http://127.0.0.1:8080/presence",
-        presence_token: "presence-secret",
+        presence_token: "read-secret",
+        presence_write_token: "write-secret",
       }),
     );
 
@@ -52,7 +53,7 @@ describe("cmdPresence", () => {
     expect(capturedUrl).toBe("http://127.0.0.1:8080/presence");
     expect(capturedInit?.method).toBe("POST");
     expect((capturedInit?.headers as Record<string, string>)["X-Samoagent-Presence-Token"]).toBe(
-      "presence-secret",
+      "write-secret",
     );
     expect(JSON.parse(capturedInit?.body as string)).toEqual({
       state: "thinking",
@@ -74,7 +75,7 @@ describe("cmdPresence", () => {
       join(tmp, "state.json"),
       JSON.stringify({
         local_presence_update_url: "http://127.0.0.1:8080/presence",
-        presence_token: "presence-secret",
+        presence_write_token: "write-secret",
       }),
     );
 
@@ -86,5 +87,57 @@ describe("cmdPresence", () => {
       ),
     ).rejects.toBeInstanceOf(ExitError);
     expect(called).toBe(false);
+  });
+
+  it("non-2xx response yields friendly stderr message and ExitError", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_write_token: "write-secret",
+      }),
+    );
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await expect(
+        cmdPresence(
+          { command: "presence", presence_state: "thinking" },
+          { fetchFn: async () => new Response("boom", { status: 500 }) },
+        ),
+      ).rejects.toBeInstanceOf(ExitError);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+    expect(errWrites.join("")).toContain("Error: presence update failed");
+    expect(errWrites.join("")).toContain("500");
+  });
+
+  it("connection error yields friendly stderr message and ExitError", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_write_token: "write-secret",
+      }),
+    );
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await expect(
+        cmdPresence(
+          { command: "presence", presence_state: "thinking" },
+          { fetchFn: async () => { throw new Error("connect ECONNREFUSED 127.0.0.1:8080"); } },
+        ),
+      ).rejects.toBeInstanceOf(ExitError);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+    expect(errWrites.join("")).toContain("Error: presence update failed");
+    expect(errWrites.join("")).toContain("ECONNREFUSED");
   });
 });

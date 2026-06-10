@@ -26,7 +26,7 @@ export async function cmdPresence(
 
   const state = loadState();
   const updateUrl = state.local_presence_update_url;
-  const token = state.presence_token;
+  const token = state.presence_write_token;
   if (typeof updateUrl !== "string" || !updateUrl || typeof token !== "string" || !token) {
     process.stderr.write(
       "Error: no active dynamic presence server found. Run samoagent join first.\n",
@@ -38,17 +38,25 @@ export async function cmdPresence(
     args.message ?? defaultPresenceMessage(stateName),
     stateName,
   );
-  const resp = await fetchFn(updateUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Samoagent-Presence-Token": token,
-    },
-    body: JSON.stringify({ state: stateName, message }),
-  });
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`presence update failed: ${resp.status} ${body}`);
+  try {
+    const resp = await fetchFn(updateUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Samoagent-Presence-Token": token,
+      },
+      body: JSON.stringify({ state: stateName, message }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      process.stderr.write(`Error: presence update failed: ${resp.status} ${body}\n`);
+      throw new ExitError(1);
+    }
+  } catch (err) {
+    if (err instanceof ExitError) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: presence update failed: ${reason}\n`);
+    throw new ExitError(1);
   }
   process.stdout.write(`Presence: ${stateName} - ${message}\n`);
 }

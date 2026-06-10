@@ -179,9 +179,13 @@ describe("cmdJoin payload + saved state", () => {
     expect(state.bot_name).toBe(botName("TARS"));
     expect(state.webhook_url).toStartWith(WEBHOOK_PREFIX);
     expect(state.presence_page_url).toStartWith(PRESENCE_PREFIX);
-    expect(state.local_presence_url).toBe("http://127.0.0.1:8080/presence");
+    expect(state.local_presence_url).toBeUndefined();
     expect(state.local_presence_update_url).toBe("http://127.0.0.1:8080/presence");
     expect(typeof state.presence_token).toBe("string");
+    expect(typeof state.presence_write_token).toBe("string");
+    expect(state.presence_write_token).not.toBe(state.presence_token);
+    expect(state.presence_page_url).toContain(state.presence_token);
+    expect(state.presence_page_url).not.toContain(state.presence_write_token);
     expect(captured.payload.output_media.camera.config.url).toBe(state.presence_page_url);
     expect(typeof state.transcript_file).toBe("string");
     expect(state.transcript_file).toContain("transcript.txt");

@@ -42,6 +42,7 @@ export interface ServeOptions {
   webhookToken?: string | null;
   frameToken?: string | null;
   presenceToken?: string | null;
+  presenceWriteToken?: string | null;
   currentCallId?: () => string | null;
 }
 
@@ -100,12 +101,17 @@ export function serve(
   const framesBySource = new Map<string, LatestVideoFrame>();
   const frameAuthorized = (req: Request): boolean =>
     Boolean(opts.frameToken) && req.headers.get("X-Samoagent-Frame-Token") === opts.frameToken;
-  const presenceAuthorized = (req: Request, url: URL, allowQueryToken: boolean): boolean =>
+  // The read token rides in the page URL handed to Recall, so it must never
+  // grant write access; presence updates require the separate write token.
+  const presenceReadAuthorized = (req: Request, url: URL): boolean =>
     Boolean(opts.presenceToken) &&
     (
       req.headers.get("X-Samoagent-Presence-Token") === opts.presenceToken ||
-      (allowQueryToken && url.searchParams.get("token") === opts.presenceToken)
+      url.searchParams.get("token") === opts.presenceToken
     );
+  const presenceWriteAuthorized = (req: Request): boolean =>
+    Boolean(opts.presenceWriteToken) &&
+    req.headers.get("X-Samoagent-Presence-Token") === opts.presenceWriteToken;
   return Bun.serve({
     port,
     hostname: "0.0.0.0",
@@ -133,12 +139,9 @@ export function serve(
         if (transcriptLine !== null) {
           const activity = activityFromTranscriptLine(transcriptLine);
           if (activity !== null) {
+            // Append the heard line and bump updated_at only; never reset the
+            // agent-set state/message from transcript traffic.
             presence = appendPresenceActivity(presence, activity);
-            presence = newPresenceSnapshot(
-              "listening",
-              `Heard ${activity.label}: ${activity.text}`,
-              presence.activities,
-            );
           }
         }
         return Response.json({ ok: true });
@@ -172,7 +175,7 @@ export function serve(
         return Response.json({ frames: frameInventory(framesBySource) });
       }
       if (req.method === "GET" && url.pathname === "/presence") {
-        if (!presenceAuthorized(req, url, true)) {
+        if (!presenceReadAuthorized(req, url)) {
           return new Response("", { status: 403 });
         }
         return new Response(presencePageHtml(), {
@@ -183,7 +186,7 @@ export function serve(
         });
       }
       if (req.method === "GET" && url.pathname === "/presence.json") {
-        if (!presenceAuthorized(req, url, true)) {
+        if (!presenceReadAuthorized(req, url)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
         return Response.json(presence, {
@@ -191,7 +194,7 @@ export function serve(
         });
       }
       if (req.method === "POST" && url.pathname === "/presence") {
-        if (!presenceAuthorized(req, url, false)) {
+        if (!presenceWriteAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
         let payload: unknown = {};

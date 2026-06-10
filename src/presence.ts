@@ -87,32 +87,15 @@ export function appendPresenceActivity(
   };
 }
 
-export function activityKindForState(state: PresenceState): PresenceActivityKind {
-  switch (state) {
-    case "thinking":
-      return "comment";
-    case "speaking":
-      return "comment";
-    case "acting":
-      return "comment";
-    default:
-      return "comment";
-  }
+export function activityKindForState(_state: PresenceState): PresenceActivityKind {
+  // Agent-initiated presence updates are always comments; "heard" comes only
+  // from transcript lines via activityFromTranscriptLine.
+  return "comment";
 }
 
-export function labelForPresenceState(state: PresenceState): string {
-  switch (state) {
-    case "thinking":
-      return "Comment";
-    case "speaking":
-      return "Comment";
-    case "acting":
-      return "Comment";
-    case "idle":
-      return "Comment";
-    case "listening":
-      return "Comment";
-  }
+export function labelForPresenceState(_state: PresenceState): string {
+  // Same rationale as activityKindForState: agent updates render as comments.
+  return "Comment";
 }
 
 export function activityFromTranscriptLine(line: string): Omit<PresenceActivity, "at"> | null {
@@ -325,8 +308,6 @@ export function presencePageHtml(): string {
     .lane[data-kind="heard"] .lane-title { color: var(--heard); }
     .lane[data-kind="comment"] .lane-title { color: var(--comment); }
     .activity {
-      display: grid;
-      align-content: start;
       gap: clamp(8px, 1.1vh, 12px);
       min-height: 0;
       overflow: hidden;
@@ -481,13 +462,30 @@ export function presencePageHtml(): string {
       let lastFrame = 0;
       const frameMs = 100;
       const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      let redrawQueued = false;
+      function scheduleRedraw() {
+        if (redrawQueued) return;
+        redrawQueued = true;
+        requestAnimationFrame((now) => {
+          redrawQueued = false;
+          lastFrame = now - frameMs;
+          draw(now);
+        });
+      }
       function resize() {
         const rect = canvas.getBoundingClientRect();
-        w = Math.max(96, Math.min(220, Math.floor(rect.width / 3.2)));
-        h = Math.max(96, Math.min(220, Math.floor(rect.height / 3.2)));
+        const nextW = Math.max(96, Math.min(220, Math.floor(rect.width / 3.2)));
+        const nextH = Math.max(96, Math.min(220, Math.floor(rect.height / 3.2)));
+        if (image && nextW === w && nextH === h) return;
+        w = nextW;
+        h = nextH;
         canvas.width = w;
         canvas.height = h;
         image = ctx.createImageData(w, h);
+        // Reassigning canvas dimensions clears the bitmap; in static or
+        // reduced-motion modes the animation loop never repaints, so schedule
+        // a one-shot redraw (the running loop covers animated modes).
+        if (reduce || backgroundMode === "static") scheduleRedraw();
       }
       function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));

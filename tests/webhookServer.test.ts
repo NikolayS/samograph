@@ -219,6 +219,8 @@ describe("webhook handler", () => {
       expect(html).toContain("backgroundMode !== \"static\"");
       expect(html).toContain("Render FPS");
       expect(html).toContain("initFpsProbe");
+      expect(html).toContain("scheduleRedraw");
+      expect(html).toContain("nextW === w && nextH === h");
 
       const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
       expect(jsonResp.status).toBe(200);
@@ -235,12 +237,63 @@ describe("webhook handler", () => {
     }
   });
 
-  it("transcript webhook updates presence with heard activity", async () => {
+  it("transcript webhook appends heard activity without resetting state or message", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
       presenceToken: "presence-token",
     });
     try {
+      const before = await (
+        await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`)
+      ).json() as { updated_at: string };
+
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeTranscriptEvent("Nik", ["We", "need", "action"])),
+      });
+      expect(resp.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        updated_at: string;
+        activities: Array<{ kind: string; label: string; text: string }>;
+      };
+      expect(json).toMatchObject({
+        state: "listening",
+        message: "Listening",
+      });
+      expect(Date.parse(json.updated_at)).toBeGreaterThanOrEqual(Date.parse(before.updated_at));
+      expect(json.activities[0]).toMatchObject({
+        kind: "heard",
+        label: "Nik",
+        text: "We need action",
+      });
+      expect(json.activities).toHaveLength(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("transcript webhook preserves agent-set presence state", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samoagent-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
+      });
+      expect(updated.status).toBe(200);
+
       const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -255,15 +308,14 @@ describe("webhook handler", () => {
         activities: Array<{ kind: string; label: string; text: string }>;
       };
       expect(json).toMatchObject({
-        state: "listening",
-        message: "Heard Nik: We need action",
+        state: "thinking",
+        message: "Checking indexes",
       });
       expect(json.activities[0]).toMatchObject({
         kind: "heard",
         label: "Nik",
         text: "We need action",
       });
-      expect(json.activities).toHaveLength(1);
     } finally {
       server.stop(true);
     }
@@ -273,6 +325,7 @@ describe("webhook handler", () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
       presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
     });
     try {
       const blocked = await fetch(`http://localhost:${server.port}/presence`, {
@@ -282,18 +335,28 @@ describe("webhook handler", () => {
       });
       expect(blocked.status).toBe(403);
 
-      const queryOnly = await fetch(`http://localhost:${server.port}/presence?token=presence-token`, {
+      const queryOnly = await fetch(`http://localhost:${server.port}/presence?token=write-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: "acting", message: "Query token should not update" }),
       });
       expect(queryOnly.status).toBe(403);
 
-      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+      const readToken = await fetch(`http://localhost:${server.port}/presence`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Samoagent-Presence-Token": "presence-token",
+        },
+        body: JSON.stringify({ state: "acting", message: "Read token should not update" }),
+      });
+      expect(readToken.status).toBe(403);
+
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samoagent-Presence-Token": "write-token",
         },
         body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
       });
@@ -323,17 +386,36 @@ describe("webhook handler", () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
       presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
     });
     try {
       const resp = await fetch(`http://localhost:${server.port}/presence`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Samoagent-Presence-Token": "presence-token",
+          "X-Samoagent-Presence-Token": "write-token",
         },
         body: JSON.stringify({ state: "confused" }),
       });
       expect(resp.status).toBe(400);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence GET routes work with read token even when a write token is configured", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      expect(jsonResp.status).toBe(200);
+      const writeOnGet = await fetch(`http://localhost:${server.port}/presence.json?token=write-token`);
+      expect(writeOnGet.status).toBe(403);
     } finally {
       server.stop(true);
     }

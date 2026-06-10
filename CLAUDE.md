@@ -25,6 +25,20 @@ React in your agent session. Use meeting chat only for deliberate call-visible m
 samoagent chat "Short message to the meeting"
 ```
 
+## Dynamic Bot Presence
+
+The bot camera shows a live presence page. Update it from the agent loop to signal what you are doing. Five states: `listening|thinking|speaking|acting|idle`.
+
+```bash
+samoagent presence listening
+samoagent presence thinking "Checking logs"
+samoagent presence speaking "Answering in chat"
+samoagent presence acting "Opening PR review"
+samoagent presence idle
+```
+
+Presence is in-memory runtime state for lightweight in-call signaling, not persistent memory. Transcript lines appear on the camera page automatically as "heard" activity without changing the state you set.
+
 ## Live Google Doc Notes
 
 Use `notes` when asked to keep a shared doc updated during the call:

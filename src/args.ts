@@ -24,6 +24,7 @@ export interface ParsedArgs {
   call_id_file?: string;
   frame_token?: string;
   presence_token?: string;
+  presence_write_token?: string;
   presence_state?: string;
   doc_id?: string | null;
   credentials?: string | null;
