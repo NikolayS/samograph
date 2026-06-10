@@ -21,10 +21,10 @@ describe("resolveTranscriptFile", () => {
     cleanupTmpDir(tmp);
   });
 
-  it("default path uses SAMOAGENT_HOME", () => {
-    process.env.SAMOAGENT_HOME = tmp;
+  it("default path uses SAMOCALL_HOME", () => {
+    process.env.SAMOCALL_HOME = tmp;
     const result = resolveTranscriptFile(null);
-    expect(result).toBe(join(tmp, ".samoagent", "transcript.txt"));
+    expect(result).toBe(join(tmp, ".samocall", "transcript.txt"));
   });
 
   it("custom dir", () => {
@@ -40,10 +40,10 @@ describe("resolveTranscriptFile", () => {
     expect(existsSync(nested)).toBe(true);
   });
 
-  it("default creates .samoagent dir", () => {
-    process.env.SAMOAGENT_HOME = tmp;
+  it("default creates .samocall dir", () => {
+    process.env.SAMOCALL_HOME = tmp;
     resolveTranscriptFile(null);
-    expect(existsSync(join(tmp, ".samoagent"))).toBe(true);
+    expect(existsSync(join(tmp, ".samocall"))).toBe(true);
   });
 
   it("new transcript path starts with UTC timestamp prefix", () => {

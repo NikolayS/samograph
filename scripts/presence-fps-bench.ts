@@ -9,7 +9,7 @@ type Json = Record<string, unknown>;
 const chrome = process.env.CHROME_BIN || "/usr/bin/google-chrome";
 const baseUrl = process.argv[2] || "http://127.0.0.1:34099/presence?token=tok";
 const port = Number(process.env.CDP_PORT || 9229);
-const userDataDir = mkdtempSync(join(tmpdir(), "samoagent-chrome-"));
+const userDataDir = mkdtempSync(join(tmpdir(), "samocall-chrome-"));
 
 const scenarios = [
   { name: "current" },

@@ -100,18 +100,18 @@ export function serve(
   let presence: PresenceSnapshot = newPresenceSnapshot();
   const framesBySource = new Map<string, LatestVideoFrame>();
   const frameAuthorized = (req: Request): boolean =>
-    Boolean(opts.frameToken) && req.headers.get("X-Samoagent-Frame-Token") === opts.frameToken;
+    Boolean(opts.frameToken) && req.headers.get("X-Samocall-Frame-Token") === opts.frameToken;
   // The read token rides in the page URL handed to Recall, so it must never
   // grant write access; presence updates require the separate write token.
   const presenceReadAuthorized = (req: Request, url: URL): boolean =>
     Boolean(opts.presenceToken) &&
     (
-      req.headers.get("X-Samoagent-Presence-Token") === opts.presenceToken ||
+      req.headers.get("X-Samocall-Presence-Token") === opts.presenceToken ||
       url.searchParams.get("token") === opts.presenceToken
     );
   const presenceWriteAuthorized = (req: Request): boolean =>
     Boolean(opts.presenceWriteToken) &&
-    req.headers.get("X-Samoagent-Presence-Token") === opts.presenceWriteToken;
+    req.headers.get("X-Samocall-Presence-Token") === opts.presenceWriteToken;
   return Bun.serve({
     port,
     hostname: "0.0.0.0",

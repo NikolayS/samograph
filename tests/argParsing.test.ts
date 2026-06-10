@@ -274,7 +274,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "join", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent join <url>");
+    expect(stdout).toContain("usage: samocall join <url>");
     expect(stdout).toContain("--no-ws-video");
     expect(stdout).toContain("--rtmp-url URL");
   });
@@ -283,7 +283,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "presence", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent presence <state>");
+    expect(stdout).toContain("usage: samocall presence <state>");
     expect(stdout).toContain("listening|thinking|speaking|acting|idle");
   });
 
@@ -291,7 +291,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frame", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent frame");
+    expect(stdout).toContain("usage: samocall frame");
     expect(stdout).toContain("frames stay in memory");
     expect(stdout).toContain("--source SOURCE");
     expect(stdout).toContain("--archive");
@@ -301,7 +301,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frames", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent frames");
+    expect(stdout).toContain("usage: samocall frames");
     expect(stdout).toContain("List WebSocket frame sources");
   });
 
@@ -309,7 +309,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "doctor", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent doctor");
+    expect(stdout).toContain("usage: samocall doctor");
     expect(stdout).toContain("Check local prerequisites");
   });
 
@@ -317,7 +317,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "notes", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent notes");
+    expect(stdout).toContain("usage: samocall notes");
     expect(stdout).toContain("--doc-id ID");
   });
 
@@ -325,7 +325,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "transcript", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent transcript");
+    expect(stdout).toContain("usage: samocall transcript");
     expect(stdout).toContain("--cursor N");
     expect(stdout).toContain("--file FILE");
     expect(stdout).toContain("--limit N");
@@ -334,18 +334,18 @@ describe("argParsing", () => {
   it("-v prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-v"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samocall \d+\.\d+\.\d+/);
   });
 
   it("--version prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--version"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samocall \d+\.\d+\.\d+/);
   });
 
   it("-V is not a version alias (lowercase -v only)", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-V"], { cwd: repoRoot });
     expect(proc.exitCode).not.toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samocall \d+\.\d+\.\d+/);
   });
 });

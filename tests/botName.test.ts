@@ -3,16 +3,16 @@ import { botName } from "../src/botName.ts";
 
 describe("botName", () => {
   it("with agent name", () => {
-    expect(botName("TARS")).toBe("TARS \u{1F534} (samoagent)");
+    expect(botName("TARS")).toBe("TARS \u{1F534} (samocall)");
   });
 
   it("without agent name (null)", () => {
-    expect(botName(null)).toBe("samoagent \u{1F534}");
+    expect(botName(null)).toBe("samocall \u{1F534}");
   });
 
   it("without agent name (empty string)", () => {
     // empty string is falsy — same as null
-    expect(botName("")).toBe("samoagent \u{1F534}");
+    expect(botName("")).toBe("samocall \u{1F534}");
   });
 
   it("truncated at 100 code points", () => {
@@ -27,7 +27,7 @@ describe("botName", () => {
   });
 
   it("exact boundary name not truncated", () => {
-    const suffix = " \u{1F534} (samoagent)"; // 15 code points
+    const suffix = " \u{1F534} (samocall)"; // 15 code points
     const namePart = "B".repeat(100 - [...suffix].length);
     const result = botName(namePart);
     expect([...result].length).toBe(100);

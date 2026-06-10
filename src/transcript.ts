@@ -12,13 +12,13 @@ import { homedir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import {
   defaultTranscriptFile,
-  samoagentDir,
+  samocallDir,
   stateFile,
 } from "./config.ts";
 import { loadState } from "./state.ts";
 
 export const SENTINEL_RE =
-  /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SAMOAGENT_CALL_ENDED$/;
+  /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SAMOCALL_CALL_ENDED$/;
 
 function expanduser(p: string): string {
   if (p === "~") return homedir();
@@ -36,7 +36,7 @@ function resolveTranscriptDir(transcriptDir?: string | null): string {
   if (transcriptDir) {
     d = expanduser(transcriptDir);
   } else {
-    d = samoagentDir();
+    d = samocallDir();
   }
   mkdirSync(d, { recursive: true });
   return d;
@@ -165,7 +165,7 @@ export interface WatchOpts {
 
 /**
  * Stream transcript lines to a callback as they arrive.
- * Exits when SAMOAGENT_CALL_ENDED sentinel is seen or when state.json disappears.
+ * Exits when SAMOCALL_CALL_ENDED sentinel is seen or when state.json disappears.
  */
 export async function streamTranscriptLines(
   onLine: (line: string) => void | Promise<void>,
@@ -191,7 +191,7 @@ export async function streamTranscriptLines(
 
   // If the call already ended before watch started, exit immediately.
   if (!existsSync(stateFile())) {
-    process.stderr.write("No active session. Run 'samoagent join' first.\n");
+    process.stderr.write("No active session. Run 'samocall join' first.\n");
     return;
   }
   for (const existing of readFileSync(tf, "utf-8").split(/\r?\n/)) {
@@ -281,7 +281,7 @@ export async function streamTranscriptLines(
 
 /**
  * Stream transcript lines to stdout as they arrive.
- * Exits when SAMOAGENT_CALL_ENDED sentinel is seen or when state.json disappears.
+ * Exits when SAMOCALL_CALL_ENDED sentinel is seen or when state.json disappears.
  */
 export async function watch(opts: WatchOpts = {}): Promise<void> {
   return streamTranscriptLines((line) => {

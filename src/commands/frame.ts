@@ -83,7 +83,7 @@ export async function cmdFrame(
   if (typeof localFrameUrl === "string" && localFrameUrl) {
     const headers: Record<string, string> = {};
     if (typeof state.frame_token === "string" && state.frame_token) {
-      headers["X-Samoagent-Frame-Token"] = state.frame_token;
+      headers["X-Samocall-Frame-Token"] = state.frame_token;
     }
     let resp: Response;
     try {
@@ -160,6 +160,6 @@ export async function cmdFrame(
     "  2. Rejoin with --rtmp-url rtmp://PUBLIC_IP:1935/live/call to enable RTMP frames via cloud VM\n",
   );
   process.stderr.write(`  3. Use browser tools to screenshot: ${meetingUrl}\n`);
-  process.stderr.write("  4. After call ends: samoagent transcript\n");
+  process.stderr.write("  4. After call ends: samocall transcript\n");
   throw new ExitError(1);
 }

@@ -202,7 +202,7 @@ describe("webhook handler", () => {
       expect(page.status).toBe(200);
       expect(page.headers.get("Content-Type")).toContain("text/html");
       const html = await page.text();
-      expect(html).toContain("samoagent-presence");
+      expect(html).toContain("samocall-presence");
       expect(html).toContain("Heard");
       expect(html).toContain("Comments");
       expect(html).toContain("AI mind");
@@ -288,7 +288,7 @@ describe("webhook handler", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Samoagent-Presence-Token": "write-token",
+          "X-Samocall-Presence-Token": "write-token",
         },
         body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
       });
@@ -346,7 +346,7 @@ describe("webhook handler", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Samoagent-Presence-Token": "presence-token",
+          "X-Samocall-Presence-Token": "presence-token",
         },
         body: JSON.stringify({ state: "acting", message: "Read token should not update" }),
       });
@@ -356,7 +356,7 @@ describe("webhook handler", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Samoagent-Presence-Token": "write-token",
+          "X-Samocall-Presence-Token": "write-token",
         },
         body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
       });
@@ -393,7 +393,7 @@ describe("webhook handler", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Samoagent-Presence-Token": "write-token",
+          "X-Samocall-Presence-Token": "write-token",
         },
         body: JSON.stringify({ state: "confused" }),
       });
@@ -453,13 +453,13 @@ describe("webhook handler", () => {
       expect(blocked.status).toBe(403);
 
       const frame = await fetch(`http://localhost:${server.port}/frame`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(frame.status).toBe(200);
       expect(new Uint8Array(await frame.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
 
       const meta = await fetch(`http://localhost:${server.port}/frame.json`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(meta.status).toBe(200);
       const json = (await meta.json()) as { call_id: string; participant: { id: string } };
@@ -508,7 +508,7 @@ describe("webhook handler", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       const inventory = await fetch(`http://localhost:${server.port}/frames.json`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(inventory.status).toBe(200);
       const json = (await inventory.json()) as {
@@ -520,13 +520,13 @@ describe("webhook handler", () => {
       ]);
 
       const screen = await fetch(`http://localhost:${server.port}/frame?source=screen`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(screen.status).toBe(200);
       expect(new Uint8Array(await screen.arrayBuffer())).toEqual(new Uint8Array([2, 2, 2]));
 
       const webcam = await fetch(`http://localhost:${server.port}/frame?source=participant:p1`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(webcam.status).toBe(200);
       expect(new Uint8Array(await webcam.arrayBuffer())).toEqual(new Uint8Array([1, 1, 1]));

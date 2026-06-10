@@ -51,7 +51,7 @@ export async function cmdNotes(args: ParsedArgs, deps: NotesDeps = {}): Promise<
 
   if (action !== "transcript") {
     process.stderr.write(
-      "usage: samoagent notes <init|point|decision|action|transcript> [options]\n",
+      "usage: samocall notes <init|point|decision|action|transcript> [options]\n",
     );
     return;
   }

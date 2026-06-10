@@ -45,7 +45,7 @@ describe("cmdWatch", () => {
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
     tf = join(tmp, "transcript.txt");
-    process.env.SAMOAGENT_STATE_FILE = sf;
+    process.env.SAMOCALL_STATE_FILE = sf;
   });
   afterEach(() => {
     restoreEnv(env);
@@ -57,7 +57,7 @@ describe("cmdWatch", () => {
     writeFileSync(sf, JSON.stringify({ transcript_file: tf }));
     void (async () => {
       await sleep(80);
-      appendFileSync(tf, "[2026-05-28 10:00:00] SAMOAGENT_CALL_ENDED\n");
+      appendFileSync(tf, "[2026-05-28 10:00:00] SAMOCALL_CALL_ENDED\n");
     })();
     await withTimeout(watch(FAST), 3000);
   });
@@ -80,13 +80,13 @@ describe("cmdWatch", () => {
         await sleep(80);
         appendFileSync(tf, "[2026-05-28 10:00:01] Alice: Hello everyone\n");
         appendFileSync(tf, "[2026-05-28 10:00:05] Bob: Hi there\n");
-        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 4000);
     });
     expect(out).toContain("Alice: Hello everyone");
     expect(out).toContain("Bob: Hi there");
-    expect(out).not.toContain("SAMOAGENT_CALL_ENDED");
+    expect(out).not.toContain("SAMOCALL_CALL_ENDED");
   });
 
   it("handles existing transcript with sentinel", async () => {
@@ -94,21 +94,21 @@ describe("cmdWatch", () => {
     writeFileSync(sf, JSON.stringify({ transcript_file: tf }));
     void (async () => {
       await sleep(80);
-      appendFileSync(tf, "[2026-05-28 10:00:00] SAMOAGENT_CALL_ENDED\n");
+      appendFileSync(tf, "[2026-05-28 10:00:00] SAMOCALL_CALL_ENDED\n");
     })();
     await withTimeout(watch(FAST), 4000);
   });
 
   it("uses default transcript path when no state transcript_file", async () => {
-    process.env.SAMOAGENT_HOME = tmp;
-    const dir = join(tmp, ".samoagent");
+    process.env.SAMOCALL_HOME = tmp;
+    const dir = join(tmp, ".samocall");
     mkdirSync(dir, { recursive: true });
     const dtf = join(dir, "transcript.txt");
     writeFileSync(dtf, "");
     writeFileSync(sf, JSON.stringify({}));
     void (async () => {
       await sleep(80);
-      appendFileSync(dtf, "[2026-05-28 10:00:00] SAMOAGENT_CALL_ENDED\n");
+      appendFileSync(dtf, "[2026-05-28 10:00:00] SAMOCALL_CALL_ENDED\n");
     })();
     await withTimeout(watch(FAST), 4000);
   });
@@ -117,7 +117,7 @@ describe("cmdWatch", () => {
     writeFileSync(
       tf,
       "[2026-05-28 10:00:00] Alice: hello\n" +
-        "[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n",
+        "[2026-05-28 10:05:00] SAMOCALL_CALL_ENDED\n",
     );
     writeFileSync(sf, JSON.stringify({ transcript_file: tf }));
     // Must return without state.json being removed.
@@ -133,12 +133,12 @@ describe("cmdWatch", () => {
         await sleep(80);
         appendFileSync(tf, "[2026-05-28 10:00:00] Alice: hello\n");
         await sleep(80);
-        appendFileSync(tf, "[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:05:00] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 4000);
     });
     expect(out).toContain("Alice: hello");
-    expect(out).not.toContain("SAMOAGENT_CALL_ENDED");
+    expect(out).not.toContain("SAMOCALL_CALL_ENDED");
   });
 
   it("participant saying phrase does not stop watch", async () => {
@@ -149,14 +149,14 @@ describe("cmdWatch", () => {
         await sleep(80);
         appendFileSync(
           tf,
-          "[2026-05-28 10:00:00] Bob: please run SAMOAGENT_CALL_ENDED now\n",
+          "[2026-05-28 10:00:00] Bob: please run SAMOCALL_CALL_ENDED now\n",
         );
         await sleep(160);
-        appendFileSync(tf, "[2026-05-28 10:05:00] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:05:00] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 4000);
     });
-    expect(out).toContain("Bob: please run SAMOAGENT_CALL_ENDED now");
+    expect(out).toContain("Bob: please run SAMOCALL_CALL_ENDED now");
   });
 
   // --- regression: partial line spanning two appends ---
@@ -170,7 +170,7 @@ describe("cmdWatch", () => {
         await sleep(120);
         appendFileSync(tf, "lo\n");
         await sleep(120);
-        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 4000);
     });
@@ -200,7 +200,7 @@ describe("cmdWatch", () => {
           Buffer.concat([Buffer.from([0xa9]), Buffer.from("cole\n", "utf-8")]),
         ); // 0xA9 completes 'é' + "cole\n"
         await sleep(120);
-        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 4000);
     });
@@ -221,7 +221,7 @@ describe("cmdWatch", () => {
         await sleep(120);
         appendFileSync(tf, full.subarray(splitAt));
         await sleep(120);
-        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 4000);
     });
@@ -249,7 +249,7 @@ describe("cmdWatch", () => {
         await sleep(150);
         appendFileSync(tf, "[2026-05-28 10:00:00] Bob: fresh line\n");
         await sleep(120);
-        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOAGENT_CALL_ENDED\n");
+        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOCALL_CALL_ENDED\n");
       })();
       await withTimeout(watch(FAST), 6000);
     });

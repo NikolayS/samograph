@@ -34,7 +34,7 @@ describe("cmdStatus", () => {
     env = saveEnv();
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
-    process.env.SAMOAGENT_STATE_FILE = sf;
+    process.env.SAMOCALL_STATE_FILE = sf;
     process.env.RECALL_API_KEY = "fake-key";
     writeFileSync(sf, JSON.stringify({ bot_id: "bot-test-123" }));
   });
@@ -96,7 +96,7 @@ describe("cmdStatus", () => {
     }));
     const seenHeaders: string[] = [];
     const fetchFn = async (url: string | URL | Request, init?: RequestInit) => {
-      seenHeaders.push((init?.headers as Record<string, string>)["X-Samoagent-Frame-Token"]);
+      seenHeaders.push((init?.headers as Record<string, string>)["X-Samocall-Frame-Token"]);
       if (String(url).endsWith("/frames.json")) {
         return Response.json({ frames: [] });
       }

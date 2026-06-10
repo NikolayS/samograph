@@ -1,11 +1,11 @@
 {
-  "name": "samoagent",
+  "name": "samocall",
   "version": "0.4.1",
   "description": "Let AI agents join Zoom and Google Meet calls as active participants.",
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
-    "samoagent": "dist/cli.js"
+    "samocall": "dist/cli.js"
   },
   "files": [
     "dist/cli.js",
@@ -37,7 +37,7 @@
     "access": "public"
   },
   "scripts": {
-    "samoagent": "bun src/cli.ts",
+    "samocall": "bun src/cli.ts",
     "test": "bun test",
     "build": "tsc --noEmit && bun build src/cli.ts --target bun --outfile dist/cli.js && chmod +x dist/cli.js",
     "prepack": "bun run build"

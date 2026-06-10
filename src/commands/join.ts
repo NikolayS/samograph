@@ -96,7 +96,7 @@ export function spawnDetached(
   };
 }
 
-const PRESENCE_PAGE_MARKER = "samoagent-presence";
+const PRESENCE_PAGE_MARKER = "samocall-presence";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -264,7 +264,7 @@ export async function cmdJoin(
     );
     if (!presenceReachable) {
       process.stderr.write(
-        "Error: presence camera URL did not return the samoagent page; refusing to join.\n",
+        "Error: presence camera URL did not return the samocall page; refusing to join.\n",
       );
       cleanupUnsaved();
       throw new ExitError(1);
@@ -430,7 +430,7 @@ export async function cmdJoin(
 
   const newState: Record<string, unknown> = {
     bot_id: bid,
-    agent_name: args.name || "samoagent",
+    agent_name: args.name || "samocall",
     bot_name: name,
     webhook_url: webhookUrl,
     presence_page_url: presencePageUrl,
@@ -477,7 +477,7 @@ export async function cmdJoin(
     `IMPORTANT: You must now monitor the live transcript for the duration of the call.\n`,
   );
   process.stdout.write(`Run this command with your Monitor tool (persistent=true):\n`);
-  process.stdout.write(`  samoagent watch\n`);
+  process.stdout.write(`  samocall watch\n`);
   process.stdout.write(
     `Each line you receive is a new utterance: [timestamp] Speaker: text\n`,
   );
@@ -485,28 +485,28 @@ export async function cmdJoin(
     `React to what is said. If someone addresses you or asks a question, respond in chat.\n`,
   );
   process.stdout.write(
-    `To send a message in the meeting chat: samoagent chat 'your message'\n`,
+    `To send a message in the meeting chat: samocall chat 'your message'\n`,
   );
   process.stdout.write(
-    `To update bot presence:       samoagent presence thinking 'short status'\n`,
+    `To update bot presence:       samocall presence thinking 'short status'\n`,
   );
   if (rtmpLocalUrl) {
     process.stdout.write(
-      `To capture call frame:        samoagent frame  (ffmpeg from RTMP stream)\n`,
+      `To capture call frame:        samocall frame  (ffmpeg from RTMP stream)\n`,
     );
   } else if (useWsVideo) {
     process.stdout.write(
-      `To list frame sources:       samoagent frames\n`,
+      `To list frame sources:       samocall frames\n`,
     );
     process.stdout.write(
-      `To capture call frame:        samoagent frame  (latest WebSocket PNG, written on demand)\n`,
+      `To capture call frame:        samocall frame  (latest WebSocket PNG, written on demand)\n`,
     );
   } else {
     process.stdout.write(
-      `To capture what's on screen:  samoagent screenshot  (then Read screenshot.png)\n`,
+      `To capture what's on screen:  samocall screenshot  (then Read screenshot.png)\n`,
     );
   }
-  process.stdout.write(`To stop:                      samoagent leave\n`);
+  process.stdout.write(`To stop:                      samocall leave\n`);
   process.stdout.write(`--------------------------\n`);
   } catch (err) {
     cleanupUnsaved();

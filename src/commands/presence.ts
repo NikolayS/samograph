@@ -29,7 +29,7 @@ export async function cmdPresence(
   const token = state.presence_write_token;
   if (typeof updateUrl !== "string" || !updateUrl || typeof token !== "string" || !token) {
     process.stderr.write(
-      "Error: no active dynamic presence server found. Run samoagent join first.\n",
+      "Error: no active dynamic presence server found. Run samocall join first.\n",
     );
     throw new ExitError(1);
   }
@@ -43,7 +43,7 @@ export async function cmdPresence(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Samoagent-Presence-Token": token,
+        "X-Samocall-Presence-Token": token,
       },
       body: JSON.stringify({ state: stateName, message }),
     });

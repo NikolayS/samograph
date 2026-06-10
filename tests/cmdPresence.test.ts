@@ -12,7 +12,7 @@ describe("cmdPresence", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOAGENT_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOCALL_STATE_FILE = join(tmp, "state.json");
   });
 
   afterEach(() => {
@@ -52,7 +52,7 @@ describe("cmdPresence", () => {
 
     expect(capturedUrl).toBe("http://127.0.0.1:8080/presence");
     expect(capturedInit?.method).toBe("POST");
-    expect((capturedInit?.headers as Record<string, string>)["X-Samoagent-Presence-Token"]).toBe(
+    expect((capturedInit?.headers as Record<string, string>)["X-Samocall-Presence-Token"]).toBe(
       "write-secret",
     );
     expect(JSON.parse(capturedInit?.body as string)).toEqual({

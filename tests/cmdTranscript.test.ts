@@ -36,7 +36,7 @@ describe("cmdTranscript", () => {
     env = saveEnv();
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
-    process.env.SAMOAGENT_STATE_FILE = sf;
+    process.env.SAMOCALL_STATE_FILE = sf;
     process.env.RECALL_API_KEY = "fake-key";
     writeFileSync(sf, JSON.stringify({ bot_id: "bot-abc" }));
   });

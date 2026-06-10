@@ -113,7 +113,7 @@ export function presencePageHtml(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>samoagent presence</title>
+  <title>samocall presence</title>
   <style>
     :root {
       color-scheme: dark;
@@ -137,7 +137,7 @@ export function presencePageHtml(): string {
         #070a0f;
       background-size: 56px 56px;
     }
-    .samoagent-presence {
+    .samocall-presence {
       width: 100vw;
       min-height: 100vh;
       display: grid;
@@ -398,10 +398,10 @@ export function presencePageHtml(): string {
   </style>
 </head>
 <body>
-  <main class="samoagent-presence">
+  <main class="samocall-presence">
     <section class="tile" aria-live="polite">
       <header class="header">
-        <div class="brand"><span class="mark">S</span><span>samoagent live presence</span></div>
+        <div class="brand"><span class="mark">S</span><span>samocall live presence</span></div>
         <div class="live" id="live">listening</div>
       </header>
       <div class="lanes">

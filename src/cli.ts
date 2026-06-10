@@ -16,10 +16,10 @@ import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 
-const USAGE = `usage: samoagent <command> [options]
+const USAGE = `usage: samocall <command> [options]
 
 Put your AI agent in Zoom and Google Meet calls.
-samoagent joins through Recall.ai, streams live transcript lines,
+samocall joins through Recall.ai, streams live transcript lines,
 captures call frames on demand, and sends explicit chat messages.
 
 Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
@@ -45,10 +45,10 @@ flags:
 `;
 
 const COMMAND_HELP: Record<string, string> = {
-  join: `usage: samoagent join <url> [options]
+  join: `usage: samocall join <url> [options]
 
 Join a Zoom or Google Meet call as a Recall.ai bot.
-By default, samoagent streams transcript events and receives call frames over WebSocket.
+By default, samocall streams transcript events and receives call frames over WebSocket.
 
 options:
   --name N               Bot display name
@@ -65,11 +65,11 @@ options:
   --rtmp-url URL         Use an existing RTMP endpoint
 
 examples:
-  samoagent join "https://meet.google.com/abc-defg-hij" --name Leo
-  samoagent join "https://zoom.us/j/123" --dict postgresfm
-  samoagent join "https://zoom.us/j/123" --variant web_4_core
+  samocall join "https://meet.google.com/abc-defg-hij" --name Leo
+  samocall join "https://zoom.us/j/123" --dict postgresfm
+  samocall join "https://zoom.us/j/123" --variant web_4_core
 `,
-  frame: `usage: samoagent frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
+  frame: `usage: samocall frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
 
 Write the latest call frame to disk.
 With the default WebSocket path, frames stay in memory until this command is run.
@@ -80,32 +80,32 @@ options:
   --archive        Also write a timestamped PNG+JSON archive copy.
 
 examples:
-  samoagent frame
-  samoagent frame --source screen --out /tmp/screen.png
-  samoagent frame --out /tmp/current-call.png
-  samoagent frame --archive
+  samocall frame
+  samocall frame --source screen --out /tmp/screen.png
+  samocall frame --out /tmp/current-call.png
+  samocall frame --archive
 `,
-  frames: `usage: samoagent frames
+  frames: `usage: samocall frames
 
 List WebSocket frame sources currently buffered in memory.
-Use the source keys with: samoagent frame --source SOURCE
+Use the source keys with: samocall frame --source SOURCE
 `,
-  doctor: `usage: samoagent doctor
+  doctor: `usage: samocall doctor
 
 Check local prerequisites for joining meetings:
-Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samoagent state.
+Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samocall state.
 `,
-  presence: `usage: samoagent presence <state> [message]
+  presence: `usage: samocall presence <state> [message]
 
 Update the bot camera presence shown in the meeting.
 States: listening|thinking|speaking|acting|idle
 
 examples:
-  samoagent presence listening
-  samoagent presence thinking "Checking the migration plan"
-  samoagent presence speaking "Answering in chat"
+  samocall presence listening
+  samocall presence thinking "Checking the migration plan"
+  samocall presence speaking "Answering in chat"
 `,
-  notes: `usage: samoagent notes <init|point|decision|action|transcript> [options]
+  notes: `usage: samocall notes <init|point|decision|action|transcript> [options]
 
 Maintain a GitLab-style live meeting doc.
 Uses GOOGLE_DOC_ID and GOOGLE_APPLICATION_CREDENTIALS when flags are omitted.
@@ -121,13 +121,13 @@ options:
   --from-start          For transcript: copy existing lines before tailing live lines
 
 examples:
-  samoagent notes init --doc-id 1abc...
-  samoagent notes point "Customer is blocked on migration risk" --speaker Alice
-  samoagent notes decision "Use logical replication for phase 1"
-  samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
-  samoagent notes transcript --from-start
+  samocall notes init --doc-id 1abc...
+  samocall notes point "Customer is blocked on migration risk" --speaker Alice
+  samocall notes decision "Use logical replication for phase 1"
+  samocall notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
+  samocall notes transcript --from-start
 `,
-  transcript: `usage: samoagent transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
+  transcript: `usage: samocall transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
 
 Print a finished Recall.ai transcript, falling back to the local live transcript.
 
@@ -138,11 +138,11 @@ options:
   --local      Read the active/default local transcript instead of Recall
 
 examples:
-  samoagent transcript
-  samoagent transcript --local --cursor 0 --limit 20
-  samoagent transcript --file ~/.samoagent/20260604_022915_transcript.txt --cursor 0 --limit 20
-  samoagent transcript --cursor 0 --limit 20
-  samoagent transcript --cursor 20 --limit 20 <bot_id>
+  samocall transcript
+  samocall transcript --local --cursor 0 --limit 20
+  samocall transcript --file ~/.samocall/20260604_022915_transcript.txt --cursor 0 --limit 20
+  samocall transcript --cursor 0 --limit 20
+  samocall transcript --cursor 20 --limit 20 <bot_id>
 `,
 };
 
@@ -423,7 +423,7 @@ async function main(): Promise<void> {
   }
   if (argv[0] === "--version" || argv[0] === "-v") {
     const pkg = (await import("../package.json")) as { version: string };
-    process.stdout.write(`samoagent ${pkg.version}\n`);
+    process.stdout.write(`samocall ${pkg.version}\n`);
     process.exit(0);
   }
   let args: ParsedArgs;
@@ -431,7 +431,7 @@ async function main(): Promise<void> {
     args = parseArgs(argv);
   } catch (e) {
     if (e instanceof ArgError) {
-      process.stderr.write(`samoagent: error: ${e.message}\n`);
+      process.stderr.write(`samocall: error: ${e.message}\n`);
       process.exit(2);
     }
     throw e;
@@ -446,7 +446,7 @@ async function main(): Promise<void> {
     // response surfacing as a SyntaxError, etc.) — emit a single clean line to
     // stderr instead of dumping a Bun stack trace.
     process.stderr.write(
-      `samoagent: error: ${e instanceof Error ? e.message : String(e)}\n`,
+      `samocall: error: ${e instanceof Error ? e.message : String(e)}\n`,
     );
     process.exit(1);
   }

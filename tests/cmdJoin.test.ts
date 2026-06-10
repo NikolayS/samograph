@@ -65,7 +65,7 @@ function makeDeps(
     waitForNgrok: async () => WEBHOOK_BASE,
     startMediamtx: async () => fakeProc(7000, opts.killed),
     startNgrokTcpTunnel: async () => "tcp://ngrok.tcp:12345",
-    fetch: async () => new Response("<main class=\"samoagent-presence\"></main>"),
+    fetch: async () => new Response("<main class=\"samocall-presence\"></main>"),
     sleep: async () => {},
   };
 }
@@ -98,9 +98,9 @@ describe("cmdJoin payload + saved state", () => {
     sf = join(tmp, "state.json");
     dictDir = join(tmp, "dicts");
     mkdirSync(dictDir, { recursive: true });
-    process.env.SAMOAGENT_STATE_FILE = sf;
-    process.env.SAMOAGENT_HOME = tmp; // transcripts -> <tmp>/.samoagent/<timestamp>_transcript.txt
-    process.env.SAMOAGENT_DICT_DIR = dictDir;
+    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOCALL_HOME = tmp; // transcripts -> <tmp>/.samocall/<timestamp>_transcript.txt
+    process.env.SAMOCALL_DICT_DIR = dictDir;
   });
   afterEach(() => {
     restoreEnv(env);
@@ -487,7 +487,7 @@ describe("cmdJoin payload + saved state", () => {
 
 describe("waitForPresenceCamera", () => {
   const URL = "https://ngrok.example/presence?token=abc";
-  const MARKER_PAGE = "<main class=\"samoagent-presence\"></main>";
+  const MARKER_PAGE = "<main class=\"samocall-presence\"></main>";
 
   it("returns true on a 200 with the marker on the first attempt; never sleeps", async () => {
     const sleeps: number[] = [];

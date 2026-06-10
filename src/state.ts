@@ -17,7 +17,7 @@ export function saveState(state: State): void {
   const dir = dirname(f);
   const dirExisted = existsSync(dir);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (!dirExisted || process.env.SAMOAGENT_STATE_FILE === undefined) {
+  if (!dirExisted || process.env.SAMOCALL_STATE_FILE === undefined) {
     chmodSync(dir, 0o700);
   }
   writeFileSync(f, JSON.stringify(state, null, 2), { mode: 0o600 });
@@ -32,7 +32,7 @@ export function botIdFromArgsOrState(argBotId?: string | null): string {
   const bid = state.bot_id;
   if (!bid || typeof bid !== "string") {
     process.stderr.write(
-      "Error: no active bot. Pass BOT_ID or run 'samoagent join' first.\n",
+      "Error: no active bot. Pass BOT_ID or run 'samocall join' first.\n",
     );
     throw new ExitError(1);
   }

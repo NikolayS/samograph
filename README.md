@@ -1,10 +1,10 @@
-# samoagent
+# samocall
 
 > Build agents that show up to the meeting, not just the codebase.
 
-samoagent lets your AI agent (Claude Code, Codex, and others) join Zoom and Google Meet calls as an active participant — listening, responding, and taking action in real time.
+samocall lets your AI agent (Claude Code, Codex, and others) join Zoom and Google Meet calls as an active participant — listening, responding, and taking action in real time.
 
-Give this CLI, a meeting URL, and the needed tokens to your AI agent. samoagent handles the meeting plumbing through Recall.ai: joining calls, streaming the live transcript, sending explicit chat messages, and inspecting the current call view on demand.
+Give this CLI, a meeting URL, and the needed tokens to your AI agent. samocall handles the meeting plumbing through Recall.ai: joining calls, streaming the live transcript, sending explicit chat messages, and inspecting the current call view on demand.
 
 ## Setup
 
@@ -17,16 +17,16 @@ Requirements:
 Install the CLI from npm:
 
 ```bash
-npm install -g samoagent
+npm install -g samocall
 export RECALL_API_KEY=...
-samoagent join "https://meet.google.com/..." --name Leo
+samocall join "https://meet.google.com/..." --name Leo
 ```
 
-During development use `bun install`, `bun run build`, then `bun run samoagent ...`.
+During development use `bun install`, `bun run build`, then `bun run samocall ...`.
 
 ## What It Provides
 
-samoagent gives an AI agent a small set of meeting tools:
+samocall gives an AI agent a small set of meeting tools:
 
 - `join` - bring a Recall.ai bot into a Zoom or Google Meet call.
 - `watch` - stream live transcript lines to the agent.
@@ -41,19 +41,19 @@ samoagent gives an AI agent a small set of meeting tools:
 - `dicts` - list available Deepgram keyword dictionaries.
 - `doctor` - check local prerequisites before joining a call.
 
-The agent still decides what to say, when to inspect a frame, and how to use the meeting context. samoagent is the local adapter that exposes those call capabilities.
+The agent still decides what to say, when to inspect a frame, and how to use the meeting context. samocall is the local adapter that exposes those call capabilities.
 
 ```text
 AI agent
   | runs CLI tools
   v
-samoagent on your machine
+samocall on your machine
   | starts bot + local callback server + ngrok tunnel (or external tunnel via --webhook-base)
   v
 Recall.ai bot in Zoom/Meet
   | transcript, chat, WebSocket video events
   v
-samoagent watch/notes/chat/frame
+samocall watch/notes/chat/frame
 ```
 
 ## Integration
@@ -62,21 +62,21 @@ samoagent watch/notes/chat/frame
 
 ngrok TCP is only needed for the optional RTMP path (`--rtmp`) and requires a credit/debit card on file at ngrok.com (free plan — the card is not charged). The standard WebSocket frame path does not need TCP or card verification.
 
-Webhook and frame routes are token-protected, and default runtime files stay under `~/.samoagent/`.
+Webhook and frame routes are token-protected, and default runtime files stay under `~/.samocall/`.
 
 ## Agent Workflow
 
 ```bash
-samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
-samoagent watch
-samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Customer migration call"
-samoagent notes point "Migration risk is the blocker" --speaker Alice
-samoagent notes decision "Use logical replication for phase 1"
-samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
-samoagent presence thinking "Checking the shared screen"
-samoagent frame
-samoagent chat "I can see the screen now."
-samoagent leave
+samocall join "https://meet.google.com/..." --name Leo --dict postgresfm
+samocall watch
+samocall notes init --doc-id 1abc... --credentials ~/.samocall/google.json --title "Customer migration call"
+samocall notes point "Migration risk is the blocker" --speaker Alice
+samocall notes decision "Use logical replication for phase 1"
+samocall notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
+samocall presence thinking "Checking the shared screen"
+samocall frame
+samocall chat "I can see the screen now."
+samocall leave
 ```
 
 Run `watch` immediately after `join` and keep it running for the whole call. It prints one utterance per line:
@@ -91,16 +91,16 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Dynamic Bot Presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page and its JSON); presence updates require a separate write token that `join` keeps in local state and `samoagent presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. The camera page URL also accepts `&bg=sphere|field|static` to select the background mode (`sphere` is the default; `static` is the cheapest).
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page and its JSON); presence updates require a separate write token that `join` keeps in local state and `samocall presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. The camera page URL also accepts `&bg=sphere|field|static` to select the background mode (`sphere` is the default; `static` is the cheapest).
 
 Update it from the agent loop:
 
 ```bash
-samoagent presence listening
-samoagent presence thinking "Checking logs"
-samoagent presence speaking "Answering in chat"
-samoagent presence acting "Opening PR review"
-samoagent presence idle
+samocall presence listening
+samocall presence thinking "Checking logs"
+samocall presence speaking "Answering in chat"
+samocall presence acting "Opening PR review"
+samocall presence idle
 ```
 
 Presence is in-memory runtime state. It is meant for lightweight meeting signaling, not persistence.
@@ -111,11 +111,11 @@ Presence is in-memory runtime state. It is meant for lightweight meeting signali
 
 ```bash
 export GOOGLE_DOC_ID=1abc...
-export GOOGLE_APPLICATION_CREDENTIALS=~/.samoagent/google-service-account.json
-samoagent notes init --title "Customer migration call"
-samoagent notes point "Customer is blocked on cutover risk" --speaker Alice
-samoagent notes decision "Run a shadow replay before scheduling cutover"
-samoagent notes action "Create replay checklist issue" --owner Nik --due 2026-06-07
+export GOOGLE_APPLICATION_CREDENTIALS=~/.samocall/google-service-account.json
+samocall notes init --title "Customer migration call"
+samocall notes point "Customer is blocked on cutover risk" --speaker Alice
+samocall notes decision "Run a shadow replay before scheduling cutover"
+samocall notes action "Create replay checklist issue" --owner Nik --due 2026-06-07
 ```
 
 The credentials file must be a Google service-account JSON key, and the target doc must be shared with that service account's `client_email` as an editor.
@@ -123,34 +123,34 @@ The credentials file must be a Google service-account JSON key, and the target d
 If you really want raw transcript mirroring, make that explicit:
 
 ```bash
-samoagent notes transcript --from-start
+samocall notes transcript --from-start
 ```
 
 ## Frames
 
-Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samoagent keeps the latest frames in memory, indexed by source, and only writes to disk when you call `frame`.
+Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samocall keeps the latest frames in memory, indexed by source, and only writes to disk when you call `frame`.
 
 `frame` fails with `FRAME_UNAVAILABLE` if no frame has arrived yet — call it after the bot has been in the meeting for a few seconds.
 
 ```bash
-samoagent frames
-samoagent frame
+samocall frames
+samocall frame
 ```
 
 By default it writes outside the repo:
 
 ```text
-~/.samoagent/frames/latest.png
-~/.samoagent/frames/latest.json
+~/.samocall/frames/latest.png
+~/.samocall/frames/latest.json
 ```
 
 Use `--out` for an explicit path, or `--archive` to create a timestamped copy alongside the latest:
 
 ```bash
-samoagent frame --source screen --out /tmp/screen.png
-samoagent frame --source participant:100
-samoagent frame --out /tmp/call.png
-samoagent frame --archive
+samocall frame --source screen --out /tmp/screen.png
+samocall frame --source participant:100
+samocall frame --out /tmp/call.png
+samocall frame --archive
 ```
 
 `frames` lists buffered source keys such as `type:screen_share` or `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
@@ -164,7 +164,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
-- `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samoagent/`.
+- `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samocall/`.
 - `join --rtmp` - mixed-video RTMP path using ngrok TCP; requires ngrok card verification.
 - `join --rtmp-url rtmp://host:1935/live/call` - explicit mixed-video RTMP receiver.
 - `notes --doc-id ID` - Google Doc ID or URL for live meeting notes; defaults to `GOOGLE_DOC_ID`.
@@ -196,11 +196,11 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 
 ## Storage
 
-Runtime files live under `~/.samoagent/` by default:
+Runtime files live under `~/.samocall/` by default:
 
 - `state.json` - active bot id, process ids, URLs, paths.
 - `YYYYMMDD_HHMMSS_transcript.txt` - per-call live transcript; `join` never overwrites older transcripts.
-- `frames/latest.png` and `frames/latest.json` - written only by `samoagent frame`.
+- `frames/latest.png` and `frames/latest.json` - written only by `samocall frame`.
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.
 
