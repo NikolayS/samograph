@@ -35,20 +35,20 @@ Use this checklist for each npm release.
 - Verify npm has the new version:
 
   ```bash
-  npm view samoagent version
+  npm view samocall version
   ```
 
 - Smoke-test the registry package from a clean prefix:
 
   ```bash
   tmp="$(mktemp -d)"
-  npm_config_prefix="$tmp" npm install -g samoagent
-  PATH="$tmp/bin:$PATH" samoagent --version
+  npm_config_prefix="$tmp" npm install -g samocall
+  PATH="$tmp/bin:$PATH" samocall --version
   rm -rf "$tmp"
   ```
 
 - Confirm the package page shows Apache-2.0 license, homepage, README, and provenance.
-- Confirm GitHub Pages is healthy at `https://samoagent.dev/`.
+- Confirm GitHub Pages is healthy at `https://samoagent.dev/` (domain intentionally kept as-is during rename transition).
 
 ## Secret Hygiene
 

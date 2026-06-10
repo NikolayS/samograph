@@ -7,26 +7,26 @@ Adds spoken TTS voice to the bot in the call, with barge-in interruption support
 The agent can speak in the call instead of (or in addition to) sending chat messages. Participants hear the bot's voice. If someone starts talking mid-sentence, TTS stops immediately — the bot doesn't talk over people.
 
 **User experience:**
-1. Agent calls `samoagent speak "Your query is running now, please wait."`
+1. Agent calls `samocall speak "Your query is running now, please wait."`
 2. Bot's voice plays in the call (all participants hear it)
 3. If anyone talks, TTS stops within ~300ms
-4. Agent can call `samoagent speak-stop` to halt manually
+4. Agent can call `samocall speak-stop` to halt manually
 
 ## New CLI Commands
 
 ```
-samoagent speak "text here"         # synthesize and play in call
-samoagent speak-stop                # stop current TTS immediately
+samocall speak "text here"         # synthesize and play in call
+samocall speak-stop                # stop current TTS immediately
 ```
 
 `speak` exits 0 when TTS is queued/playing. It does not block until playback finishes.
 `speak-stop` exits 0 if a stop signal was sent (or nothing was playing).
 
-Both commands require an active bot session (`~/.samoagent/state.json`).
+Both commands require an active bot session (`~/.samocall/state.json`).
 
 New env var: `OPENAI_API_KEY` — required for TTS synthesis.
 
-Optional flag on `samoagent join`:
+Optional flag on `samocall join`:
 ```
 --voice alloy          # OpenAI TTS voice (default: alloy)
 --no-interruption      # disable VAD-based barge-in
@@ -37,7 +37,7 @@ Optional flag on `samoagent join`:
 ### Option A — `output_audio` endpoint (simple, no interruption)
 
 ```
-samoagent speak "text"
+samocall speak "text"
   → OpenAI TTS API (mp3, non-streaming)
   → base64 encode
   → POST /v1/bot/{bot_id}/output_audio
@@ -55,10 +55,10 @@ samoagent speak "text"
 ### Option B — `output_media` webpage with VAD (full interruption)
 
 ```
-samoagent join → bot renders a webpage (output_media mode)
+samocall join → bot renders a webpage (output_media mode)
   The page handles both: video avatar + TTS audio
 
-samoagent speak "text"
+samocall speak "text"
   → webhook server receives request
   → pushes to webpage via SSE or WebSocket
 
@@ -82,8 +82,8 @@ user speaks in call
 
 **Barge-in via transcript monitor (fallback, simpler VAD):**
 ```
-samoagent watch → detects new words from non-bot speaker
-  → calls samoagent speak-stop
+samocall watch → detects new words from non-bot speaker
+  → calls samocall speak-stop
   → POST /v1/bot/{bot_id}/output_audio with empty payload (or webpage stop via SSE)
 ```
 This has ~1-2s lag (transcript processing latency) but requires no in-page VAD.
@@ -99,11 +99,11 @@ This has ~1-2s lag (transcript processing latency) but requires no in-page VAD.
 
 ### Option A (recommended for first version)
 
-1. Add `OPENAI_API_KEY` check in `samoagent speak`
+1. Add `OPENAI_API_KEY` check in `samocall speak`
 2. Call `openai.audio.speech.create(model="tts-1", voice=..., input=text)`
 3. POST `base64(mp3_bytes)` to `https://api.recall.ai/api/v1/bot/{bot_id}/output_audio`
-4. Add `samoagent speak-stop` — no-op for Option A (no stop API exists); document limitation
-5. For soft interruption: `samoagent watch` line parser can call speak-stop when a non-bot speaker appears while `~/.samoagent/speaking.lock` exists
+4. Add `samocall speak-stop` — no-op for Option A (no stop API exists); document limitation
+5. For soft interruption: `samocall watch` line parser can call speak-stop when a non-bot speaker appears while `~/.samocall/speaking.lock` exists
 
 Estimated effort: 1–2 hours.
 
@@ -114,7 +114,7 @@ Estimated effort: 1–2 hours.
 3. Browser: stream OpenAI TTS audio chunks, queue in Web Audio API, track playback node
 4. VAD: start with energy threshold (simple). Upgrade to Silero WASM if false positives
 5. On VAD: `sourceNode.stop()`, send `{ event: "interrupted" }` back to server
-6. `samoagent speak-stop`: POST `/speak-stop` to webhook server → SSE stop event
+6. `samocall speak-stop`: POST `/speak-stop` to webhook server → SSE stop event
 
 Estimated effort: 2–3 days.
 

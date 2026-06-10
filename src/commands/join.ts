@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { AVATAR_URL, RECALL_BASE, ExitError, stateFile } from "../config.ts";
+import { RECALL_BASE, ExitError, stateFile } from "../config.ts";
 import { resolveNewTranscriptFile } from "../transcript.ts";
 import { resolveVideoFrameDir, resolveVideoFrameFile } from "../frameStore.ts";
 import { loadDict } from "../dict.ts";
@@ -23,6 +23,8 @@ export interface SpawnedProc {
   kill(): void;
 }
 
+export type PresenceFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
 /**
  * Injectable seams for cmdJoin. All default to the real implementations so
  * production behavior is unchanged; tests override them to run hermetically
@@ -32,13 +34,17 @@ export interface JoinDeps {
   recall?: RecallClient;
   kill?: (pid: number, signal: string) => void;
   /** Spawn a detached process (webhook server / ngrok). */
-  spawn?: (cmd: string[]) => SpawnedProc;
+  spawn?: (cmd: string[], opts?: SpawnOptions) => SpawnedProc;
   /** Poll ngrok's local API for the public webhook base URL. */
   waitForNgrok?: (port: number) => Promise<string | null>;
   /** Start a local mediamtx RTMP server. */
   startMediamtx?: () => Promise<SpawnedProc | null>;
   /** Open a ngrok TCP tunnel to a local port; returns the public tcp:// URL. */
   startNgrokTcpTunnel?: (localPort: number) => Promise<string | null>;
+  /** Fetch used for public camera-page preflight. */
+  fetch?: PresenceFetch;
+  /** Delay used between public camera-page preflight attempts. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 function defaultKill(pid: number, signal: string): void {
@@ -55,17 +61,24 @@ interface ChildProcLike {
   unref(): void;
 }
 
+/** Extra spawn options; env entries are merged over the parent environment. */
+export interface SpawnOptions {
+  env?: Record<string, string>;
+}
+
 export type SpawnChildFn = (
   command: string,
   args: string[],
   options: {
     detached: true;
     stdio: "ignore";
+    env?: Record<string, string | undefined>;
   },
 ) => ChildProcLike;
 
 export function spawnDetached(
   cmd: string[],
+  opts: SpawnOptions = {},
   spawnFn: SpawnChildFn = spawnChild,
 ): SpawnedProc {
   const [command, ...args] = cmd;
@@ -75,6 +88,9 @@ export function spawnDetached(
   const proc = spawnFn(command, args, {
     detached: true,
     stdio: "ignore",
+    // Pass secrets via env (merged over the parent env), never via argv,
+    // so they stay out of `ps` output.
+    env: opts.env ? { ...process.env, ...opts.env } : undefined,
   });
   proc.unref();
   if (typeof proc.pid !== "number") {
@@ -90,6 +106,50 @@ export function spawnDetached(
   };
 }
 
+const PRESENCE_PAGE_MARKER = "samocall-presence";
+
+// Browser-like UA so the preflight sees what Recall's Chromium sees —
+// ngrok-free/localtunnel serve their interstitials only to browser UAs.
+const PRESENCE_PREFLIGHT_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+
+// ~30 s budget: fresh tunnel DNS (e.g. *.trycloudflare.com) can take 10–30 s.
+const PRESENCE_PREFLIGHT_ATTEMPTS = 40;
+const PRESENCE_PREFLIGHT_SLEEP_MS = 750;
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function waitForPresenceCamera(
+  url: string,
+  fetchFn: PresenceFetch = fetch,
+  sleepFn: (ms: number) => Promise<void> = sleep,
+  attempts = PRESENCE_PREFLIGHT_ATTEMPTS,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetchFn(url, {
+        cache: "no-store",
+        headers: { "User-Agent": PRESENCE_PREFLIGHT_USER_AGENT },
+      });
+      if (response.ok) {
+        const text = await response.text();
+        if (text.includes(PRESENCE_PAGE_MARKER)) {
+          return true;
+        }
+      }
+    } catch {
+      // Tunnel/server may still be coming up.
+    }
+    if (i < attempts - 1) {
+      await sleepFn(PRESENCE_PREFLIGHT_SLEEP_MS);
+    }
+  }
+  return false;
+}
+
 export async function cmdJoin(
   args: ParsedArgs,
   deps: JoinDeps = {},
@@ -100,11 +160,15 @@ export async function cmdJoin(
   const waitForNgrokFn = deps.waitForNgrok ?? waitForNgrok;
   const startMediamtxFn = deps.startMediamtx ?? startMediamtx;
   const startNgrokTcpTunnelFn = deps.startNgrokTcpTunnel ?? startNgrokTcpTunnel;
+  const fetchFn = deps.fetch ?? fetch;
+  const sleepFn = deps.sleep ?? sleep;
 
   const transcriptFile = resolveNewTranscriptFile(args.transcript_dir);
   writeFileSync(transcriptFile, "", { flag: "wx", mode: 0o600 });
   const webhookToken = randomUUID();
   const frameToken = randomUUID();
+  const presenceToken = randomUUID();
+  const presenceWriteToken = randomUUID();
 
   const keyterms = loadDict(args.dict);
   const name = botName(args.name);
@@ -128,21 +192,27 @@ export async function cmdJoin(
   const selfPath = fileURLToPath(import.meta.url);
   // resolve cli entrypoint: this module is src/commands/join.ts → cli is src/cli.ts
   const cliPath = selfPath.replace(/commands\/join\.ts$/, "cli.ts");
-  const server = spawn([
-    process.execPath,
-    cliPath,
-    "_serve",
-    "--port",
-    String(port),
-    "--transcript-file",
-    transcriptFile,
-    "--webhook-token",
-    webhookToken,
-    "--call-id-file",
-    stateFile(),
-    "--frame-token",
-    frameToken,
-  ]);
+  const server = spawn(
+    [
+      process.execPath,
+      cliPath,
+      "_serve",
+      "--port",
+      String(port),
+      "--transcript-file",
+      transcriptFile,
+      "--call-id-file",
+      stateFile(),
+    ],
+    {
+      env: {
+        SAMOCALL_WEBHOOK_TOKEN: webhookToken,
+        SAMOCALL_FRAME_TOKEN: frameToken,
+        SAMOCALL_PRESENCE_TOKEN: presenceToken,
+        SAMOCALL_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+      },
+    },
+  );
   const started = new Set<SpawnedProc>([server]);
   let stateSaved = false;
 
@@ -207,8 +277,35 @@ export async function cmdJoin(
       cleanupUnsaved();
       throw new ExitError(1);
     }
-    webhookUrl = webhookUrl.replace(/\/+$/, "") + `/webhook?token=${encodeURIComponent(webhookToken)}`;
+    const publicBaseUrl = webhookUrl.replace(/\/+$/, "");
+    // null = join without the webpage presence camera (opted out via
+    // --no-presence, or degraded after a failed preflight).
+    const presenceBgSuffix = args.presence_bg
+      ? `&bg=${encodeURIComponent(args.presence_bg)}`
+      : "";
+    let presencePageUrl: string | null = args.no_presence
+      ? null
+      : `${publicBaseUrl}/presence?token=${encodeURIComponent(presenceToken)}${presenceBgSuffix}`;
+    webhookUrl = `${publicBaseUrl}/webhook?token=${encodeURIComponent(webhookToken)}`;
     process.stdout.write(`Webhook: ${webhookUrl}\n`);
+    if (presencePageUrl) {
+      process.stdout.write(`Presence camera: ${presencePageUrl}\n`);
+      const presenceReachable = await waitForPresenceCamera(
+        presencePageUrl,
+        fetchFn,
+        sleepFn,
+      );
+      if (!presenceReachable) {
+        process.stderr.write(
+          "Warning: the presence camera page is not reachable by a browser — " +
+            "likely a tunnel interstitial (free ngrok / localtunnel show one to browser " +
+            "user agents). Joining WITHOUT the presence camera; transcription and chat " +
+            "are unaffected, and `samocall presence` will be unavailable for this call. " +
+            "Use a paid/clean tunnel for the camera, or pass --no-presence to skip this check.\n",
+        );
+        presencePageUrl = null;
+      }
+    }
 
     let mediamtxAuto: SpawnedProc | null = null;
     let rtmpViaNgrok = false;
@@ -346,33 +443,52 @@ export async function cmdJoin(
     recordingConfig.video_separate_png = {};
   }
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     meeting_url: args.url,
     bot_name: name,
-    output_media: {
-      camera: {
-        kind: "webpage",
-        config: { url: AVATAR_URL },
-      },
-    },
     recording_config: recordingConfig,
   };
+  if (presencePageUrl) {
+    payload.output_media = {
+      camera: {
+        kind: "webpage",
+        config: { url: presencePageUrl },
+      },
+    };
+  }
+  if (args.variant) {
+    payload.variant = {
+      zoom: args.variant,
+      google_meet: args.variant,
+      microsoft_teams: args.variant,
+    };
+  }
 
   const bot = (await recall.createBot(payload)) as { id: string };
   const bid = bot.id;
 
   const newState: Record<string, unknown> = {
     bot_id: bid,
-    agent_name: args.name || "samoagent",
+    agent_name: args.name || "samocall",
     bot_name: name,
     webhook_url: webhookUrl,
     server_pid: server.pid,
     ngrok_pid: ngrok ? ngrok.pid : null,
     started_at: new Date().toISOString(),
     dict: args.dict ?? null,
+    variant: args.variant ?? null,
     meeting_url: args.url,
     transcript_file: transcriptFile,
   };
+  if (presencePageUrl) {
+    // Presence state is saved only when the camera page is actually in use:
+    // without it, `samocall presence` updates would have no visible effect,
+    // so the command should report "no active dynamic presence server".
+    newState.presence_page_url = presencePageUrl;
+    newState.local_presence_update_url = `http://127.0.0.1:${port}/presence`;
+    newState.presence_token = presenceToken;
+    newState.presence_write_token = presenceWriteToken;
+  }
   if (mediamtxProc) {
     newState.mediamtx_pid = mediamtxProc.pid;
   }
@@ -405,7 +521,7 @@ export async function cmdJoin(
     `IMPORTANT: You must now monitor the live transcript for the duration of the call.\n`,
   );
   process.stdout.write(`Run this command with your Monitor tool (persistent=true):\n`);
-  process.stdout.write(`  samoagent watch\n`);
+  process.stdout.write(`  samocall watch\n`);
   process.stdout.write(
     `Each line you receive is a new utterance: [timestamp] Speaker: text\n`,
   );
@@ -413,25 +529,30 @@ export async function cmdJoin(
     `React to what is said. If someone addresses you or asks a question, respond in chat.\n`,
   );
   process.stdout.write(
-    `To send a message in the meeting chat: samoagent chat 'your message'\n`,
+    `To send a message in the meeting chat: samocall chat 'your message'\n`,
   );
+  if (presencePageUrl) {
+    process.stdout.write(
+      `To update bot presence:       samocall presence thinking 'short status'\n`,
+    );
+  }
   if (rtmpLocalUrl) {
     process.stdout.write(
-      `To capture call frame:        samoagent frame  (ffmpeg from RTMP stream)\n`,
+      `To capture call frame:        samocall frame  (ffmpeg from RTMP stream)\n`,
     );
   } else if (useWsVideo) {
     process.stdout.write(
-      `To list frame sources:       samoagent frames\n`,
+      `To list frame sources:       samocall frames\n`,
     );
     process.stdout.write(
-      `To capture call frame:        samoagent frame  (latest WebSocket PNG, written on demand)\n`,
+      `To capture call frame:        samocall frame  (latest WebSocket PNG, written on demand)\n`,
     );
   } else {
     process.stdout.write(
-      `To capture what's on screen:  samoagent screenshot  (then Read screenshot.png)\n`,
+      `To capture what's on screen:  samocall screenshot  (then Read screenshot.png)\n`,
     );
   }
-  process.stdout.write(`To stop:                      samoagent leave\n`);
+  process.stdout.write(`To stop:                      samocall leave\n`);
   process.stdout.write(`--------------------------\n`);
   } catch (err) {
     cleanupUnsaved();

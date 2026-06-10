@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
-import { handleWebhook, serve } from "../src/server.ts";
+import { handleWebhook, serve, tokensEqual } from "../src/server.ts";
 import { makeTmpDir, cleanupTmpDir } from "./helpers.ts";
 
 function makeTranscriptEvent(
@@ -177,6 +177,39 @@ describe("webhook handler", () => {
     }
   });
 
+  it("accepts a webhook body of exactly 1 MB (boundary)", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const body = "x".repeat(1024 * 1024);
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=secret-token`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body,
+      });
+      expect(resp.status).toBe(200);
+      expect(await resp.json()).toEqual({ ok: true });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("rejects oversized bodies at the transport layer, before token checks", async () => {
+    // With maxRequestBodySize set, Bun 1.3.x answers 413 itself when
+    // Content-Length exceeds the cap — the fetch handler (and therefore the
+    // token check, which would otherwise return 403) never runs.
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=wrong-token`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: "x".repeat(1024 * 1024 + 1),
+      });
+      expect(resp.status).toBe(413);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("frame routes reject missing token", async () => {
     const server = serve(0, tf, { webhookToken: "webhook-token", frameToken: "frame-token" });
     try {
@@ -184,6 +217,484 @@ describe("webhook handler", () => {
       const meta = await fetch(`http://localhost:${server.port}/frame.json`);
       expect(resp.status).toBe(403);
       expect(meta.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence page and json are token gated and start in listening state", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const blocked = await fetch(`http://localhost:${server.port}/presence`);
+      expect(blocked.status).toBe(403);
+
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("Content-Type")).toContain("text/html");
+      const html = await page.text();
+      expect(html).toContain("samocall-presence");
+      expect(html).toContain("Heard");
+      expect(html).toContain("Comments");
+      expect(html).toContain("AI mind");
+      expect(html).toContain("plasma-canvas");
+      expect(html).toContain("initPlasma");
+      expect(html).toContain("drawSpherePlasma");
+      expect(html).toContain("backgroundMode");
+      // unknown bg values fall back to sphere; cycle is an explicit named mode
+      expect(html).toContain(
+        "[\"sphere\", \"field\", \"static\", \"cycle\"].includes(bgParam) ? bgParam : \"sphere\"",
+      );
+      expect(html).toContain("backgroundMode === \"cycle\"");
+      expect(html).toContain("const frameMs = 100");
+      expect(html).toContain("-webkit-line-clamp: 2");
+      expect(html).toContain("flex-direction: column");
+      expect(html).toContain("items.slice(0, 14)");
+      expect(html).toContain("label.classList.add(\"repeated\")");
+      expect(html).toContain("backgroundMode !== \"static\"");
+      expect(html).toContain("Render FPS");
+      expect(html).toContain("initFpsProbe");
+      expect(html).toContain("scheduleRedraw");
+      expect(html).toContain("nextW === w && nextH === h");
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(jsonResp.status).toBe(200);
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: unknown[];
+      };
+      expect(json.state).toBe("listening");
+      expect(json.message).toBe("Listening");
+      expect(json.activities).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("transcript webhook appends heard activity without resetting state or message", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const before = await (
+        await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      })
+      ).json() as { updated_at: string };
+
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeTranscriptEvent("Nik", ["We", "need", "action"])),
+      });
+      expect(resp.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        updated_at: string;
+        activities: Array<{ kind: string; label: string; text: string }>;
+      };
+      expect(json).toMatchObject({
+        state: "listening",
+        message: "Listening",
+      });
+      expect(Date.parse(json.updated_at)).toBeGreaterThanOrEqual(Date.parse(before.updated_at));
+      expect(json.activities[0]).toMatchObject({
+        kind: "heard",
+        label: "Nik",
+        text: "We need action",
+      });
+      expect(json.activities).toHaveLength(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("transcript webhook preserves agent-set presence state", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
+      });
+      expect(updated.status).toBe(200);
+
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeTranscriptEvent("Nik", ["We", "need", "action"])),
+      });
+      expect(resp.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: Array<{ kind: string; label: string; text: string }>;
+      };
+      expect(json).toMatchObject({
+        state: "thinking",
+        message: "Checking indexes",
+      });
+      expect(json.activities[0]).toMatchObject({
+        kind: "heard",
+        label: "Nik",
+        text: "We need action",
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence update changes later presence json", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const blocked = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
+      });
+      expect(blocked.status).toBe(403);
+
+      const queryOnly = await fetch(`http://localhost:${server.port}/presence?token=write-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "acting", message: "Query token should not update" }),
+      });
+      expect(queryOnly.status).toBe(403);
+
+      const readToken = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "presence-token",
+        },
+        body: JSON.stringify({ state: "acting", message: "Read token should not update" }),
+      });
+      expect(readToken.status).toBe(403);
+
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ state: "thinking", message: "Checking indexes" }),
+      });
+      expect(updated.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: Array<{ kind: string; label: string; text: string }>;
+      };
+      expect(json).toMatchObject({
+        state: "thinking",
+        message: "Checking indexes",
+      });
+      expect(json.activities[0]).toMatchObject({
+        kind: "comment",
+        label: "Comment",
+        text: "Checking indexes",
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("bare state toggle without message uses the default message and adds no activity", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const updated = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ state: "idle" }),
+      });
+      expect(updated.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as {
+        state: string;
+        message: string;
+        activities: unknown[];
+      };
+      expect(json).toMatchObject({ state: "idle", message: "Idle" });
+      expect(json.activities).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("empty and whitespace-only messages behave as bare toggles (no activity)", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      for (const [message, state, defaultMessage] of [
+        ["", "thinking", "Checking"],
+        ["   ", "acting", "Working"],
+      ] as const) {
+        const updated = await fetch(`http://localhost:${server.port}/presence`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Samocall-Presence-Token": "write-token",
+          },
+          body: JSON.stringify({ state, message }),
+        });
+        expect(updated.status).toBe(200);
+
+        const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+          headers: { "X-Samocall-Presence-Token": "presence-token" },
+        });
+        const json = await jsonResp.json() as {
+          state: string;
+          message: string;
+          activities: unknown[];
+        };
+        expect(json).toMatchObject({ state, message: defaultMessage });
+        expect(json.activities).toEqual([]);
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence update rejects invalid state", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ state: "confused" }),
+      });
+      expect(resp.status).toBe(400);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence GET routes work with read token even when a write token is configured", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(jsonResp.status).toBe(200);
+      const writeOnGet = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "write-token" },
+      });
+      expect(writeOnGet.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence routes fail closed when no presence token is configured", async () => {
+    const server = serve(0, tf, { webhookToken: "webhook-token" });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=anything`);
+      expect(page.status).toBe(403);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json?token=anything`);
+      expect(jsonResp.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence GET routes accept the read token via header", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(page.status).toBe(200);
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(jsonResp.status).toBe(200);
+
+      const wrongPage = await fetch(`http://localhost:${server.port}/presence`, {
+        headers: { "X-Samocall-Presence-Token": "wrong-token" },
+      });
+      expect(wrongPage.status).toBe(403);
+      const wrongJson = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "wrong-token" },
+      });
+      expect(wrongJson.status).toBe(403);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence.json accepts the read token only via header, never via query", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const viaQuery = await fetch(`http://localhost:${server.port}/presence.json?token=presence-token`);
+      expect(viaQuery.status).toBe(403);
+      const viaHeader = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      expect(viaHeader.status).toBe(200);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("presence page polls presence.json with the header token, not the query token", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      const html = await page.text();
+      expect(html).toContain("X-Samocall-Presence-Token");
+      expect(html).not.toContain("/presence.json?token=");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.serve rejects oversized presence payloads", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const largeBody = "x".repeat(1024 * 1024 + 1);
+      const resp = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body: largeBody,
+      });
+      expect(resp.status).toBe(413);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("accepts a presence body of exactly 1 MB (boundary)", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const prefix = '{"state":"thinking","message":"';
+      const suffix = '"}';
+      const body =
+        prefix +
+        "x".repeat(1024 * 1024 - prefix.length - suffix.length) +
+        suffix;
+      expect(new TextEncoder().encode(body).byteLength).toBe(1024 * 1024);
+      const resp = await fetch(`http://localhost:${server.port}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samocall-Presence-Token": "write-token",
+        },
+        body,
+      });
+      expect(resp.status).toBe(200);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("binds to loopback only", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      expect(server.hostname).toBe("127.0.0.1");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("keeps only the newest ACTIVITY_LIMIT activities end-to-end", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      for (let i = 1; i <= 17; i++) {
+        const resp = await fetch(`http://localhost:${server.port}/webhook?token=webhook-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(makeTranscriptEvent("Nik", ["line", String(i)])),
+        });
+        expect(resp.status).toBe(200);
+      }
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samocall-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as { activities: Array<{ text: string }> };
+      expect(json.activities).toHaveLength(16);
+      expect(json.activities[0]!.text).toBe("line 17");
+      expect(json.activities[15]!.text).toBe("line 2");
+      expect(json.activities.some((a) => a.text === "line 1")).toBe(false);
     } finally {
       server.stop(true);
     }
@@ -221,13 +732,13 @@ describe("webhook handler", () => {
       expect(blocked.status).toBe(403);
 
       const frame = await fetch(`http://localhost:${server.port}/frame`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(frame.status).toBe(200);
       expect(new Uint8Array(await frame.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
 
       const meta = await fetch(`http://localhost:${server.port}/frame.json`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(meta.status).toBe(200);
       const json = (await meta.json()) as { call_id: string; participant: { id: string } };
@@ -276,7 +787,7 @@ describe("webhook handler", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       const inventory = await fetch(`http://localhost:${server.port}/frames.json`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(inventory.status).toBe(200);
       const json = (await inventory.json()) as {
@@ -288,13 +799,13 @@ describe("webhook handler", () => {
       ]);
 
       const screen = await fetch(`http://localhost:${server.port}/frame?source=screen`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(screen.status).toBe(200);
       expect(new Uint8Array(await screen.arrayBuffer())).toEqual(new Uint8Array([2, 2, 2]));
 
       const webcam = await fetch(`http://localhost:${server.port}/frame?source=participant:p1`, {
-        headers: { "X-Samoagent-Frame-Token": "frame-token" },
+        headers: { "X-Samocall-Frame-Token": "frame-token" },
       });
       expect(webcam.status).toBe(200);
       expect(new Uint8Array(await webcam.arrayBuffer())).toEqual(new Uint8Array([1, 1, 1]));
@@ -357,6 +868,16 @@ describe("webhook handler", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  it("tokensEqual compares tokens in constant time semantics", () => {
+    expect(tokensEqual("secret", "secret")).toBe(true);
+    expect(tokensEqual("secret", "Secret")).toBe(false);
+    expect(tokensEqual("secret", "secret-longer")).toBe(false);
+    expect(tokensEqual("", "")).toBe(false);
+    expect(tokensEqual(null, "secret")).toBe(false);
+    expect(tokensEqual("secret", null)).toBe(false);
+    expect(tokensEqual(undefined, undefined)).toBe(false);
   });
 
   it("Bun.serve rejects wrong token", async () => {

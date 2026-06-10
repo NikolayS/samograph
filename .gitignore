@@ -3,7 +3,7 @@ transcript.txt
 screenshot.png
 __pycache__/
 *.pyc
-.samoagent.json
+.samocall.json
 *.png
 !avatar.png
 !apple-touch-icon.png

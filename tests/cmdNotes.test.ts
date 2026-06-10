@@ -27,7 +27,7 @@ describe("cmdNotes", () => {
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
     tf = join(tmp, "transcript.txt");
-    process.env.SAMOAGENT_STATE_FILE = sf;
+    process.env.SAMOCALL_STATE_FILE = sf;
   });
 
   afterEach(() => {
@@ -129,7 +129,7 @@ describe("cmdNotes", () => {
       await sleep(80);
       appendFileSync(tf, "[2026-06-03 04:20:10] Bob: second note\n");
       await sleep(80);
-      appendFileSync(tf, "[2026-06-03 04:21:00] SAMOAGENT_CALL_ENDED\n");
+      appendFileSync(tf, "[2026-06-03 04:21:00] SAMOCALL_CALL_ENDED\n");
     })();
 
     await withTimeout(
@@ -164,7 +164,7 @@ describe("cmdNotes", () => {
 
     void (async () => {
       await sleep(80);
-      appendFileSync(tf, "[2026-06-03 04:21:00] SAMOAGENT_CALL_ENDED\n");
+      appendFileSync(tf, "[2026-06-03 04:21:00] SAMOCALL_CALL_ENDED\n");
     })();
 
     await withTimeout(

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { ExitError } from "./config.ts";
+import { normalizePresenceState, PRESENCE_STATES } from "./presence.ts";
 import type { ParsedArgs } from "./args.ts";
 import { cmdJoin } from "./commands/join.ts";
 import { cmdLeave } from "./commands/leave.ts";
@@ -14,21 +15,23 @@ import { cmdWatch } from "./commands/watch.ts";
 import { cmdServe } from "./commands/serve.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
+import { cmdPresence } from "./commands/presence.ts";
 
-const USAGE = `usage: samoagent <command> [options]
+const USAGE = `usage: samocall <command> [options]
 
 Put your AI agent in Zoom and Google Meet calls.
-samoagent joins through Recall.ai, streams live transcript lines,
+samocall joins through Recall.ai, streams live transcript lines,
 captures call frames on demand, and sends explicit chat messages.
 
 Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID]
+  presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
   watch
@@ -43,10 +46,10 @@ flags:
 `;
 
 const COMMAND_HELP: Record<string, string> = {
-  join: `usage: samoagent join <url> [options]
+  join: `usage: samocall join <url> [options]
 
 Join a Zoom or Google Meet call as a Recall.ai bot.
-By default, samoagent streams transcript events and receives call frames over WebSocket.
+By default, samocall streams transcript events and receives call frames over WebSocket.
 
 options:
   --name N               Bot display name
@@ -57,14 +60,21 @@ options:
   --no-ws-video          Disable WebSocket call-frame capture
   --webhook-base URL     Use an existing public tunnel URL instead of starting ngrok
                          (e.g. localtunnel/cloudflared pointing at --port)
+  --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
+                         Use web_4_core when webpage camera rendering is choppy
+  --no-presence          Join without the presence camera page (skips the
+                         camera-page preflight entirely)
+  --presence-bg MODE     Presence camera background: sphere|field|static|cycle
+                         (default: sphere; static is the cheapest to render)
   --rtmp                 Use local RTMP path through ngrok TCP
   --rtmp-url URL         Use an existing RTMP endpoint
 
 examples:
-  samoagent join "https://meet.google.com/abc-defg-hij" --name Leo
-  samoagent join "https://zoom.us/j/123" --dict postgresfm
+  samocall join "https://meet.google.com/abc-defg-hij" --name Leo
+  samocall join "https://zoom.us/j/123" --dict postgresfm
+  samocall join "https://zoom.us/j/123" --variant web_4_core
 `,
-  frame: `usage: samoagent frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
+  frame: `usage: samocall frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
 
 Write the latest call frame to disk.
 With the default WebSocket path, frames stay in memory until this command is run.
@@ -75,22 +85,36 @@ options:
   --archive        Also write a timestamped PNG+JSON archive copy.
 
 examples:
-  samoagent frame
-  samoagent frame --source screen --out /tmp/screen.png
-  samoagent frame --out /tmp/current-call.png
-  samoagent frame --archive
+  samocall frame
+  samocall frame --source screen --out /tmp/screen.png
+  samocall frame --out /tmp/current-call.png
+  samocall frame --archive
 `,
-  frames: `usage: samoagent frames
+  frames: `usage: samocall frames
 
 List WebSocket frame sources currently buffered in memory.
-Use the source keys with: samoagent frame --source SOURCE
+Use the source keys with: samocall frame --source SOURCE
 `,
-  doctor: `usage: samoagent doctor
+  doctor: `usage: samocall doctor
 
 Check local prerequisites for joining meetings:
-Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samoagent state.
+Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samocall state.
 `,
-  notes: `usage: samoagent notes <init|point|decision|action|transcript> [options]
+  presence: `usage: samocall presence <state> [message]
+
+Update the bot camera presence shown in the meeting.
+States: listening|thinking|speaking|acting|idle
+
+Without a message, only the state changes (bare toggle): the camera shows the
+state's default label and nothing is added to the Comments lane. With a
+message, the state changes AND the message appears in the Comments lane.
+
+examples:
+  samocall presence listening
+  samocall presence thinking "Checking the migration plan"
+  samocall presence speaking "Answering in chat"
+`,
+  notes: `usage: samocall notes <init|point|decision|action|transcript> [options]
 
 Maintain a GitLab-style live meeting doc.
 Uses GOOGLE_DOC_ID and GOOGLE_APPLICATION_CREDENTIALS when flags are omitted.
@@ -106,13 +130,13 @@ options:
   --from-start          For transcript: copy existing lines before tailing live lines
 
 examples:
-  samoagent notes init --doc-id 1abc...
-  samoagent notes point "Customer is blocked on migration risk" --speaker Alice
-  samoagent notes decision "Use logical replication for phase 1"
-  samoagent notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
-  samoagent notes transcript --from-start
+  samocall notes init --doc-id 1abc...
+  samocall notes point "Customer is blocked on migration risk" --speaker Alice
+  samocall notes decision "Use logical replication for phase 1"
+  samocall notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
+  samocall notes transcript --from-start
 `,
-  transcript: `usage: samoagent transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
+  transcript: `usage: samocall transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
 
 Print a finished Recall.ai transcript, falling back to the local live transcript.
 
@@ -123,11 +147,11 @@ options:
   --local      Read the active/default local transcript instead of Recall
 
 examples:
-  samoagent transcript
-  samoagent transcript --local --cursor 0 --limit 20
-  samoagent transcript --file ~/.samoagent/20260604_022915_transcript.txt --cursor 0 --limit 20
-  samoagent transcript --cursor 0 --limit 20
-  samoagent transcript --cursor 20 --limit 20 <bot_id>
+  samocall transcript
+  samocall transcript --local --cursor 0 --limit 20
+  samocall transcript --file ~/.samocall/20260604_022915_transcript.txt --cursor 0 --limit 20
+  samocall transcript --cursor 0 --limit 20
+  samocall transcript --cursor 20 --limit 20 <bot_id>
 `,
 };
 
@@ -149,11 +173,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--variant", "--presence-bg"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
     chat: new Set(["--bot-id"]),
+    presence: new Set(),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
     watch: new Set(),
@@ -161,14 +186,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
     doctor: new Set(),
-    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token"]),
+    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--no-ws-video"]),
+    join: new Set(["--rtmp", "--no-ws-video", "--no-presence"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),
     chat: new Set(),
+    presence: new Set(),
     transcript: new Set(["--local"]),
     dicts: new Set(),
     watch: new Set(),
@@ -246,7 +272,23 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.rtmp = opts["--rtmp"] === true;
       result.ws_video = opts["--no-ws-video"] !== true;
       result.webhook_base = (opts["--webhook-base"] as string) ?? null;
+      result.no_presence = opts["--no-presence"] === true;
+      result.presence_bg = (opts["--presence-bg"] as string) ?? null;
+      if (
+        result.presence_bg !== null &&
+        !["sphere", "field", "static", "cycle"].includes(result.presence_bg)
+      ) {
+        throw new ArgError(
+          `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from sphere, field, static, cycle)`,
+        );
+      }
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
+      result.variant = (opts["--variant"] as string) ?? null;
+      if (result.variant !== null && !["web", "web_4_core", "web_gpu"].includes(result.variant)) {
+        throw new ArgError(
+          `argument --variant: invalid choice: '${result.variant}' (choose from web, web_4_core, web_gpu)`,
+        );
+      }
       break;
     }
     case "leave":
@@ -293,6 +335,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.bot_id = (opts["--bot-id"] as string) ?? null;
       break;
     }
+    case "presence": {
+      if (positionals.length < 1) {
+        throw new ArgError("the following arguments are required: state");
+      }
+      // Eager validation mirrors --variant; cmdPresence re-normalizes as
+      // defense in depth. The raw (case-insensitive) value is passed through.
+      if (normalizePresenceState(positionals[0]) === null) {
+        throw new ArgError(
+          `argument state: invalid choice: '${positionals[0]}' (choose from ${PRESENCE_STATES.join(", ")})`,
+        );
+      }
+      result.presence_state = positionals[0];
+      result.message = positionals.slice(1).join(" ") || undefined;
+      break;
+    }
     case "dicts":
     case "watch":
     case "doctor":
@@ -331,6 +388,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.webhook_token = (opts["--webhook-token"] as string) ?? "";
       result.call_id_file = (opts["--call-id-file"] as string) ?? "";
       result.frame_token = (opts["--frame-token"] as string) ?? "";
+      result.presence_token = (opts["--presence-token"] as string) ?? "";
+      result.presence_write_token = (opts["--presence-write-token"] as string) ?? "";
       break;
     }
   }
@@ -352,6 +411,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdTranscript(args);
     case "chat":
       return cmdChat(args);
+    case "presence":
+      return cmdPresence(args);
     case "frame":
       return cmdFrame(args);
     case "frames":
@@ -388,7 +449,7 @@ async function main(): Promise<void> {
   }
   if (argv[0] === "--version" || argv[0] === "-v") {
     const pkg = (await import("../package.json")) as { version: string };
-    process.stdout.write(`samoagent ${pkg.version}\n`);
+    process.stdout.write(`samocall ${pkg.version}\n`);
     process.exit(0);
   }
   let args: ParsedArgs;
@@ -396,7 +457,7 @@ async function main(): Promise<void> {
     args = parseArgs(argv);
   } catch (e) {
     if (e instanceof ArgError) {
-      process.stderr.write(`samoagent: error: ${e.message}\n`);
+      process.stderr.write(`samocall: error: ${e.message}\n`);
       process.exit(2);
     }
     throw e;
@@ -411,7 +472,7 @@ async function main(): Promise<void> {
     // response surfacing as a SyntaxError, etc.) — emit a single clean line to
     // stderr instead of dumping a Bun stack trace.
     process.stderr.write(
-      `samoagent: error: ${e instanceof Error ? e.message : String(e)}\n`,
+      `samocall: error: ${e instanceof Error ? e.message : String(e)}\n`,
     );
     process.exit(1);
   }

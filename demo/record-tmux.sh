@@ -3,7 +3,7 @@
 #
 # This is the scriptable path: an orchestrator (you, or an outer agent) sends
 # each turn with natural, character-by-character typing, while a *real* `claude`
-# session runs samoagent for real. Nothing is simulated.
+# session runs samocall for real. Nothing is simulated.
 #
 # Subcommands (run as separate steps so you can sync with a live call):
 #   ./demo/record-tmux.sh start        # boot tmux + asciinema + claude
@@ -15,8 +15,8 @@
 #   ./demo/record-tmux.sh stop         # exit claude, finalize the .cast
 #
 # Env:
-#   SESSION  tmux session name      (default: samoagent-demo)
-#   CAST     output cast path       (default: demo/samoagent-live.cast)
+#   SESSION  tmux session name      (default: samocall-demo)
+#   CAST     output cast path       (default: demo/samocall-live.cast)
 #   COLS×ROWS terminal size         (default: 110×32)
 #   CPS      typing chars/second    (default: 16 — natural human pace)
 #
@@ -26,8 +26,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SESSION="${SESSION:-samoagent-demo}"
-CAST="${CAST:-$SCRIPT_DIR/samoagent-live.cast}"
+SESSION="${SESSION:-samocall-demo}"
+CAST="${CAST:-$SCRIPT_DIR/samocall-live.cast}"
 case "$CAST" in /*) ;; *) CAST="$REPO_ROOT/$CAST" ;; esac
 COLS="${COLS:-110}"
 ROWS="${ROWS:-32}"

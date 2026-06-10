@@ -9,18 +9,19 @@ import { join } from "node:path";
 import {
   cmdJoin,
   spawnDetached,
+  waitForPresenceCamera,
   type JoinDeps,
   type SpawnChildFn,
   type SpawnedProc,
 } from "../src/commands/join.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
-import { AVATAR_URL } from "../src/config.ts";
 import { botName } from "../src/botName.ts";
 import type { RecallClient } from "../src/recall.ts";
 import type { ParsedArgs } from "../src/args.ts";
 
 const WEBHOOK_BASE = "https://ngrok.example";
 const WEBHOOK_PREFIX = `${WEBHOOK_BASE}/webhook?token=`;
+const PRESENCE_PREFIX = `${WEBHOOK_BASE}/presence?token=`;
 
 /** Fake recall client capturing the createBot payload. */
 function makeFakeRecall(captured: { payload?: any; rejectCreateBot?: boolean }): RecallClient {
@@ -64,6 +65,8 @@ function makeDeps(
     waitForNgrok: async () => WEBHOOK_BASE,
     startMediamtx: async () => fakeProc(7000, opts.killed),
     startNgrokTcpTunnel: async () => "tcp://ngrok.tcp:12345",
+    fetch: async () => new Response("<main class=\"samocall-presence\"></main>"),
+    sleep: async () => {},
   };
 }
 
@@ -78,6 +81,7 @@ function joinArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
     transcript_dir: null,
     rtmp_url: null,
     rtmp: false,
+    variant: null,
     ...over,
   } as ParsedArgs;
 }
@@ -94,9 +98,9 @@ describe("cmdJoin payload + saved state", () => {
     sf = join(tmp, "state.json");
     dictDir = join(tmp, "dicts");
     mkdirSync(dictDir, { recursive: true });
-    process.env.SAMOAGENT_STATE_FILE = sf;
-    process.env.SAMOAGENT_HOME = tmp; // transcripts -> <tmp>/.samoagent/<timestamp>_transcript.txt
-    process.env.SAMOAGENT_DICT_DIR = dictDir;
+    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOCALL_HOME = tmp; // transcripts -> <tmp>/.samocall/<timestamp>_transcript.txt
+    process.env.SAMOCALL_DICT_DIR = dictDir;
   });
   afterEach(() => {
     restoreEnv(env);
@@ -111,7 +115,7 @@ describe("cmdJoin payload + saved state", () => {
     expect(p).toBeDefined();
     expect(p.bot_name).toBe(botName("TARS"));
     expect(p.output_media.camera.kind).toBe("webpage");
-    expect(p.output_media.camera.config.url).toBe(AVATAR_URL);
+    expect(p.output_media.camera.config.url).toStartWith(PRESENCE_PREFIX);
 
     const rc = p.recording_config;
     expect(rc.transcript.provider.deepgram_streaming).toEqual({
@@ -137,6 +141,21 @@ describe("cmdJoin payload + saved state", () => {
       Array.isArray(e.events) && e.events.includes("video_mixed_flv.data"),
     );
     expect(rtmpEp).toBeUndefined();
+    expect(p.variant).toBeUndefined();
+  });
+
+  it("--variant adds recall bot variant for output media rendering", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ variant: "web_4_core" }), makeDeps(captured));
+
+    expect(captured.payload.variant).toEqual({
+      zoom: "web_4_core",
+      google_meet: "web_4_core",
+      microsoft_teams: "web_4_core",
+    });
+
+    const state = JSON.parse(readFileSync(sf, "utf8"));
+    expect(state.variant).toBe("web_4_core");
   });
 
   it("--dict with an existing dict file adds keyterms", async () => {
@@ -160,6 +179,15 @@ describe("cmdJoin payload + saved state", () => {
     expect(state.bot_id).toBe("bot-new");
     expect(state.bot_name).toBe(botName("TARS"));
     expect(state.webhook_url).toStartWith(WEBHOOK_PREFIX);
+    expect(state.presence_page_url).toStartWith(PRESENCE_PREFIX);
+    expect(state.local_presence_url).toBeUndefined();
+    expect(state.local_presence_update_url).toBe("http://127.0.0.1:8080/presence");
+    expect(typeof state.presence_token).toBe("string");
+    expect(typeof state.presence_write_token).toBe("string");
+    expect(state.presence_write_token).not.toBe(state.presence_token);
+    expect(state.presence_page_url).toContain(state.presence_token);
+    expect(state.presence_page_url).not.toContain(state.presence_write_token);
+    expect(captured.payload.output_media.camera.config.url).toBe(state.presence_page_url);
     expect(typeof state.transcript_file).toBe("string");
     expect(state.transcript_file).toContain("transcript.txt");
     expect(typeof state.server_pid).toBe("number");
@@ -233,6 +261,51 @@ describe("cmdJoin payload + saved state", () => {
     expect(state.video_frame_dir).toBe(join(tmp, "frames"));
     expect(state.video_frame_file).toBe(join(tmp, "frames", "latest.png"));
     expect(existsSync(join(tmp, "frames"))).toBe(false);
+  });
+
+  it("passes _serve tokens via spawn env, never via argv", async () => {
+    const captured: { payload?: any } = {};
+    const spawnCalls: Array<{ cmd: string[]; env?: Record<string, string> }> = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      spawn: (cmd, opts) => {
+        spawnCalls.push({ cmd, env: opts?.env });
+        return fakeProc(5000);
+      },
+    };
+
+    await cmdJoin(joinArgs({ ws_video: true }), deps);
+
+    const serveCall = spawnCalls.find((c) => c.cmd.includes("_serve"));
+    expect(serveCall).toBeDefined();
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    const webhookToken = new URL(state.webhook_url).searchParams.get("token")!;
+    const tokens = [
+      webhookToken,
+      state.frame_token,
+      state.presence_token,
+      state.presence_write_token,
+    ];
+    for (const token of tokens) {
+      expect(typeof token).toBe("string");
+      expect(token.length).toBeGreaterThan(0);
+      expect(serveCall!.cmd).not.toContain(token);
+    }
+    for (const flag of [
+      "--webhook-token",
+      "--frame-token",
+      "--presence-token",
+      "--presence-write-token",
+    ]) {
+      expect(serveCall!.cmd).not.toContain(flag);
+    }
+    expect(serveCall!.env).toMatchObject({
+      SAMOCALL_WEBHOOK_TOKEN: webhookToken,
+      SAMOCALL_FRAME_TOKEN: state.frame_token,
+      SAMOCALL_PRESENCE_TOKEN: state.presence_token,
+      SAMOCALL_PRESENCE_WRITE_TOKEN: state.presence_write_token,
+    });
   });
 
   it("cleans up server and ngrok when recall createBot fails before state is saved", async () => {
@@ -358,6 +431,7 @@ describe("cmdJoin payload + saved state", () => {
     const state = JSON.parse(readFileSync(sf, "utf-8"));
     expect(state.webhook_url).toStartWith("https://my-tunnel.example/webhook?token=");
     expect(state.ngrok_pid).toBeNull();
+    expect(state.presence_page_url).toStartWith("https://my-tunnel.example/presence?token=");
 
     // Recall payload webhook endpoint also starts with the base
     const rc = captured.payload.recording_config;
@@ -367,6 +441,9 @@ describe("cmdJoin payload + saved state", () => {
     expect(rc.realtime_endpoints.length).toBeGreaterThan(0);
     expect(webhookEp).toBeDefined();
     expect(webhookEp.url).toStartWith("https://my-tunnel.example/webhook?token=");
+    expect(captured.payload.output_media.camera.config.url).toStartWith(
+      "https://my-tunnel.example/presence?token=",
+    );
   });
 
   it("--webhook-base with trailing slash: endpoint URL does not contain //webhook", async () => {
@@ -419,6 +496,201 @@ describe("cmdJoin payload + saved state", () => {
     expect(captured.payload).toBeUndefined();
     expect(existsSync(sf)).toBe(false);
   });
+
+  it("unreachable presence camera page: warns and joins WITHOUT the camera", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async () => new Response("Not Found", { status: 404 }),
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await cmdJoin(joinArgs(), deps);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    // join proceeded: bot created, state saved, nothing killed
+    expect(killed).toEqual([]);
+    expect(captured.payload).toBeDefined();
+    expect(captured.payload.output_media).toBeUndefined();
+    expect(existsSync(sf)).toBe(true);
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.bot_id).toBe("bot-new");
+    expect(state.presence_page_url).toBeUndefined();
+    expect(state.local_presence_update_url).toBeUndefined();
+    expect(state.presence_token).toBeUndefined();
+    expect(state.presence_write_token).toBeUndefined();
+
+    const stderrOut = errWrites.join("");
+    expect(stderrOut).toContain("Warning");
+    expect(stderrOut).toContain("presence camera");
+    expect(stderrOut).toContain("interstitial");
+    expect(stderrOut).toContain("--no-presence");
+  });
+
+  it("tunnel interstitial page: warns and joins WITHOUT the camera", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async () => new Response("<title>You are about to visit</title>"),
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await cmdJoin(joinArgs(), deps);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    expect(killed).toEqual([]);
+    expect(captured.payload.output_media).toBeUndefined();
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.bot_id).toBe("bot-new");
+    expect(state.presence_page_url).toBeUndefined();
+    expect(errWrites.join("")).toContain("Warning");
+  });
+
+  it("--no-presence: skips preflight entirely and omits output_media, no warning", async () => {
+    const captured: { payload?: any } = {};
+    let fetchCalls = 0;
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("<main class=\"samocall-presence\"></main>");
+      },
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    try {
+      await cmdJoin(joinArgs({ no_presence: true }), deps);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    expect(fetchCalls).toBe(0);
+    expect(captured.payload.output_media).toBeUndefined();
+    expect(errWrites.join("")).toBe("");
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.bot_id).toBe("bot-new");
+    expect(state.presence_page_url).toBeUndefined();
+    expect(state.local_presence_update_url).toBeUndefined();
+  });
+
+  it("--presence-bg appends bg param to the presence page URL", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ presence_bg: "field" }), makeDeps(captured));
+
+    const cameraUrl = captured.payload.output_media.camera.config.url as string;
+    expect(cameraUrl).toStartWith(PRESENCE_PREFIX);
+    expect(cameraUrl).toContain("&bg=field");
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.presence_page_url).toBe(cameraUrl);
+  });
+
+  it("no --presence-bg: presence page URL has no bg param", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs(), makeDeps(captured));
+    expect(captured.payload.output_media.camera.config.url).not.toContain("bg=");
+  });
+
+  it("preflight success: presence camera config unchanged", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs(), makeDeps(captured));
+
+    expect(captured.payload.output_media.camera.kind).toBe("webpage");
+    expect(captured.payload.output_media.camera.config.url).toStartWith(PRESENCE_PREFIX);
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.presence_page_url).toStartWith(PRESENCE_PREFIX);
+    expect(state.local_presence_update_url).toBe("http://127.0.0.1:8080/presence");
+  });
+});
+
+describe("waitForPresenceCamera", () => {
+  const URL = "https://ngrok.example/presence?token=abc";
+  const MARKER_PAGE = "<main class=\"samocall-presence\"></main>";
+
+  it("returns true on a 200 with the marker on the first attempt; never sleeps", async () => {
+    const sleeps: number[] = [];
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => new Response(MARKER_PAGE),
+      async (ms) => { sleeps.push(ms); },
+    );
+    expect(result).toBe(true);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("sends a browser-like Chrome User-Agent so UA-gated tunnel interstitials are visible", async () => {
+    let capturedInit: RequestInit | undefined;
+    const result = await waitForPresenceCamera(
+      URL,
+      async (_url, init) => {
+        capturedInit = init;
+        return new Response(MARKER_PAGE);
+      },
+      async () => {},
+    );
+    expect(result).toBe(true);
+    const ua = (capturedInit?.headers as Record<string, string>)["User-Agent"];
+    expect(ua).toContain("Mozilla/5.0");
+    expect(ua).toContain("Chrome/");
+  });
+
+  it("retries through fetch errors and succeeds once the page comes up", async () => {
+    const sleeps: number[] = [];
+    let calls = 0;
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => {
+        calls += 1;
+        if (calls <= 3) throw new Error("tunnel not up yet");
+        return new Response(MARKER_PAGE);
+      },
+      async (ms) => { sleeps.push(ms); },
+    );
+    expect(result).toBe(true);
+    expect(calls).toBe(4);
+    expect(sleeps).toEqual([750, 750, 750]);
+  });
+
+  it("returns false when every attempt throws", async () => {
+    let calls = 0;
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => {
+        calls += 1;
+        throw new Error("connection refused");
+      },
+      async () => {},
+    );
+    expect(result).toBe(false);
+    expect(calls).toBe(40);
+  });
+
+  it("returns false when responses are 200 but never contain the marker", async () => {
+    let calls = 0;
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => {
+        calls += 1;
+        return new Response("<title>You are about to visit</title>");
+      },
+      async () => {},
+    );
+    expect(result).toBe(false);
+    expect(calls).toBe(40);
+  });
 });
 
 describe("spawnDetached", () => {
@@ -445,14 +717,14 @@ describe("spawnDetached", () => {
       };
     };
 
-    const proc = spawnDetached(["ngrok", "http", "18080"], fakeSpawn);
+    const proc = spawnDetached(["ngrok", "http", "18080"], {}, fakeSpawn);
 
     expect(proc.pid).toBe(1234);
     expect(calls).toEqual([
       {
         command: "ngrok",
         args: ["http", "18080"],
-        options: { detached: true, stdio: "ignore" },
+        options: { detached: true, stdio: "ignore", env: undefined },
         unref: true,
         killedWith: [],
       },

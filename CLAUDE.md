@@ -1,16 +1,17 @@
-# samoagent Agent Notes
+# samocall Agent Notes
 
-Use samoagent to join a meeting, watch the live transcript, speak in meeting chat when asked, and capture the call view on demand.
+Use samocall to join a meeting, watch the live transcript, speak in meeting chat when asked, and capture the call view on demand.
 
 ## Preferred Flow
 
 ```bash
-samoagent join "https://meet.google.com/..." --name Leo --dict postgresfm
-samoagent watch
-samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Meeting live doc"
-samoagent frames
-samoagent frame
-samoagent leave
+samocall join "https://meet.google.com/..." --name Leo --dict postgresfm
+samocall watch
+samocall presence listening
+samocall notes init --doc-id 1abc... --credentials ~/.samocall/google.json --title "Meeting live doc"
+samocall frames
+samocall frame
+samocall leave
 ```
 
 Start `watch` immediately after `join` with your persistent monitor. Keep it running until the call ends. Each line is:
@@ -22,18 +23,32 @@ Start `watch` immediately after `join` with your persistent monitor. Keep it run
 React in your agent session. Use meeting chat only for deliberate call-visible messages:
 
 ```bash
-samoagent chat "Short message to the meeting"
+samocall chat "Short message to the meeting"
 ```
+
+## Dynamic Bot Presence
+
+The bot camera shows a live presence page. Update it from the agent loop to signal what you are doing. Five states: `listening|thinking|speaking|acting|idle`.
+
+```bash
+samocall presence listening
+samocall presence thinking "Checking logs"
+samocall presence speaking "Answering in chat"
+samocall presence acting "Opening PR review"
+samocall presence idle
+```
+
+Presence is in-memory runtime state for lightweight in-call signaling, not persistent memory. Transcript lines appear on the camera page automatically as "heard" activity without changing the state you set. Bare state toggles (no message) switch the state with its default message and do not add a Comments entry; only explicit messages appear in the Comments lane.
 
 ## Live Google Doc Notes
 
 Use `notes` when asked to keep a shared doc updated during the call:
 
 ```bash
-samoagent notes init --doc-id 1abc... --credentials ~/.samoagent/google.json --title "Customer call"
-samoagent notes point "Customer is blocked on cutover risk" --speaker Alice
-samoagent notes decision "Run a shadow replay before scheduling cutover"
-samoagent notes action "Create replay checklist issue" --owner Nik --due 2026-06-07
+samocall notes init --doc-id 1abc... --credentials ~/.samocall/google.json --title "Customer call"
+samocall notes point "Customer is blocked on cutover risk" --speaker Alice
+samocall notes decision "Run a shadow replay before scheduling cutover"
+samocall notes action "Create replay checklist issue" --owner Nik --due 2026-06-07
 ```
 
 The doc must already be shared with the service-account email as an editor. Do not dump the whole transcript into the doc unless asked; use `notes transcript --from-start` only for raw transcript mirroring. Prefer concise GitLab-style notes: agenda/question context, important points, decisions, action items, owners, dates, and links.
@@ -43,27 +58,27 @@ The doc must already be shared with the service-account email as an editor. Do n
 Frame capture is on by default. Recall sends `video_separate_png.data` frames over the ngrok HTTPS/WSS tunnel. Frames stay in server memory, indexed by source; disk writes happen only when the agent calls:
 
 ```bash
-samoagent frames
-samoagent frame
+samocall frames
+samocall frame
 ```
 
 Default output is outside the repo:
 
 ```text
-~/.samoagent/frames/latest.png
-~/.samoagent/frames/latest.json
+~/.samocall/frames/latest.png
+~/.samocall/frames/latest.json
 ```
 
 Use explicit outputs only when needed:
 
 ```bash
-samoagent frame --source screen --out /tmp/screen.png
-samoagent frame --source participant:100
-samoagent frame --out /tmp/call.png
-samoagent frame --archive
+samocall frame --source screen --out /tmp/screen.png
+samocall frame --source participant:100
+samocall frame --out /tmp/call.png
+samocall frame --archive
 ```
 
-`samoagent frames` lists source keys such as `type:screen_share` and `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
+`samocall frames` lists source keys such as `type:screen_share` and `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
 
 `--archive` creates a timestamped filename with bot id, source type, and participant id.
 
@@ -72,8 +87,8 @@ samoagent frame --archive
 Use RTMP only when separate PNG frames are not enough:
 
 ```bash
-samoagent join "https://zoom.us/j/..." --rtmp
-samoagent join "https://zoom.us/j/..." --rtmp-url rtmp://HOST:1935/live/call
+samocall join "https://zoom.us/j/..." --rtmp
+samocall join "https://zoom.us/j/..." --rtmp-url rtmp://HOST:1935/live/call
 ```
 
 `--rtmp` needs ngrok TCP, which requires ngrok card verification. `--rtmp-url` needs a public RTMP receiver.
@@ -81,7 +96,7 @@ samoagent join "https://zoom.us/j/..." --rtmp-url rtmp://HOST:1935/live/call
 ## End The Call
 
 ```bash
-samoagent leave
+samocall leave
 ```
 
-`leave` removes the bot, stops local helper processes, writes the `SAMOAGENT_CALL_ENDED` sentinel, and lets `watch` exit cleanly.
+`leave` removes the bot, stops local helper processes, writes the `SAMOCALL_CALL_ENDED` sentinel, and lets `watch` exit cleanly.

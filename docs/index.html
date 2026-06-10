@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>samoagent - put your AI agent in the meeting</title>
-  <meta name="description" content="samoagent gives engineers and AI builders a small CLI toolset for AI agents that need to join Zoom and Google Meet calls, read the transcript, send chat, and inspect frames.">
+  <title>samocall - put your AI agent in the meeting</title>
+  <meta name="description" content="samocall gives engineers and AI builders a small CLI toolset for AI agents that need to join Zoom and Google Meet calls, read the transcript, send chat, and inspect frames.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script>
     (() => {
       try {
-        const stored = localStorage.getItem("samoagent-theme") || "system";
+        const stored = localStorage.getItem("samocall-theme") || "system";
         const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
         document.documentElement.dataset.theme = stored === "system"
           ? (prefersDark ? "dark" : "light")
@@ -775,13 +775,13 @@
       <nav>
         <div class="brand">
           <img src="logo.svg" alt="">
-          <span>samoagent</span>
+          <span>samocall</span>
         </div>
         <div class="nav-right">
           <div class="links">
-            <a href="https://github.com/NikolayS/samoagent">GitHub</a>
-            <a href="https://www.npmjs.com/package/samoagent">npm</a>
-            <a href="https://github.com/NikolayS/samoagent/releases">Releases</a>
+            <a href="https://github.com/NikolayS/samocall">GitHub</a>
+            <a href="https://www.npmjs.com/package/samocall">npm</a>
+            <a href="https://github.com/NikolayS/samocall/releases">Releases</a>
           </div>
           <div class="theme-switcher" aria-label="Theme">
             <button class="theme-option" type="button" data-theme-value="light">light</button>
@@ -798,12 +798,12 @@
       <div>
         <span class="eyebrow">Open-source CLI for AI call agents</span>
         <h1><span class="mobile-line">Put your AI agent</span> <span class="mobile-line">in the meeting.</span></h1>
-        <p class="lead">samoagent is an open-source CLI that lets an AI agent join Zoom or Google Meet, stream the live transcript, send chat only when instructed, and inspect the current call frame on demand.</p>
+        <p class="lead">samocall is an open-source CLI that lets an AI agent join Zoom or Google Meet, stream the live transcript, send chat only when instructed, inspect the current call frame on demand, and show its live state through a dynamic presence camera.</p>
         <div class="actions">
-          <a class="button primary" href="https://www.npmjs.com/package/samoagent">npm install -g samoagent</a>
-          <a class="button" href="https://github.com/NikolayS/samoagent">View on GitHub</a>
+          <a class="button primary" href="https://www.npmjs.com/package/samocall">npm install -g samocall</a>
+          <a class="button" href="https://github.com/NikolayS/samocall">View on GitHub</a>
         </div>
-        <div class="quick-proof" aria-label="samoagent key properties">
+        <div class="quick-proof" aria-label="samocall key properties">
           <div class="proof-item">
             <strong>Open source</strong>
             <span>Apache-2.0</span>
@@ -825,7 +825,7 @@
             <span>on demand</span>
           </div>
         </div>
-        <p class="framing">No new flow to learn. You just tell your coding agent &mdash; Claude Code, Codex, or any tool that can run a shell &mdash; <em>&ldquo;join the Zoom/Google Meet call using samoagent&rdquo;</em>, and the agent runs samoagent for you.</p>
+        <p class="framing">No new flow to learn. You just tell your coding agent &mdash; Claude Code, Codex, or any tool that can run a shell &mdash; <em>&ldquo;join the Zoom/Google Meet call using samocall&rdquo;</em>, and the agent runs samocall for you.</p>
         <div class="credit">
           <span class="credit-label">Born at</span>
           <span class="credit-logos">
@@ -841,7 +841,7 @@
         </div>
       </div>
 
-      <div class="terminal" aria-label="Claude Code running samoagent">
+      <div class="terminal" aria-label="Claude Code running samocall">
         <div class="terminal-bar">
           <span class="dot"></span>
           <span class="dot"></span>
@@ -850,20 +850,20 @@
           <span class="terminal-rec">REC</span>
         </div>
         <div class="session">
-<div class="t-user"><span class="t-caret">&gt;</span>we're debugging a slow query on the call &mdash; join us on Zoom with samoagent and follow along</div>
+<div class="t-user"><span class="t-caret">&gt;</span>we're debugging a slow query on the call &mdash; join us on Zoom with samocall and follow along</div>
 <div class="t-assist"><span class="t-bullet">&#9679;</span> On it &mdash; joining the call and tailing the transcript now.</div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent join "https://meet.google.com/abc-defg-hij" --dict postgresfm</span>)</div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samocall join "https://meet.google.com/abc-defg-hij" --dict postgresfm</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> bot joining the call&hellip; connected <span class="t-ok">&#10003;</span></div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent watch</span>)</div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samocall watch</span>)</div>
 <div class="t-result"><span class="t-time">[14:02:11]</span> <span class="t-spk">Sofia:</span> the p99 on the orders query just doubled</div>
 <div class="t-result"><span class="t-time">[14:02:18]</span> <span class="t-spk">Marcus:</span> can you pull the plan and share it here?</div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent notes decision "Replay before cutover"</span>)</div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samocall notes decision "Replay before cutover"</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> decision added to live doc <span class="t-ok">&#10003;</span></div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent frames</span>)</div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samocall frames</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">type:screen_share available</span></div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent frame --source screen</span>)</div>
-<div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">screen frame captured &rarr; ~/.samoagent/frames/latest.png</span></div>
-<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samoagent chat "Seq scan on orders — missing index on (created_at). Patch incoming."</span>)</div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samocall frame --source screen</span>)</div>
+<div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-frame">screen frame captured &rarr; ~/.samocall/frames/latest.png</span></div>
+<div class="t-tool"><span class="t-bullet">&#9679;</span> <span class="t-fn">Bash</span>(<span class="t-arg">samocall chat "Seq scan on orders — missing index on (created_at). Patch incoming."</span>)</div>
 <div class="t-result"><span class="t-gutter">&#9099;</span> <span class="t-chat">chat sent to the meeting <span class="t-ok">&#10003;</span></span></div>
 <div class="t-caretline"><span class="blink"></span></div>
         </div>
@@ -918,7 +918,7 @@
           </div>
           <div class="item">
             <h3>Act deliberately</h3>
-            <p>Meeting chat only happens through <code>samoagent chat</code>.</p>
+            <p>Meeting chat only happens through <code>samocall chat</code>.</p>
           </div>
           <div class="item">
             <h3>Build faster</h3>
@@ -932,21 +932,21 @@
       <div class="wrap split">
         <div>
           <h2>How it works</h2>
-          <p class="lead">Your agent runs <code>samoagent</code> as a local tool. samoagent starts the callback server. Recall.ai joins the meeting and streams events back.</p>
+          <p class="lead">Your agent runs <code>samocall</code> as a local tool. samocall starts the callback server. Recall.ai joins the meeting and streams events back.</p>
           <div class="notes">
             <div class="note">Default video path uses WebSocket frames, so personal use should be fine with free ngrok HTTP.</div>
             <div class="note">RTMP is still available for mixed video, but that optional path uses ngrok TCP.</div>
-            <div class="note">Webhook, frame, and runtime files are token-protected and kept under <code>~/.samoagent/</code> by default.</div>
+            <div class="note">Webhook, frame, and runtime files are token-protected and kept under <code>~/.samocall/</code> by default.</div>
           </div>
         </div>
-        <div class="flow" aria-label="samoagent integration diagram">
+        <div class="flow" aria-label="samocall integration diagram">
           <div class="flow-node">
             <strong>AI agent</strong>
             <span>Chooses when to join, listen, inspect, chat, or leave.</span>
           </div>
           <div class="flow-node">
-            <strong>samoagent CLI</strong>
-            <span><code>join</code>, <code>watch</code>, <code>notes</code>, <code>frames</code>, <code>frame</code>, <code>chat</code>, <code>leave</code></span>
+            <strong>samocall CLI</strong>
+            <span><code>join</code>, <code>watch</code>, <code>notes</code>, <code>frames</code>, <code>frame</code>, <code>chat</code>, <code>presence</code>, <code>leave</code></span>
           </div>
           <div class="flow-node">
             <strong>Local callback server</strong>
@@ -968,8 +968,8 @@
             <p>Install the CLI, wire it into your agent loop, and star the repo if it saves you time.</p>
           </div>
           <div class="actions">
-            <a class="button primary" href="https://www.npmjs.com/package/samoagent">npm install</a>
-            <a class="button" href="https://github.com/NikolayS/samoagent">GitHub</a>
+            <a class="button primary" href="https://www.npmjs.com/package/samocall">npm install</a>
+            <a class="button" href="https://github.com/NikolayS/samocall">GitHub</a>
           </div>
         </div>
       </div>
@@ -992,7 +992,7 @@
   </footer>
   <script>
     (() => {
-      const storageKey = "samoagent-theme";
+      const storageKey = "samocall-theme";
       const root = document.documentElement;
       const media = matchMedia("(prefers-color-scheme: dark)");
       const buttons = [...document.querySelectorAll("[data-theme-value]")];

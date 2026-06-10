@@ -62,10 +62,64 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1", "--no-ws-video"]).ws_video).toBe(false);
   });
 
+  it("join no-presence default false", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).no_presence).toBe(false);
+  });
+
+  it("join no-presence parsed", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1", "--no-presence"]).no_presence).toBe(true);
+  });
+
+  it("join presence-bg default null", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).presence_bg).toBeNull();
+  });
+
+  it("join presence-bg accepts the four background modes", () => {
+    for (const bg of ["sphere", "field", "static", "cycle"]) {
+      expect(
+        parseArgs(["join", "https://zoom.us/j/1", "--presence-bg", bg]).presence_bg,
+      ).toBe(bg);
+    }
+  });
+
+  it("join presence-bg rejects unknown values", () => {
+    expect(() =>
+      parseArgs(["join", "https://zoom.us/j/1", "--presence-bg", "lava-lamp"]),
+    ).toThrow("invalid choice");
+  });
+
   it("join frame-dir parsed", () => {
     expect(
       parseArgs(["join", "https://zoom.us/j/1", "--frame-dir", "/tmp/frames"]).frame_dir,
     ).toBe("/tmp/frames");
+  });
+
+  it("join variant optional", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).variant).toBeNull();
+  });
+
+  it("join variant parsed", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "web_4_core"]).variant,
+    ).toBe("web_4_core");
+  });
+
+  it("join variant accepts web", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "web"]).variant,
+    ).toBe("web");
+  });
+
+  it("join variant accepts web_gpu", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "web_gpu"]).variant,
+    ).toBe("web_gpu");
+  });
+
+  it("join variant rejects unknown values", () => {
+    expect(() =>
+      parseArgs(["join", "https://zoom.us/j/1", "--variant", "big-box"]),
+    ).toThrow("invalid choice");
   });
 
   it("leave bot_id optional", () => {
@@ -82,6 +136,29 @@ describe("argParsing", () => {
 
   it("chat message parsed", () => {
     expect(parseArgs(["chat", "Hello meeting"]).message).toBe("Hello meeting");
+  });
+
+  it("presence parses state and message", () => {
+    const args = parseArgs(["presence", "thinking", "Checking", "indexes"]);
+    expect(args.command).toBe("presence");
+    expect(args.presence_state).toBe("thinking");
+    expect(args.message).toBe("Checking indexes");
+  });
+
+  it("presence requires state", () => {
+    expect(() => parseArgs(["presence"])).toThrow();
+  });
+
+  it("presence rejects invalid state at parse time", () => {
+    expect(() => parseArgs(["presence", "confused"])).toThrow(
+      "argument state: invalid choice: 'confused' (choose from listening, thinking, speaking, acting, idle)",
+    );
+  });
+
+  it("presence keeps accepting mixed-case states", () => {
+    const args = parseArgs(["presence", "Thinking", "Checking", "indexes"]);
+    expect(args.presence_state).toBe("Thinking");
+    expect(args.message).toBe("Checking indexes");
   });
 
   it("dicts subcommand", () => {
@@ -185,9 +262,15 @@ describe("argParsing", () => {
       "/tmp/state.json",
       "--frame-token",
       "secret",
+      "--presence-token",
+      "presence-secret",
+      "--presence-write-token",
+      "write-secret",
     ]);
     expect(args.call_id_file).toBe("/tmp/state.json");
     expect(args.frame_token).toBe("secret");
+    expect(args.presence_token).toBe("presence-secret");
+    expect(args.presence_write_token).toBe("write-secret");
   });
 
   it("invalid command throws", () => {
@@ -241,16 +324,27 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "join", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent join <url>");
+    expect(stdout).toContain("usage: samocall join <url>");
     expect(stdout).toContain("--no-ws-video");
     expect(stdout).toContain("--rtmp-url URL");
+    expect(stdout).toContain("--no-presence");
+    expect(stdout).toContain("--presence-bg");
+    expect(stdout).toContain("sphere|field|static|cycle");
+  });
+
+  it("presence --help shows command-specific help", () => {
+    const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "presence", "--help"], { cwd: repoRoot });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("usage: samocall presence <state>");
+    expect(stdout).toContain("listening|thinking|speaking|acting|idle");
   });
 
   it("frame --help shows command-specific help", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frame", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent frame");
+    expect(stdout).toContain("usage: samocall frame");
     expect(stdout).toContain("frames stay in memory");
     expect(stdout).toContain("--source SOURCE");
     expect(stdout).toContain("--archive");
@@ -260,7 +354,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frames", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent frames");
+    expect(stdout).toContain("usage: samocall frames");
     expect(stdout).toContain("List WebSocket frame sources");
   });
 
@@ -268,7 +362,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "doctor", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent doctor");
+    expect(stdout).toContain("usage: samocall doctor");
     expect(stdout).toContain("Check local prerequisites");
   });
 
@@ -276,7 +370,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "notes", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent notes");
+    expect(stdout).toContain("usage: samocall notes");
     expect(stdout).toContain("--doc-id ID");
   });
 
@@ -284,7 +378,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "transcript", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samoagent transcript");
+    expect(stdout).toContain("usage: samocall transcript");
     expect(stdout).toContain("--cursor N");
     expect(stdout).toContain("--file FILE");
     expect(stdout).toContain("--limit N");
@@ -293,18 +387,18 @@ describe("argParsing", () => {
   it("-v prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-v"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samocall \d+\.\d+\.\d+/);
   });
 
   it("--version prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--version"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samocall \d+\.\d+\.\d+/);
   });
 
   it("-V is not a version alias (lowercase -v only)", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-V"], { cwd: repoRoot });
     expect(proc.exitCode).not.toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samoagent \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samocall \d+\.\d+\.\d+/);
   });
 });

@@ -40,7 +40,7 @@ describe("cmdLeave", () => {
     env = saveEnv();
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
-    process.env.SAMOAGENT_STATE_FILE = sf;
+    process.env.SAMOCALL_STATE_FILE = sf;
     process.env.RECALL_API_KEY = "fake-key";
   });
   afterEach(() => {
@@ -157,7 +157,7 @@ describe("cmdLeave", () => {
       recall: makeFakeRecall([]),
       kill: () => {},
     });
-    expect(readFileSync(tf, "utf-8")).toContain("SAMOAGENT_CALL_ENDED");
+    expect(readFileSync(tf, "utf-8")).toContain("SAMOCALL_CALL_ENDED");
   });
 
   it("sentinel line format", async () => {
@@ -173,7 +173,7 @@ describe("cmdLeave", () => {
     });
     const content = readFileSync(tf, "utf-8").trim();
     const pattern =
-      /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SAMOAGENT_CALL_ENDED$/;
+      /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SAMOCALL_CALL_ENDED$/;
     expect(pattern.test(content)).toBe(true);
   });
 

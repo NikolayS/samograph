@@ -1,6 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { formatTranscriptLine } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
@@ -9,8 +10,36 @@ import {
   type DecodedVideoFrame,
   type VideoFrameMetadata,
 } from "./frameStore.ts";
+import {
+  activityFromTranscriptLine,
+  activityKindForState,
+  appendPresenceActivity,
+  defaultPresenceMessage,
+  labelForPresenceState,
+  newPresenceSnapshot,
+  normalizePresenceState,
+  presencePageHtml,
+  sanitizePresenceMessage,
+  sanitizePresenceText,
+  type PresenceSnapshot,
+} from "./presence.ts";
 
 export const WEBHOOK_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Constant-time token comparison. Both sides are hashed to a fixed length so
+ * timingSafeEqual never leaks length information; empty/missing tokens never
+ * match anything (fail closed).
+ */
+export function tokensEqual(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (!a || !b) return false;
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
 
 /**
  * Process a webhook payload, appending a formatted transcript line to the
@@ -19,16 +48,19 @@ export const WEBHOOK_MAX_BYTES = 1024 * 1024;
 export async function handleWebhook(
   payload: unknown,
   transcriptPath: string,
-): Promise<void> {
+): Promise<string | null> {
   const line = formatTranscriptLine(payload);
   if (line !== null) {
     appendFileSync(transcriptPath, line + "\n");
   }
+  return line;
 }
 
 export interface ServeOptions {
   webhookToken?: string | null;
   frameToken?: string | null;
+  presenceToken?: string | null;
+  presenceWriteToken?: string | null;
   currentCallId?: () => string | null;
 }
 
@@ -83,16 +115,33 @@ export function serve(
       ? { webhookToken: options }
       : options;
   const latestVideoFrame: LatestVideoFrame = { raw: null, metadata: null };
+  let presence: PresenceSnapshot = newPresenceSnapshot();
   const framesBySource = new Map<string, LatestVideoFrame>();
   const frameAuthorized = (req: Request): boolean =>
-    Boolean(opts.frameToken) && req.headers.get("X-Samoagent-Frame-Token") === opts.frameToken;
+    tokensEqual(req.headers.get("X-Samocall-Frame-Token"), opts.frameToken);
+  // The read token rides in the page URL handed to Recall, so it must never
+  // grant write access; presence updates require the separate write token.
+  // Only the HTML page accepts the query token (Recall navigates there and
+  // cannot set headers); /presence.json requires the header.
+  const presencePageAuthorized = (req: Request, url: URL): boolean =>
+    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceToken) ||
+    tokensEqual(url.searchParams.get("token"), opts.presenceToken);
+  const presenceJsonAuthorized = (req: Request): boolean =>
+    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceToken);
+  const presenceWriteAuthorized = (req: Request): boolean =>
+    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceWriteToken);
   return Bun.serve({
     port,
-    hostname: "0.0.0.0",
+    hostname: "127.0.0.1",
+    // Transport-layer cap: Bun answers 413 itself when Content-Length exceeds
+    // this, before the fetch handler runs. Chunked (no Content-Length) bodies
+    // are still buffered by Bun 1.3.x, so the in-handler byte checks below
+    // remain as the guard for that path.
+    maxRequestBodySize: WEBHOOK_MAX_BYTES,
     async fetch(req, server) {
       const url = new URL(req.url);
       if (req.method === "POST" && url.pathname === "/webhook") {
-        if (!opts.webhookToken || url.searchParams.get("token") !== opts.webhookToken) {
+        if (!tokensEqual(url.searchParams.get("token"), opts.webhookToken)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
         const contentLength = req.headers.get("content-length");
@@ -109,7 +158,15 @@ export function serve(
         } catch {
           payload = {};
         }
-        await handleWebhook(payload, transcriptPath);
+        const transcriptLine = await handleWebhook(payload, transcriptPath);
+        if (transcriptLine !== null) {
+          const activity = activityFromTranscriptLine(transcriptLine);
+          if (activity !== null) {
+            // Append the heard line and bump updated_at only; never reset the
+            // agent-set state/message from transcript traffic.
+            presence = appendPresenceActivity(presence, activity);
+          }
+        }
         return Response.json({ ok: true });
       }
       if (req.method === "GET" && url.pathname === "/frame") {
@@ -140,8 +197,73 @@ export function serve(
         }
         return Response.json({ frames: frameInventory(framesBySource) });
       }
+      if (req.method === "GET" && url.pathname === "/presence") {
+        if (!presencePageAuthorized(req, url)) {
+          return new Response("", { status: 403 });
+        }
+        return new Response(presencePageHtml(), {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+      if (req.method === "GET" && url.pathname === "/presence.json") {
+        if (!presenceJsonAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        return Response.json(presence, {
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/presence") {
+        if (!presenceWriteAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        const contentLength = req.headers.get("content-length");
+        if (contentLength !== null && Number(contentLength) > WEBHOOK_MAX_BYTES) {
+          return Response.json({ error: "payload too large" }, { status: 413 });
+        }
+        let payload: unknown = {};
+        try {
+          const body = await req.text();
+          if (new TextEncoder().encode(body).byteLength > WEBHOOK_MAX_BYTES) {
+            return Response.json({ error: "payload too large" }, { status: 413 });
+          }
+          payload = body ? JSON.parse(body) : {};
+        } catch {
+          payload = {};
+        }
+        const rawPayload = payload as { state?: unknown; message?: unknown };
+        const state = normalizePresenceState(rawPayload.state);
+        if (state === null) {
+          return Response.json({ error: "invalid presence state" }, { status: 400 });
+        }
+        // Bare state toggles (no message in the payload, or one that
+        // sanitizes to empty) take the default message and never land in
+        // the Comments activity lane.
+        const hasMessage =
+          typeof rawPayload.message === "string" &&
+          sanitizePresenceText(rawPayload.message) !== "";
+        const message = hasMessage
+          ? sanitizePresenceMessage(rawPayload.message, state)
+          : defaultPresenceMessage(state);
+        if (hasMessage) {
+          presence = appendPresenceActivity(presence, {
+            kind: activityKindForState(state),
+            label: labelForPresenceState(state),
+            text: message,
+          });
+        }
+        presence = newPresenceSnapshot(
+          state,
+          message,
+          presence.activities,
+        );
+        return Response.json({ ok: true, presence });
+      }
       if (url.pathname === "/video-ws") {
-        if (!opts.frameToken || url.searchParams.get("token") !== opts.frameToken) {
+        if (!tokensEqual(url.searchParams.get("token"), opts.frameToken)) {
           return new Response("", { status: 403 });
         }
         const upgraded = server.upgrade(req);

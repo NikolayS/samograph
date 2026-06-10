@@ -135,8 +135,8 @@ export async function ensureMediamtx(): Promise<string> {
     return inPath;
   }
 
-  // 2. Check ~/.samoagent/bin/mediamtx
-  const localBin = join(homedir(), ".samoagent", "bin", "mediamtx");
+  // 2. Check ~/.samocall/bin/mediamtx
+  const localBin = join(homedir(), ".samocall", "bin", "mediamtx");
   if (existsSync(localBin)) {
     return localBin;
   }
@@ -157,7 +157,7 @@ export async function ensureMediamtx(): Promise<string> {
 
   process.stdout.write(`Downloading mediamtx ${version}...\n`);
 
-  const tmpdir = join(homedir(), ".samoagent", "tmp-mediamtx");
+  const tmpdir = join(homedir(), ".samocall", "tmp-mediamtx");
   mkdirSync(tmpdir, { recursive: true });
   const archivePath = join(tmpdir, filename);
 

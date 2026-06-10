@@ -13,7 +13,7 @@ describe("loadDict", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOAGENT_DICT_DIR = tmp;
+    process.env.SAMOCALL_DICT_DIR = tmp;
   });
   afterEach(() => {
     restoreEnv(env);
@@ -33,14 +33,14 @@ describe("loadDict", () => {
   });
 
   it("nonexistent returns empty with warning", () => {
-    process.env.SAMOAGENT_DICT_DIR = "/tmp/nonexistent_dict_dir_xyzzy";
+    process.env.SAMOCALL_DICT_DIR = "/tmp/nonexistent_dict_dir_xyzzy";
     const result = loadDict("bogus_dict");
     expect(result).toEqual([]);
   });
 
   it("real postgresfm returns terms", () => {
     if (!existsSync(join(REAL_DICT_DIR, "postgresfm.txt"))) return;
-    process.env.SAMOAGENT_DICT_DIR = REAL_DICT_DIR;
+    process.env.SAMOCALL_DICT_DIR = REAL_DICT_DIR;
     const terms = loadDict("postgresfm");
     expect(terms.length).toBeGreaterThan(0);
     expect(terms.length).toBeLessThanOrEqual(100);
@@ -70,7 +70,7 @@ describe("loadDict", () => {
 
   it("postgresfm at limit (exactly 100)", () => {
     if (!existsSync(join(REAL_DICT_DIR, "postgresfm.txt"))) return;
-    process.env.SAMOAGENT_DICT_DIR = REAL_DICT_DIR;
+    process.env.SAMOCALL_DICT_DIR = REAL_DICT_DIR;
     const terms = loadDict("postgresfm");
     expect(terms.length).toBe(100);
   });

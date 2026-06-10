@@ -62,7 +62,7 @@ export async function cmdDoctor(): Promise<void> {
     },
   ];
 
-  process.stdout.write("samoagent doctor\n\n");
+  process.stdout.write("samocall doctor\n\n");
   for (const check of checks) {
     process.stdout.write(`${check.ok ? "OK" : "FAIL"}  ${check.name}: ${check.detail}\n`);
   }
