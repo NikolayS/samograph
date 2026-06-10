@@ -9,6 +9,7 @@ import { join } from "node:path";
 import {
   cmdJoin,
   spawnDetached,
+  waitForPresenceCamera,
   type JoinDeps,
   type SpawnChildFn,
   type SpawnedProc,
@@ -481,6 +482,67 @@ describe("cmdJoin payload + saved state", () => {
     expect(killed).toEqual([4242, 4243]);
     expect(captured.payload).toBeUndefined();
     expect(existsSync(sf)).toBe(false);
+  });
+});
+
+describe("waitForPresenceCamera", () => {
+  const URL = "https://ngrok.example/presence?token=abc";
+  const MARKER_PAGE = "<main class=\"samoagent-presence\"></main>";
+
+  it("returns true on a 200 with the marker on the first attempt; never sleeps", async () => {
+    const sleeps: number[] = [];
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => new Response(MARKER_PAGE),
+      async (ms) => { sleeps.push(ms); },
+    );
+    expect(result).toBe(true);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("retries through fetch errors and succeeds once the page comes up", async () => {
+    const sleeps: number[] = [];
+    let calls = 0;
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => {
+        calls += 1;
+        if (calls <= 3) throw new Error("tunnel not up yet");
+        return new Response(MARKER_PAGE);
+      },
+      async (ms) => { sleeps.push(ms); },
+    );
+    expect(result).toBe(true);
+    expect(calls).toBe(4);
+    expect(sleeps).toEqual([250, 250, 250]);
+  });
+
+  it("returns false when every attempt throws", async () => {
+    let calls = 0;
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => {
+        calls += 1;
+        throw new Error("connection refused");
+      },
+      async () => {},
+    );
+    expect(result).toBe(false);
+    expect(calls).toBe(12);
+  });
+
+  it("returns false when responses are 200 but never contain the marker", async () => {
+    let calls = 0;
+    const result = await waitForPresenceCamera(
+      URL,
+      async () => {
+        calls += 1;
+        return new Response("<title>You are about to visit</title>");
+      },
+      async () => {},
+    );
+    expect(result).toBe(false);
+    expect(calls).toBe(12);
   });
 });
 

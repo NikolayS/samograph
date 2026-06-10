@@ -91,7 +91,7 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Dynamic Bot Presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page and its JSON); presence updates require a separate write token that `join` keeps in local state and `samoagent presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second.
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page and its JSON); presence updates require a separate write token that `join` keeps in local state and `samoagent presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. The camera page URL also accepts `&bg=sphere|field|static` to select the background mode (`sphere` is the default; `static` is the cheapest).
 
 Update it from the agent loop:
 
