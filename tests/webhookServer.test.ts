@@ -598,6 +598,29 @@ describe("webhook handler", () => {
     }
   });
 
+  it("presence page polls adaptively: 1s while active, 5s after 30s idle", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+    });
+    try {
+      const page = await fetch(`http://localhost:${server.port}/presence?token=presence-token`);
+      expect(page.status).toBe(200);
+      const html = await page.text();
+      // adaptive rescheduling replaces the fixed 1 s interval — every poll is
+      // a request through the tunnel, so an idle call must not burn quota
+      expect(html).not.toContain("setInterval(refresh");
+      expect(html).toContain("setTimeout(pollLoop");
+      // 1000 ms polls while something changed within the last 30000 ms,
+      // backing off to 5000 ms when idle
+      expect(html).toContain("< 30000 ? 1000 : 5000");
+      // activity is detected by comparing the snapshot's updated_at stamp
+      expect(html).toContain("!== lastSignature");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("presence page polls presence.json with the header token, not the query token", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
@@ -849,6 +872,36 @@ describe("webhook handler", () => {
         method: "POST",
       });
       expect(resp.status).toBe(404);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("GET /health echoes the nonce and includes the health marker, no token needed", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(
+        `http://localhost:${server.port}/health?nonce=abc-123`,
+      );
+      expect(resp.status).toBe(200);
+      const json = await resp.json() as { ok: boolean; nonce: string; marker: string };
+      expect(json.ok).toBe(true);
+      expect(json.nonce).toBe("abc-123");
+      expect(json.marker).toBe("samograph-health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("GET /health without a nonce still answers with the marker", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/health`);
+      expect(resp.status).toBe(200);
+      const json = await resp.json() as { ok: boolean; nonce: string; marker: string };
+      expect(json.ok).toBe(true);
+      expect(json.nonce).toBe("");
+      expect(json.marker).toBe("samograph-health");
     } finally {
       server.stop(true);
     }

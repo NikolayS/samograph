@@ -23,10 +23,11 @@ Put your AI agent in Zoom and Google Meet calls.
 samograph joins through Recall.ai, streams live transcript lines,
 captures call frames on demand, and sends explicit chat messages.
 
-Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
+Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and a tunnel:
+ngrok (default), cloudflared (--tunnel cloudflared), or your own via --webhook-base.
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
@@ -58,8 +59,13 @@ options:
   --transcript-dir DIR   Directory for timestamped transcript files
   --frame-dir DIR        Directory for on-demand frame output
   --no-ws-video          Disable WebSocket call-frame capture
-  --webhook-base URL     Use an existing public tunnel URL instead of starting ngrok
-                         (e.g. localtunnel/cloudflared pointing at --port)
+  --tunnel NAME          Tunnel to start for webhooks: ngrok|cloudflared
+                         (default: ngrok; cloudflared quick tunnels are free
+                         with no request limits — recommended when ngrok hits
+                         ERR_NGROK_727). Binary from PATH or CLOUDFLARED_BIN.
+  --webhook-base URL     Use an existing public tunnel URL instead of starting one
+                         (e.g. localtunnel/cloudflared pointing at --port);
+                         mutually exclusive with --tunnel
   --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
                          (default: web_4_core; smoothest camera rendering)
   --no-presence          Join without the presence camera page (skips the
@@ -173,7 +179,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--variant", "--presence-bg"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
@@ -186,7 +192,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
     doctor: new Set(),
-    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token"]),
+    _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token", "--public-base"]),
   };
   const boolFlags: Record<string, Set<string>> = {
     join: new Set(["--rtmp", "--no-ws-video", "--no-presence"]),
@@ -273,6 +279,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.rtmp = opts["--rtmp"] === true;
       result.ws_video = opts["--no-ws-video"] !== true;
       result.webhook_base = (opts["--webhook-base"] as string) ?? null;
+      // Eager validation mirrors --variant. Default ngrok preserves the
+      // pre---tunnel behavior.
+      result.tunnel = (opts["--tunnel"] as string) ?? "ngrok";
+      if (!["ngrok", "cloudflared"].includes(result.tunnel)) {
+        throw new ArgError(
+          `argument --tunnel: invalid choice: '${result.tunnel}' (choose from ngrok, cloudflared)`,
+        );
+      }
+      if (opts["--tunnel"] !== undefined && result.webhook_base !== null) {
+        throw new ArgError(
+          "argument --tunnel: not allowed with --webhook-base (an external tunnel is already provided)",
+        );
+      }
       result.no_presence = opts["--no-presence"] === true;
       result.presence_bg = (opts["--presence-bg"] as string) ?? null;
       if (
@@ -390,6 +409,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.transcript_file = opts["--transcript-file"] as string;
       result.webhook_token = (opts["--webhook-token"] as string) ?? "";
       result.call_id_file = (opts["--call-id-file"] as string) ?? "";
+      result.public_base = (opts["--public-base"] as string) ?? "";
       result.frame_token = (opts["--frame-token"] as string) ?? "";
       result.presence_token = (opts["--presence-token"] as string) ?? "";
       result.presence_write_token = (opts["--presence-write-token"] as string) ?? "";

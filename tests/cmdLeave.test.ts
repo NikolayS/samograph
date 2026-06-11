@@ -89,6 +89,16 @@ describe("cmdLeave", () => {
     expect(killed).toContainEqual([3333, "SIGTERM"]);
   });
 
+  it("kills tunnel pid (cloudflared)", async () => {
+    writeFileSync(sf, JSON.stringify({ bot_id: "bot-1", tunnel_pid: 4444 }));
+    const killed: Array<[number, string]> = [];
+    await cmdLeave({ command: "leave", bot_id: null }, {
+      recall: makeFakeRecall([]),
+      kill: (pid, sig) => killed.push([pid, sig]),
+    });
+    expect(killed).toContainEqual([4444, "SIGTERM"]);
+  });
+
   it("removes state file", async () => {
     writeFileSync(sf, JSON.stringify({ bot_id: "bot-del" }));
     await cmdLeave({ command: "leave", bot_id: null }, {

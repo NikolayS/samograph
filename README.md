@@ -58,11 +58,19 @@ samograph watch/notes/chat/frame
 
 ## Integration
 
-`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for webhooks and transcription, but its browser interstitial blocks the presence camera page — `join` then warns and joins without the camera (see Dynamic Bot Presence). Alternatively, pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning ngrok entirely; localtunnel has the same interstitial limitation.
+`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for webhooks and transcription, but its browser interstitial blocks the presence camera page — `join` then warns and joins without the camera (see Dynamic Bot Presence). Alternatives: `--tunnel cloudflared` starts a free cloudflared quick tunnel instead of ngrok, or pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning one entirely; localtunnel has the same interstitial limitation.
 
 ngrok TCP is only needed for the optional RTMP path (`--rtmp`) and requires a credit/debit card on file at ngrok.com (free plan — the card is not charged). The standard WebSocket frame path does not need TCP or card verification.
 
 Webhook, frame, and presence routes are token-protected, and default runtime files stay under `~/.samograph/`.
+
+## Tunnel Health
+
+A tunnel that stops relaying requests is worse than no tunnel: the bot would sit in the meeting while the transcript silently stays empty (this is exactly what an ngrok free-account request-limit error, `ERR_NGROK_727`, looks like mid-call). samograph treats webhook reachability as core:
+
+- **join refuses when the tunnel is dead.** After the public URL is known, `join` fetches `<public-url>/health` with a one-time nonce and requires its own server's answer back. On failure it exits with the ngrok error code when one is reported (e.g. `ERR_NGROK_727: account HTTP request limit exceeded`) instead of joining a call it cannot hear. The presence camera preflight still merely degrades — the camera is optional, webhooks are not.
+- **a mid-call watchdog warns in the transcript stream.** The callback server re-checks the tunnel every 60 s. After 2 consecutive failures it appends a line like `[2026-06-11 17:03:05] SAMOGRAPH-WARNING: tunnel unreachable (ERR_NGROK_727) - transcript may be incomplete; rejoin with --tunnel cloudflared or --webhook-base` to the live transcript — so an agent following `samograph watch` sees it immediately — and mirrors it to stderr. It warns once per outage and writes a single `SAMOGRAPH-WARNING: tunnel recovered` line when the tunnel comes back.
+- **quota math.** The presence camera page is loaded by Recall through the tunnel, so its same-origin `/presence.json` polls also count against tunnel request quotas: at the old fixed 1 s poll that alone was ~3600 requests/hour. The page now polls at 1 s only while the presence snapshot is changing and backs off to 5 s after 30 s of no changes; the watchdog adds ~60/hour. If you are on a free ngrok account, prefer `--tunnel cloudflared` (no request limits) for long or camera-heavy calls.
 
 ## Agent Workflow
 
@@ -91,7 +99,7 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Dynamic Bot Presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samograph-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samograph presence` sends in a header. The page starts as `listening` and refreshes itself from the local callback server every second. Pick the background mode with `join --presence-bg <sphere|field|static|cycle>` (`sphere` is the default; `static` is the cheapest to render; `cycle` alternates between field and sphere; unknown values fall back to `sphere`). The mode is fixed at join time.
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samograph-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samograph presence` sends in a header. The page starts as `listening` and refreshes itself from the callback server every second while the presence snapshot is changing, backing off to every 5 seconds after 30 seconds without changes (the polls travel through the public tunnel, so this preserves tunnel request quota — see Tunnel Health). Pick the background mode with `join --presence-bg <sphere|field|static|cycle>` (`sphere` is the default; `static` is the cheapest to render; `cycle` alternates between field and sphere; unknown values fall back to `sphere`). The mode is fixed at join time.
 
 The presence camera requires the tunnel to serve the page cleanly to a browser. Free-ngrok and localtunnel show an interstitial page to browser user agents, which blocks the camera: `join` detects this in a preflight check, prints a warning, and joins **without** the presence camera — transcription, chat, and frames are unaffected, but `samograph presence` is unavailable for that call. Use a paid/clean tunnel (e.g. a paid ngrok plan or cloudflared) for the presence camera, or pass `join --no-presence` to skip the camera and the preflight entirely.
 
@@ -162,7 +170,8 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 ## Important Flags
 
 - `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
-- `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting ngrok. Useful when ngrok is unavailable or its free-tier bandwidth cap is hit (`ERR_NGROK_727`): run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here.
+- `join --tunnel cloudflared` - start a free cloudflared quick tunnel instead of ngrok (binary from `PATH` or `CLOUDFLARED_BIN`). Recommended when ngrok hits its free-tier request limit (`ERR_NGROK_727`); see Tunnel Health. Default: `--tunnel ngrok`.
+- `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting one. Mutually exclusive with `--tunnel`. E.g. run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here. The join-time health round-trip still verifies it relays requests.
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
 - `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
 - `join --presence-bg MODE` - presence camera background: `sphere` (default), `field`, `static` (cheapest), or `cycle` (alternates field/sphere); fixed at join time.
@@ -216,6 +225,11 @@ Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out
 - `SAMOGRAPH_FRAME_TOKEN` - token required by the frame routes and `/video-ws`.
 - `SAMOGRAPH_PRESENCE_TOKEN` - read token for the presence page and `/presence.json`.
 - `SAMOGRAPH_PRESENCE_WRITE_TOKEN` - write token required by `POST /presence`.
+- `SAMOGRAPH_PUBLIC_BASE` - public tunnel base URL for the mid-call tunnel watchdog (`join` passes it as `--public-base`; the env var is the fallback for manual `_serve` runs; empty disables the watchdog).
+
+Tunnel binaries:
+
+- `CLOUDFLARED_BIN` - path to the cloudflared binary used by `join --tunnel cloudflared` (default: `cloudflared` from `PATH`).
 
 Path overrides, mainly for tests and packaging:
 

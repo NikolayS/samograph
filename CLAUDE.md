@@ -26,6 +26,16 @@ React in your agent session. Use meeting chat only for deliberate call-visible m
 samocall chat "Short message to the meeting"
 ```
 
+## Tunnel Health Warnings
+
+`join` refuses to start when the webhook tunnel does not relay requests (e.g. ngrok `ERR_NGROK_727`, the account request limit) — better than joining a call it cannot hear. Mid-call, a watchdog re-checks the tunnel every minute and writes warnings into the transcript stream you are watching:
+
+```text
+[timestamp] SAMOGRAPH-WARNING: tunnel unreachable (ERR_NGROK_727) - transcript may be incomplete; rejoin with --tunnel cloudflared or --webhook-base
+```
+
+If a `SAMOGRAPH-WARNING: tunnel unreachable` line appears in the transcript, tell the user immediately: live transcript delivery is broken and lines are being lost. Suggest leaving and rejoining with `--tunnel cloudflared` (free cloudflared quick tunnel, no request limits) or `--webhook-base` with their own tunnel. A later `SAMOGRAPH-WARNING: tunnel recovered` line means delivery resumed, but anything said during the outage is missing from the transcript.
+
 ## Dynamic Bot Presence
 
 The bot camera shows a live presence page. Update it from the agent loop to signal what you are doing. Five states: `listening|thinking|speaking|acting|idle`.

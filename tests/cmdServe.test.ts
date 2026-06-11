@@ -26,6 +26,7 @@ describe("resolveServeOptions", () => {
     delete process.env.SAMOGRAPH_FRAME_TOKEN;
     delete process.env.SAMOGRAPH_PRESENCE_TOKEN;
     delete process.env.SAMOGRAPH_PRESENCE_WRITE_TOKEN;
+    delete process.env.SAMOGRAPH_PUBLIC_BASE;
   });
 
   afterEach(() => {
@@ -57,5 +58,25 @@ describe("resolveServeOptions", () => {
     expect(opts.frameToken).toBe("");
     expect(opts.presenceToken).toBe("");
     expect(opts.presenceWriteToken).toBe("");
+  });
+
+  it("resolves the watchdog public base from the --public-base flag", () => {
+    const opts = resolveServeOptions(
+      serveArgs({ public_base: "https://flag.example" }),
+    );
+    expect(opts.publicBase).toBe("https://flag.example");
+  });
+
+  it("falls back to SAMOGRAPH_PUBLIC_BASE for the watchdog public base", () => {
+    process.env.SAMOGRAPH_PUBLIC_BASE = "https://env.example";
+    expect(resolveServeOptions(serveArgs()).publicBase).toBe("https://env.example");
+    // flag wins over env
+    expect(
+      resolveServeOptions(serveArgs({ public_base: "https://flag.example" })).publicBase,
+    ).toBe("https://flag.example");
+  });
+
+  it("public base empty when neither flag nor env is set (no watchdog)", () => {
+    expect(resolveServeOptions(serveArgs()).publicBase).toBe("");
   });
 });

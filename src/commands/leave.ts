@@ -53,7 +53,7 @@ export async function cmdLeave(
     }
   }
 
-  for (const pidKey of ["server_pid", "ngrok_pid", "mediamtx_pid"] as const) {
+  for (const pidKey of ["server_pid", "ngrok_pid", "tunnel_pid", "mediamtx_pid"] as const) {
     const pid = state[pidKey];
     if (typeof pid === "number" && pid) {
       try {

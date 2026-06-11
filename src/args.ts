@@ -9,6 +9,7 @@ export interface ParsedArgs {
   rtmp?: boolean;
   ws_video?: boolean;
   webhook_base?: string | null;
+  tunnel?: string | null;
   no_presence?: boolean;
   presence_bg?: string | null;
   frame_dir?: string | null;
@@ -24,6 +25,7 @@ export interface ParsedArgs {
   transcript_file?: string;
   webhook_token?: string;
   call_id_file?: string;
+  public_base?: string;
   frame_token?: string;
   presence_token?: string;
   presence_write_token?: string;
