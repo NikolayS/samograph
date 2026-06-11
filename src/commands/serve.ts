@@ -3,17 +3,17 @@ import { callIdFromStateFile, serve, type ServeOptions } from "../server.ts";
 
 /**
  * Resolve serve tokens from flags with env-var fallback. join passes tokens
- * via the spawn env (SAMOCALL_*_TOKEN) so secrets never appear in argv/ps.
+ * via the spawn env (SAMOGRAPH_*_TOKEN) so secrets never appear in argv/ps.
  */
 export function resolveServeOptions(
   args: ParsedArgs,
   env: Record<string, string | undefined> = process.env,
 ): Pick<ServeOptions, "webhookToken" | "frameToken" | "presenceToken" | "presenceWriteToken"> {
   return {
-    webhookToken: args.webhook_token || env.SAMOCALL_WEBHOOK_TOKEN || "",
-    frameToken: args.frame_token || env.SAMOCALL_FRAME_TOKEN || "",
-    presenceToken: args.presence_token || env.SAMOCALL_PRESENCE_TOKEN || "",
-    presenceWriteToken: args.presence_write_token || env.SAMOCALL_PRESENCE_WRITE_TOKEN || "",
+    webhookToken: args.webhook_token || env.SAMOGRAPH_WEBHOOK_TOKEN || "",
+    frameToken: args.frame_token || env.SAMOGRAPH_FRAME_TOKEN || "",
+    presenceToken: args.presence_token || env.SAMOGRAPH_PRESENCE_TOKEN || "",
+    presenceWriteToken: args.presence_write_token || env.SAMOGRAPH_PRESENCE_WRITE_TOKEN || "",
   };
 }
 

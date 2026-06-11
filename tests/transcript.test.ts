@@ -84,19 +84,19 @@ describe("formatTranscriptLine", () => {
 describe("SENTINEL_RE", () => {
   it("matches anchored sentinel", () => {
     expect(
-      SENTINEL_RE.test("[2026-05-28 10:05:00] SAMOCALL_CALL_ENDED"),
+      SENTINEL_RE.test("[2026-05-28 10:05:00] SAMOGRAPH_CALL_ENDED"),
     ).toBe(true);
   });
 
   it("does not match speaker-prefixed phrase", () => {
     expect(
       SENTINEL_RE.test(
-        "[2026-05-28 10:00:00] Bob: please run SAMOCALL_CALL_ENDED now",
+        "[2026-05-28 10:00:00] Bob: please run SAMOGRAPH_CALL_ENDED now",
       ),
     ).toBe(false);
   });
 
   it("does not match bare phrase", () => {
-    expect(SENTINEL_RE.test("SAMOCALL_CALL_ENDED")).toBe(false);
+    expect(SENTINEL_RE.test("SAMOGRAPH_CALL_ENDED")).toBe(false);
   });
 });

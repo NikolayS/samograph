@@ -1,7 +1,7 @@
-# samocall demos
+# samograph demos
 
-Terminal recordings of **real** Claude Code sessions using samocall — actual
-typing, actual LLM streaming, actual `samocall` output joining a call.
+Terminal recordings of **real** Claude Code sessions using samograph — actual
+typing, actual LLM streaming, actual `samograph` output joining a call.
 
 The published GIF is **recorded manually**: a human drives a real Claude Code
 session, while the meeting dialogue is injected into the transcript with
@@ -12,7 +12,7 @@ hand and keep the result in the repo.
 ## Files
 
 - `say.sh` — inject ONE transcript line into the live session (the scripted
-  "teammates"). Append-only; safe to run against a real `samocall join`.
+  "teammates"). Append-only; safe to run against a real `samograph join`.
 - `scenes/*.txt` — scripted meeting dialogue (`<gap> | Speaker | text`).
 - `simulate-meeting.sh` — replay a whole scene into a *throwaway* transcript
   (truncates + writes its own state) — for previewing a scene WITHOUT a real
@@ -38,19 +38,19 @@ person + an assistant running the bash side):
 
 ```bash
 # Driver — start a recorded claude session (or wrap your existing tmux pane):
-asciinema rec demo/samocall-live.cast --overwrite --idle-time-limit 2.5 --command claude
+asciinema rec demo/samograph-live.cast --overwrite --idle-time-limit 2.5 --command claude
 ```
 
 **1. Driver → Claude** (one short prompt):
 
 ```
-join my Zoom call with samocall (--name Leo) and watch the transcript.
+join my Zoom call with samograph (--name Leo) and watch the transcript.
 if you spot a DB performance problem, post one short line to the meeting chat,
 then verify it on a DBLab branch and open a PR with before/after plans.
 keep your messages short.   Zoom: <YOUR_DISPOSABLE_ZOOM_URL>
 ```
 
-Wait until the agent has joined and `samocall watch` is streaming (state.json
+Wait until the agent has joined and `samograph watch` is streaming (state.json
 exists).
 
 **2. Injector → bash** (play the teammates, ~3 s apart, watching the agent):
@@ -63,7 +63,7 @@ exists).
 ./demo/say.sh Sofia  "Leo, can you take a look?"
 ```
 
-The agent should diagnose the missing composite index, `samocall chat` a short
+The agent should diagnose the missing composite index, `samograph chat` a short
 suggestion, and offer to verify on a DBLab branch + open a PR.
 
 **3. Driver → Claude** (wrap up):
@@ -75,7 +75,7 @@ leave the call
 Then stop the recording (`/exit` in Claude, or Ctrl-D) and render:
 
 ```bash
-./demo/cast-to-gif.sh demo/samocall-live.cast   # → demo/samocall-live.gif
+./demo/cast-to-gif.sh demo/samograph-live.cast   # → demo/samograph-live.gif
 ```
 
 Review the GIF before committing. Casts/GIFs are gitignored by default; commit
@@ -84,8 +84,8 @@ the final GIF explicitly when you're happy with it.
 ## Preview a scene without a call
 
 ```bash
-SAMOCALL_STATE_FILE=/tmp/sa/state.json \
-SAMOCALL_DEMO_TRANSCRIPT=/tmp/sa/t.txt \
+SAMOGRAPH_STATE_FILE=/tmp/sa/state.json \
+SAMOGRAPH_DEMO_TRANSCRIPT=/tmp/sa/t.txt \
 DEMO_SPEED=1.0 ./demo/simulate-meeting.sh demo/scenes/slow-query.txt &
-SAMOCALL_STATE_FILE=/tmp/sa/state.json bun src/cli.ts watch
+SAMOGRAPH_STATE_FILE=/tmp/sa/state.json bun src/cli.ts watch
 ```

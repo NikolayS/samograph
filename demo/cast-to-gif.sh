@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Convert an asciinema cast of a real Claude Code session into an optimized GIF.
 #
-#   ./demo/cast-to-gif.sh demo/samocall-live.cast        # → same name .gif
-#   ./demo/cast-to-gif.sh demo/samocall-live.cast out.gif
+#   ./demo/cast-to-gif.sh demo/samograph-live.cast        # → same name .gif
+#   ./demo/cast-to-gif.sh demo/samograph-live.cast out.gif
 #
 # Pacing: --idle-time-limit caps dead air so long thinking pauses don't bloat
 # the GIF, while real typing and streaming keep their natural rhythm. Tune

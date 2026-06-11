@@ -17,7 +17,7 @@ export async function cmdFrames(deps: FramesDeps = {}): Promise<void> {
   const framesUrl = metadataUrl.replace(/\/frame\.json(?:\?.*)?$/, "/frames.json");
   const headers: Record<string, string> = {};
   if (typeof state.frame_token === "string" && state.frame_token) {
-    headers["X-Samocall-Frame-Token"] = state.frame_token;
+    headers["X-Samograph-Frame-Token"] = state.frame_token;
   }
   let resp: Response;
   try {

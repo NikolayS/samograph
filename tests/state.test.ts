@@ -12,7 +12,7 @@ describe("loadState", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOCALL_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOGRAPH_STATE_FILE = join(tmp, "state.json");
   });
   afterEach(() => {
     restoreEnv(env);
@@ -25,7 +25,7 @@ describe("loadState", () => {
 
   it("returns parsed json when file exists", () => {
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ bot_id: "abc-123", server_pid: 9999 }),
     );
     expect(loadState()).toEqual({ bot_id: "abc-123", server_pid: 9999 });
@@ -40,7 +40,7 @@ describe("loadState", () => {
       ngrok_pid: 5678,
       transcript_file: "/tmp/transcript.txt",
     };
-    writeFileSync(process.env.SAMOCALL_STATE_FILE!, JSON.stringify(data));
+    writeFileSync(process.env.SAMOGRAPH_STATE_FILE!, JSON.stringify(data));
     expect(loadState()).toEqual(data);
   });
 });
@@ -60,7 +60,7 @@ describe("saveState", () => {
 
   it("writes json file", () => {
     const sf = join(tmp, "sub", "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     saveState({ bot_id: "test-bot" });
     expect(existsSync(sf)).toBe(true);
     expect(JSON.parse(readFileSync(sf, "utf-8"))).toEqual({
@@ -70,7 +70,7 @@ describe("saveState", () => {
 
   it("writes state directory and file owner-only", () => {
     const sf = join(tmp, "sub", "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     saveState({ bot_id: "test-bot" });
     expect(statSync(join(tmp, "sub")).mode & 0o777).toBe(0o700);
     expect(statSync(sf).mode & 0o777).toBe(0o600);
@@ -81,7 +81,7 @@ describe("saveState", () => {
     mkdirSync(dir);
     chmodSync(dir, 0o755);
     const sf = join(dir, "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     saveState({ bot_id: "test-bot" });
     expect(statSync(dir).mode & 0o777).toBe(0o755);
     expect(statSync(sf).mode & 0o777).toBe(0o600);
@@ -89,14 +89,14 @@ describe("saveState", () => {
 
   it("creates parent dirs", () => {
     const sf = join(tmp, "a", "b", "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     saveState({ x: 1 });
     expect(existsSync(sf)).toBe(true);
   });
 
   it("round trip", () => {
     const sf = join(tmp, "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     const original = { bot_id: "rt-1", server_pid: 42, nested: { key: "val" } };
     saveState(original);
     expect(loadState()).toEqual(original);
@@ -104,7 +104,7 @@ describe("saveState", () => {
 
   it("overwrites existing", () => {
     const sf = join(tmp, "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     writeFileSync(sf, JSON.stringify({ bot_id: "old" }));
     saveState({ bot_id: "new" });
     expect(loadState().bot_id).toBe("new");
@@ -118,7 +118,7 @@ describe("botIdFromArgsOrState", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOCALL_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOGRAPH_STATE_FILE = join(tmp, "state.json");
   });
   afterEach(() => {
     restoreEnv(env);
@@ -127,7 +127,7 @@ describe("botIdFromArgsOrState", () => {
 
   it("returns explicit bot id", () => {
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ bot_id: "state-bot" }),
     );
     expect(botIdFromArgsOrState("explicit-bot")).toBe("explicit-bot");
@@ -135,7 +135,7 @@ describe("botIdFromArgsOrState", () => {
 
   it("returns state bot id when no arg", () => {
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ bot_id: "state-bot-123" }),
     );
     expect(botIdFromArgsOrState(null)).toBe("state-bot-123");
@@ -147,7 +147,7 @@ describe("botIdFromArgsOrState", () => {
 
   it("exits when no arg and state missing bot_id", () => {
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ server_pid: 123 }),
     );
     let code = 0;

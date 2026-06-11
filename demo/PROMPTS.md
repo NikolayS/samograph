@@ -1,6 +1,6 @@
 # Demo recording — prompt sheet
 
-The scripted turns for the samocall demo. Type these into a **real** Claude
+The scripted turns for the samograph demo. Type these into a **real** Claude
 Code session (started by `./demo/record-live.sh`). Type naturally; the recording
 captures your real keystrokes and Claude's real responses.
 
@@ -16,10 +16,10 @@ two once the bot joins.
 
    ```
    the team is discussing a refactor on this codebase right now — join us on
-   Zoom and follow along. use samocall (https://samoagent.dev)
+   Zoom and follow along. use samograph (https://samoagent.dev)
    ```
 
-   Claude should install it (`npm install -g samocall`) and explain it needs a
+   Claude should install it (`npm install -g samograph`) and explain it needs a
    recall.ai key.
 
 2. **The token** (already set — just tell it):
@@ -35,7 +35,7 @@ two once the bot joins.
    transcript — react in here, don't message the call unless I say so
    ```
 
-   Claude runs `samocall join … --dict postgresfm`, then `samocall watch`.
+   Claude runs `samograph join … --dict postgresfm`, then `samograph watch`.
 
 4. **A teammate speaks in Zoom** (real audio). Something the agent can act on,
    e.g. a slow-query/refactor topic. Let the transcript stream in and Claude
@@ -58,7 +58,7 @@ two once the bot joins.
 ## After recording
 
 ```bash
-./demo/cast-to-gif.sh demo/samocall-live.cast
+./demo/cast-to-gif.sh demo/samograph-live.cast
 ```
 
 Review the GIF before committing. Keep it under ~2 MB (the script runs gifsicle).

@@ -118,18 +118,18 @@ export function serve(
   let presence: PresenceSnapshot = newPresenceSnapshot();
   const framesBySource = new Map<string, LatestVideoFrame>();
   const frameAuthorized = (req: Request): boolean =>
-    tokensEqual(req.headers.get("X-Samocall-Frame-Token"), opts.frameToken);
+    tokensEqual(req.headers.get("X-Samograph-Frame-Token"), opts.frameToken);
   // The read token rides in the page URL handed to Recall, so it must never
   // grant write access; presence updates require the separate write token.
   // Only the HTML page accepts the query token (Recall navigates there and
   // cannot set headers); /presence.json requires the header.
   const presencePageAuthorized = (req: Request, url: URL): boolean =>
-    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceToken) ||
+    tokensEqual(req.headers.get("X-Samograph-Presence-Token"), opts.presenceToken) ||
     tokensEqual(url.searchParams.get("token"), opts.presenceToken);
   const presenceJsonAuthorized = (req: Request): boolean =>
-    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceToken);
+    tokensEqual(req.headers.get("X-Samograph-Presence-Token"), opts.presenceToken);
   const presenceWriteAuthorized = (req: Request): boolean =>
-    tokensEqual(req.headers.get("X-Samocall-Presence-Token"), opts.presenceWriteToken);
+    tokensEqual(req.headers.get("X-Samograph-Presence-Token"), opts.presenceWriteToken);
   return Bun.serve({
     port,
     hostname: "127.0.0.1",

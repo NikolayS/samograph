@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "samocall-"));
+  return mkdtempSync(join(tmpdir(), "samograph-"));
 }
 
 export function cleanupTmpDir(dir: string): void {
@@ -15,9 +15,9 @@ export function cleanupTmpDir(dir: string): void {
 }
 
 const ENV_KEYS = [
-  "SAMOCALL_STATE_FILE",
-  "SAMOCALL_DICT_DIR",
-  "SAMOCALL_HOME",
+  "SAMOGRAPH_STATE_FILE",
+  "SAMOGRAPH_DICT_DIR",
+  "SAMOGRAPH_HOME",
   "RECALL_API_KEY",
   "GOOGLE_DOC_ID",
   "GOOGLE_APPLICATION_CREDENTIALS",

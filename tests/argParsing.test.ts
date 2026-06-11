@@ -42,8 +42,8 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1"]).name).toBeNull();
   });
 
-  it("join dict optional", () => {
-    expect(parseArgs(["join", "https://zoom.us/j/1"]).dict).toBeNull();
+  it("join dict defaults to postgresfm", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).dict).toBe("postgresfm");
   });
 
   it("join rtmp flag default false", () => {
@@ -94,8 +94,8 @@ describe("argParsing", () => {
     ).toBe("/tmp/frames");
   });
 
-  it("join variant optional", () => {
-    expect(parseArgs(["join", "https://zoom.us/j/1"]).variant).toBeNull();
+  it("join variant defaults to web_4_core", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).variant).toBe("web_4_core");
   });
 
   it("join variant parsed", () => {
@@ -324,7 +324,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "join", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall join <url>");
+    expect(stdout).toContain("usage: samograph join <url>");
     expect(stdout).toContain("--no-ws-video");
     expect(stdout).toContain("--rtmp-url URL");
     expect(stdout).toContain("--no-presence");
@@ -336,7 +336,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "presence", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall presence <state>");
+    expect(stdout).toContain("usage: samograph presence <state>");
     expect(stdout).toContain("listening|thinking|speaking|acting|idle");
   });
 
@@ -344,7 +344,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frame", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall frame");
+    expect(stdout).toContain("usage: samograph frame");
     expect(stdout).toContain("frames stay in memory");
     expect(stdout).toContain("--source SOURCE");
     expect(stdout).toContain("--archive");
@@ -354,7 +354,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "frames", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall frames");
+    expect(stdout).toContain("usage: samograph frames");
     expect(stdout).toContain("List WebSocket frame sources");
   });
 
@@ -362,7 +362,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "doctor", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall doctor");
+    expect(stdout).toContain("usage: samograph doctor");
     expect(stdout).toContain("Check local prerequisites");
   });
 
@@ -370,7 +370,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "notes", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall notes");
+    expect(stdout).toContain("usage: samograph notes");
     expect(stdout).toContain("--doc-id ID");
   });
 
@@ -378,7 +378,7 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "transcript", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
-    expect(stdout).toContain("usage: samocall transcript");
+    expect(stdout).toContain("usage: samograph transcript");
     expect(stdout).toContain("--cursor N");
     expect(stdout).toContain("--file FILE");
     expect(stdout).toContain("--limit N");
@@ -387,18 +387,18 @@ describe("argParsing", () => {
   it("-v prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-v"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samocall \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samograph \d+\.\d+\.\d+/);
   });
 
   it("--version prints version and exits 0", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--version"], { cwd: repoRoot });
     expect(proc.exitCode).toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samocall \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).toMatch(/^samograph \d+\.\d+\.\d+/);
   });
 
   it("-V is not a version alias (lowercase -v only)", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-V"], { cwd: repoRoot });
     expect(proc.exitCode).not.toBe(0);
-    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samocall \d+\.\d+\.\d+/);
+    expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samograph \d+\.\d+\.\d+/);
   });
 });

@@ -7,9 +7,9 @@
 export function botName(agentName?: string | null): string {
   let base: string;
   if (agentName) {
-    base = `${agentName} \u{1F534} (samocall)`;
+    base = `${agentName} \u{1F534} (samograph)`;
   } else {
-    base = "samocall \u{1F534}";
+    base = "samograph \u{1F534}";
   }
   return [...base].slice(0, 100).join(""); // recall.ai limit, code-point aware
 }

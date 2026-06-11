@@ -26,7 +26,7 @@ describe("localTranscript", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOCALL_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOGRAPH_STATE_FILE = join(tmp, "state.json");
   });
   afterEach(() => {
     restoreEnv(env);
@@ -38,22 +38,22 @@ describe("localTranscript", () => {
     writeFileSync(
       tf,
       "[2026-05-28 10:00:00] Alice: hello\n" +
-        "[2026-05-28 10:05:00] SAMOCALL_CALL_ENDED\n",
+        "[2026-05-28 10:05:00] SAMOGRAPH_CALL_ENDED\n",
     );
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ transcript_file: tf }),
     );
     const out = await captureStdout(() => printLocalTranscript());
     expect(out).toContain("Alice: hello");
-    expect(out).not.toContain("SAMOCALL_CALL_ENDED");
+    expect(out).not.toContain("SAMOGRAPH_CALL_ENDED");
   });
 
   it("empty transcript message", async () => {
     const tf = join(tmp, "transcript.txt");
     writeFileSync(tf, "");
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ transcript_file: tf }),
     );
     const out = await captureStdout(() => printLocalTranscript());
@@ -62,7 +62,7 @@ describe("localTranscript", () => {
 
   it("not found message", async () => {
     writeFileSync(
-      process.env.SAMOCALL_STATE_FILE!,
+      process.env.SAMOGRAPH_STATE_FILE!,
       JSON.stringify({ transcript_file: join(tmp, "nope.txt") }),
     );
     const out = await captureStdout(() => printLocalTranscript());

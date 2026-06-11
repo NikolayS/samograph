@@ -9,7 +9,7 @@ import {
 import { dirname, extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { Buffer } from "node:buffer";
-import { samocallDir } from "./config.ts";
+import { samographDir } from "./config.ts";
 
 export interface VideoFrameMetadata {
   event?: string;
@@ -45,7 +45,7 @@ function expandUser(path: string): string {
 }
 
 export function resolveVideoFrameDir(frameDir?: string | null, create = true): string {
-  const dir = frameDir ? expandUser(frameDir) : join(samocallDir(), "frames");
+  const dir = frameDir ? expandUser(frameDir) : join(samographDir(), "frames");
   if (create) {
     const dirExisted = existsSync(dir);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
