@@ -1,6 +1,6 @@
 {
   "name": "samograph",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Let AI agents join Zoom and Google Meet calls as active participants.",
   "type": "module",
   "license": "Apache-2.0",
