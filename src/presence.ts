@@ -660,6 +660,12 @@ export function presencePageHtml(): string {
         element.append(row);
       }
     }
+    // Adaptive polling: every poll is a request through the public tunnel
+    // (the page is loaded by Recall via the tunnel URL, so same-origin
+    // fetches ride it too). Poll fast only while the snapshot is changing;
+    // back off when the call goes quiet to preserve tunnel request quota.
+    let lastSignature = "";
+    let lastActivityAt = Date.now();
     async function refresh() {
       try {
         const response = await fetch("/presence.json", {
@@ -668,6 +674,11 @@ export function presencePageHtml(): string {
         });
         if (!response.ok) return;
         const data = await response.json();
+        const signature = String(data.updated_at || "");
+        if (signature !== lastSignature) {
+          lastSignature = signature;
+          lastActivityAt = Date.now();
+        }
         const state = String(data.state || "listening");
         document.getElementById("live").textContent = state;
         const buckets = { heard: [], comment: [] };
@@ -690,13 +701,20 @@ export function presencePageHtml(): string {
         document.documentElement.style.setProperty("--accent-mid", pair[2]);
       } catch {}
     }
+    function nextPollDelay() {
+      // 1 s while the snapshot changed within the last 30 s, else 5 s.
+      return Date.now() - lastActivityAt < 30000 ? 1000 : 5000;
+    }
+    async function pollLoop() {
+      await refresh();
+      setTimeout(pollLoop, nextPollDelay());
+    }
     if (backgroundMode === "robot") {
       initRobot();
     } else {
       initPlasma();
       initFpsProbe();
-      refresh();
-      setInterval(refresh, 1000);
+      pollLoop();
     }
   </script>
 </body>

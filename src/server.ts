@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { formatTranscriptLine } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
@@ -25,6 +25,158 @@ import {
 } from "./presence.ts";
 
 export const WEBHOOK_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Marker echoed by GET /health. The tunnel round-trip checks (join preflight
+ * and mid-call watchdog) require it so a tunnel interstitial or error page
+ * can never pass as a healthy response.
+ */
+export const HEALTH_MARKER = "samograph-health";
+
+export type HealthFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+export interface TunnelProbeResult {
+  ok: boolean;
+  /** ngrok error code (e.g. ERR_NGROK_727) when the tunnel reported one. */
+  ngrokErrorCode: string | null;
+}
+
+/**
+ * Single tunnel round-trip probe: fetch `${publicBaseUrl}/health?nonce=...`
+ * (through the public tunnel, back to this server) and verify the response
+ * echoes our nonce with the health marker. ngrok error pages are recognized
+ * via the ngrok-error-code header (or the ERR_NGROK_* string in the body).
+ */
+export async function probeTunnelHealth(
+  publicBaseUrl: string,
+  fetchFn: HealthFetch = fetch,
+  nonceFn: () => string = randomUUID,
+): Promise<TunnelProbeResult> {
+  const nonce = nonceFn();
+  try {
+    const response = await fetchFn(
+      `${publicBaseUrl}/health?nonce=${encodeURIComponent(nonce)}`,
+      { cache: "no-store" },
+    );
+    const headerCode = response.headers.get("ngrok-error-code");
+    if (headerCode) {
+      return { ok: false, ngrokErrorCode: headerCode.trim() };
+    }
+    if (response.ok) {
+      const body = (await response.json().catch(() => null)) as
+        | { nonce?: unknown; marker?: unknown }
+        | null;
+      if (body !== null && body.nonce === nonce && body.marker === HEALTH_MARKER) {
+        return { ok: true, ngrokErrorCode: null };
+      }
+      // 200 but not our payload: interstitial or another server entirely.
+      return { ok: false, ngrokErrorCode: null };
+    }
+    const text = await response.text().catch(() => "");
+    const bodyCode = text.match(/ERR_NGROK_\d+/);
+    return { ok: false, ngrokErrorCode: bodyCode ? bodyCode[0] : null };
+  } catch {
+    return { ok: false, ngrokErrorCode: null };
+  }
+}
+
+export const TUNNEL_WATCHDOG_INTERVAL_MS = 60_000;
+// Two consecutive failed probes before warning: one failure can be a blip.
+const TUNNEL_WATCHDOG_FAILURE_THRESHOLD = 2;
+
+export interface TunnelWatchdogHandle {
+  /** Run one probe + state transition (exposed for tests; the schedule calls it). */
+  tick(): Promise<void>;
+  stop(): void;
+}
+
+export interface TunnelWatchdogOptions {
+  /** Public tunnel base URL; falsy disables the watchdog entirely. */
+  publicBase: string | null | undefined;
+  transcriptPath: string;
+  intervalMs?: number;
+  fetch?: HealthFetch;
+  nonce?: () => string;
+  now?: () => Date;
+  stderr?: (s: string) => void;
+  schedule?: (fn: () => void, ms: number) => { stop(): void };
+}
+
+function fmtTranscriptTs(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
+function defaultSchedule(fn: () => void, ms: number): { stop(): void } {
+  const timer = setInterval(fn, ms);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return { stop: () => clearInterval(timer) };
+}
+
+/**
+ * Mid-call tunnel watchdog. Periodically probes the public URL against this
+ * server. After 2 consecutive failures it appends a SAMOGRAPH-WARNING line to
+ * the transcript file — formatted like a transcript line so `samograph watch`
+ * relays it to the agent immediately — and mirrors it to stderr. It warns once
+ * per outage and writes a single "tunnel recovered" line when probes succeed
+ * again. This makes a mid-call ERR_NGROK_727-style outage loud instead of a
+ * silently empty transcript.
+ */
+export function startTunnelWatchdog(
+  options: TunnelWatchdogOptions,
+): TunnelWatchdogHandle | null {
+  const publicBase = (options.publicBase ?? "").replace(/\/+$/, "");
+  if (!publicBase) return null;
+
+  const fetchFn = options.fetch ?? fetch;
+  const nonceFn = options.nonce ?? randomUUID;
+  const now = options.now ?? (() => new Date());
+  const writeStderr =
+    options.stderr ?? ((s: string) => void process.stderr.write(s));
+
+  let consecutiveFailures = 0;
+  let inOutage = false;
+
+  const emit = (text: string): void => {
+    const line = `[${fmtTranscriptTs(now())}] ${text}`;
+    try {
+      appendFileSync(options.transcriptPath, line + "\n");
+    } catch {
+      // Transcript file may be gone (call torn down) — stderr still fires.
+    }
+    writeStderr(line + "\n");
+  };
+
+  const tick = async (): Promise<void> => {
+    const probe = await probeTunnelHealth(publicBase, fetchFn, nonceFn);
+    if (probe.ok) {
+      consecutiveFailures = 0;
+      if (inOutage) {
+        inOutage = false;
+        emit("SAMOGRAPH-WARNING: tunnel recovered - live transcript delivery resumed");
+      }
+      return;
+    }
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= TUNNEL_WATCHDOG_FAILURE_THRESHOLD && !inOutage) {
+      inOutage = true;
+      const cause = probe.ngrokErrorCode ?? "health check failed";
+      emit(
+        `SAMOGRAPH-WARNING: tunnel unreachable (${cause}) - transcript may be ` +
+          "incomplete; rejoin with --tunnel cloudflared or --webhook-base",
+      );
+    }
+  };
+
+  const scheduled = (options.schedule ?? defaultSchedule)(
+    () => void tick(),
+    options.intervalMs ?? TUNNEL_WATCHDOG_INTERVAL_MS,
+  );
+  return { tick, stop: () => scheduled.stop() };
+}
 
 /**
  * Constant-time token comparison. Both sides are hashed to a fixed length so
@@ -168,6 +320,15 @@ export function serve(
           }
         }
         return Response.json({ ok: true });
+      }
+      if (req.method === "GET" && url.pathname === "/health") {
+        // Deliberately unauthenticated: it returns nothing sensitive, and the
+        // join-time/mid-call tunnel checks must work without leaking tokens.
+        return Response.json({
+          ok: true,
+          nonce: url.searchParams.get("nonce") ?? "",
+          marker: HEALTH_MARKER,
+        });
       }
       if (req.method === "GET" && url.pathname === "/frame") {
         if (!frameAuthorized(req)) {

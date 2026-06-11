@@ -10,6 +10,8 @@ import { botName } from "../botName.ts";
 import { loadState, saveState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
+import { probeTunnelHealth, type TunnelProbeResult } from "../server.ts";
+import { startCloudflared, type CloudflaredTunnel } from "../tunnel.ts";
 import {
   rtmpStreamPath,
   waitForNgrok,
@@ -37,6 +39,8 @@ export interface JoinDeps {
   spawn?: (cmd: string[], opts?: SpawnOptions) => SpawnedProc;
   /** Poll ngrok's local API for the public webhook base URL. */
   waitForNgrok?: (port: number) => Promise<string | null>;
+  /** Start a cloudflared quick tunnel to the local port (--tunnel cloudflared). */
+  startCloudflared?: (port: number) => Promise<CloudflaredTunnel | null>;
   /** Start a local mediamtx RTMP server. */
   startMediamtx?: () => Promise<SpawnedProc | null>;
   /** Open a ngrok TCP tunnel to a local port; returns the public tcp:// URL. */
@@ -108,6 +112,68 @@ export function spawnDetached(
 
 const PRESENCE_PAGE_MARKER = "samograph-presence";
 
+/**
+ * Tunnel round-trip health check. Unlike the presence-camera preflight below
+ * (which merely degrades the camera), webhook reachability is core: a tunnel
+ * that does not relay requests means the bot joins and sits silent with an
+ * empty transcript — exactly the ERR_NGROK_727 failure mode. So join refuses.
+ */
+export type TunnelHealthResult = TunnelProbeResult;
+
+// Same ~30 s budget as the presence preflight: fresh tunnel DNS
+// (e.g. *.trycloudflare.com) can take 10–30 s to propagate.
+const TUNNEL_HEALTH_ATTEMPTS = 40;
+const TUNNEL_HEALTH_SLEEP_MS = 750;
+
+const NGROK_ERROR_HINTS: Record<string, string> = {
+  ERR_NGROK_727: "account HTTP request limit exceeded",
+};
+
+export async function checkTunnelHealth(
+  publicBaseUrl: string,
+  fetchFn: PresenceFetch = fetch,
+  sleepFn: (ms: number) => Promise<void> = sleep,
+  attempts = TUNNEL_HEALTH_ATTEMPTS,
+  nonceFn: () => string = randomUUID,
+): Promise<TunnelHealthResult> {
+  for (let i = 0; i < attempts; i++) {
+    const probe = await probeTunnelHealth(publicBaseUrl, fetchFn, nonceFn);
+    if (probe.ok) {
+      return probe;
+    }
+    // An ngrok error code (e.g. ERR_NGROK_727) is an account/tunnel-level
+    // error and definitive — fail fast instead of burning the retry budget.
+    if (probe.ngrokErrorCode) {
+      return probe;
+    }
+    if (i < attempts - 1) {
+      await sleepFn(TUNNEL_HEALTH_SLEEP_MS);
+    }
+  }
+  return { ok: false, ngrokErrorCode: null };
+}
+
+export function tunnelHealthFailureMessage(result: TunnelHealthResult): string {
+  const options =
+    "Options: --tunnel cloudflared (free, no request limits), " +
+    "--webhook-base with your own tunnel, or upgrade ngrok.";
+  if (result.ngrokErrorCode) {
+    const hint =
+      NGROK_ERROR_HINTS[result.ngrokErrorCode] ??
+      "see https://ngrok.com/docs/errors";
+    return (
+      `Error: tunnel is not relaying requests (ngrok error ${result.ngrokErrorCode}: ${hint}). ` +
+      `The bot would join but receive no transcript. ${options}\n`
+    );
+  }
+  return (
+    "Error: tunnel is not relaying requests (the public /health round-trip never " +
+    "returned this server's response — interstitial page, unreachable URL, or a " +
+    "tunnel pointed at something else). " +
+    `The bot would join but receive no transcript. ${options}\n`
+  );
+}
+
 // Browser-like UA so the preflight sees what Recall's Chromium sees —
 // ngrok-free/localtunnel serve their interstitials only to browser UAs.
 const PRESENCE_PREFLIGHT_USER_AGENT =
@@ -158,6 +224,7 @@ export async function cmdJoin(
   const kill = deps.kill ?? defaultKill;
   const spawn = deps.spawn ?? spawnDetached;
   const waitForNgrokFn = deps.waitForNgrok ?? waitForNgrok;
+  const startCloudflaredFn = deps.startCloudflared ?? startCloudflared;
   const startMediamtxFn = deps.startMediamtx ?? startMediamtx;
   const startNgrokTcpTunnelFn = deps.startNgrokTcpTunnel ?? startNgrokTcpTunnel;
   const fetchFn = deps.fetch ?? fetch;
@@ -181,39 +248,19 @@ export async function cmdJoin(
 
   // kill any old processes
   const oldState = loadState();
-  for (const pidKey of ["server_pid", "ngrok_pid", "mediamtx_pid"] as const) {
+  for (const pidKey of ["server_pid", "ngrok_pid", "tunnel_pid", "mediamtx_pid"] as const) {
     const pid = oldState[pidKey];
     if (typeof pid === "number" && pid) {
       kill(pid, "SIGTERM");
     }
   }
 
-  // start webhook server (spawns self with _serve subcommand)
+  // cli entrypoint for the _serve subcommand (spawned once the public tunnel
+  // URL is known, so it can be handed to the mid-call tunnel watchdog)
   const selfPath = fileURLToPath(import.meta.url);
   // resolve cli entrypoint: this module is src/commands/join.ts → cli is src/cli.ts
   const cliPath = selfPath.replace(/commands\/join\.ts$/, "cli.ts");
-  const server = spawn(
-    [
-      process.execPath,
-      cliPath,
-      "_serve",
-      "--port",
-      String(port),
-      "--transcript-file",
-      transcriptFile,
-      "--call-id-file",
-      stateFile(),
-    ],
-    {
-      env: {
-        SAMOGRAPH_WEBHOOK_TOKEN: webhookToken,
-        SAMOGRAPH_FRAME_TOKEN: frameToken,
-        SAMOGRAPH_PRESENCE_TOKEN: presenceToken,
-        SAMOGRAPH_PRESENCE_WRITE_TOKEN: presenceWriteToken,
-      },
-    },
-  );
-  const started = new Set<SpawnedProc>([server]);
+  const started = new Set<SpawnedProc>();
   let stateSaved = false;
 
   const cleanupUnsaved = () => {
@@ -254,10 +301,12 @@ export async function cmdJoin(
   if (webhookBase !== null) {
     webhookBase = normalizeWebhookBase(webhookBase);
   }
-  const ngrok = webhookBase
+  const useCloudflared = (args.tunnel ?? "ngrok") === "cloudflared";
+  const ngrok = webhookBase || useCloudflared
     ? null
     : spawn(["ngrok", "http", String(port), "--log=stdout"]);
   if (ngrok) started.add(ngrok);
+  let cloudflared: SpawnedProc | null = null;
 
   try {
     let webhookUrl: string | null;
@@ -266,6 +315,22 @@ export async function cmdJoin(
         `Using external tunnel (--webhook-base): ${webhookBase} → localhost:${port}\n`,
       );
       webhookUrl = webhookBase;
+    } else if (useCloudflared) {
+      process.stdout.write(`Starting cloudflared tunnel on port ${port}...\n`);
+      const tunnel = await startCloudflaredFn(port);
+      if (!tunnel) {
+        process.stderr.write(
+          "Error: cloudflared tunnel failed to start. Install cloudflared " +
+            "(e.g. brew install cloudflared) or point CLOUDFLARED_BIN at the " +
+            "binary; alternatively use --webhook-base or the default ngrok tunnel.\n",
+        );
+        cleanupUnsaved();
+        throw new ExitError(1);
+      }
+      cloudflared = tunnel.proc;
+      started.add(cloudflared);
+      webhookUrl = tunnel.url;
+      process.stdout.write(`cloudflared tunnel: ${webhookUrl} → localhost:${port}\n`);
     } else {
       process.stdout.write(`Starting ngrok tunnel on port ${port}...\n`);
       webhookUrl = await waitForNgrokFn(port);
@@ -278,6 +343,46 @@ export async function cmdJoin(
       throw new ExitError(1);
     }
     const publicBaseUrl = webhookUrl.replace(/\/+$/, "");
+
+    // start webhook server (spawns self with _serve subcommand). The public
+    // base URL travels via argv (it is not a secret) so _serve can run the
+    // mid-call tunnel watchdog; tokens travel via env only.
+    const server = spawn(
+      [
+        process.execPath,
+        cliPath,
+        "_serve",
+        "--port",
+        String(port),
+        "--transcript-file",
+        transcriptFile,
+        "--call-id-file",
+        stateFile(),
+        "--public-base",
+        publicBaseUrl,
+      ],
+      {
+        env: {
+          SAMOGRAPH_WEBHOOK_TOKEN: webhookToken,
+          SAMOGRAPH_FRAME_TOKEN: frameToken,
+          SAMOGRAPH_PRESENCE_TOKEN: presenceToken,
+          SAMOGRAPH_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+        },
+      },
+    );
+    started.add(server);
+
+    // Round-trip check: does the public URL actually reach this server?
+    // Unlike the presence preflight below (camera-only, degrades), webhook
+    // reachability is core — a dead tunnel means join-and-sit-silent with an
+    // empty transcript (the ERR_NGROK_727 incident), so refuse to join.
+    const health = await checkTunnelHealth(publicBaseUrl, fetchFn, sleepFn);
+    if (!health.ok) {
+      process.stderr.write(tunnelHealthFailureMessage(health));
+      cleanupUnsaved();
+      throw new ExitError(1);
+    }
+
     // null = join without the webpage presence camera (opted out via
     // --no-presence, or degraded after a failed preflight).
     const presenceBgSuffix = args.presence_bg
@@ -488,6 +593,10 @@ export async function cmdJoin(
     newState.local_presence_update_url = `http://127.0.0.1:${port}/presence`;
     newState.presence_token = presenceToken;
     newState.presence_write_token = presenceWriteToken;
+  }
+  if (cloudflared) {
+    // leave kills tunnel_pid the same way it kills ngrok_pid.
+    newState.tunnel_pid = cloudflared.pid;
   }
   if (mediamtxProc) {
     newState.mediamtx_pid = mediamtxProc.pid;

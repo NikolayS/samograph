@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  checkTunnelHealth,
   cmdJoin,
   spawnDetached,
   waitForPresenceCamera,
@@ -52,6 +53,20 @@ function fakeProc(pid: number, killed?: number[]): SpawnedProc {
   return { pid, kill() { killed?.push(pid); } };
 }
 
+const PRESENCE_MARKER_PAGE = "<main class=\"samograph-presence\"></main>";
+
+/** Healthy /health response: echoes the request nonce with the marker. */
+function healthOkResponse(url: string): Response {
+  const nonce = new URL(url).searchParams.get("nonce") ?? "";
+  return Response.json({ ok: true, nonce, marker: "samograph-health" });
+}
+
+/** Default tunnel fake: /health round-trips succeed, /presence shows the page. */
+function tunnelFetch(url: string): Response {
+  if (url.includes("/health")) return healthOkResponse(url);
+  return new Response(PRESENCE_MARKER_PAGE);
+}
+
 /** Hermetic deps: no ngrok, no mediamtx, no child processes, no network. */
 function makeDeps(
   captured: { payload?: any; rejectCreateBot?: boolean },
@@ -65,7 +80,7 @@ function makeDeps(
     waitForNgrok: async () => WEBHOOK_BASE,
     startMediamtx: async () => fakeProc(7000, opts.killed),
     startNgrokTcpTunnel: async () => "tcp://ngrok.tcp:12345",
-    fetch: async () => new Response("<main class=\"samograph-presence\"></main>"),
+    fetch: async (url) => tunnelFetch(url),
     sleep: async () => {},
   };
 }
@@ -335,16 +350,23 @@ describe("cmdJoin payload + saved state", () => {
   it("waitForNgrok returns null — throws ExitError(1) and kills spawned processes", async () => {
     const killed: number[] = [];
     const captured: { payload?: any } = {};
+    const spawnCalls: string[][] = [];
+    let nextPid = 4242;
     const deps: JoinDeps = {
       ...makeDeps(captured, { killed }),
+      spawn: (cmd) => {
+        spawnCalls.push(cmd);
+        return fakeProc(nextPid++, killed);
+      },
       waitForNgrok: async () => null,
     };
 
     const { ExitError } = await import("../src/config.ts");
     await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
-    // server (4242) and ngrok (4243) must both be killed
-    expect(killed).toContain(4242);
-    expect(killed).toContain(4243);
+    // ngrok (the only process spawned so far) must be killed; the webhook
+    // server is only spawned once the public tunnel URL is known.
+    expect(killed).toEqual([4242]);
+    expect(spawnCalls.some((cmd) => cmd.includes("_serve"))).toBe(false);
     expect(existsSync(sf)).toBe(false);
   });
 
@@ -483,16 +505,26 @@ describe("cmdJoin payload + saved state", () => {
     expect(webhookEndpoints[0].url).not.toContain("user:pass");
   });
 
-  it("--webhook-base rejects http URLs and cleans up the local server", async () => {
+  it("--webhook-base rejects http URLs before spawning anything", async () => {
     const killed: number[] = [];
     const captured: { payload?: any } = {};
+    const spawnCalls: string[][] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      spawn: (cmd) => {
+        spawnCalls.push(cmd);
+        return fakeProc(4242, killed);
+      },
+    };
     const { ExitError } = await import("../src/config.ts");
 
     await expect(
-      cmdJoin(joinArgs({ webhook_base: "http://insecure.example" }), makeDeps(captured, { killed })),
+      cmdJoin(joinArgs({ webhook_base: "http://insecure.example" }), deps),
     ).rejects.toBeInstanceOf(ExitError);
 
-    expect(killed).toEqual([4242]);
+    // the base is validated before ngrok or the webhook server start
+    expect(spawnCalls).toEqual([]);
+    expect(killed).toEqual([]);
     expect(captured.payload).toBeUndefined();
     expect(existsSync(sf)).toBe(false);
   });
@@ -502,7 +534,11 @@ describe("cmdJoin payload + saved state", () => {
     const captured: { payload?: any } = {};
     const deps: JoinDeps = {
       ...makeDeps(captured, { killed }),
-      fetch: async () => new Response("Not Found", { status: 404 }),
+      // tunnel relays fine (health round-trip ok), only the camera page 404s
+      fetch: async (url) =>
+        url.includes("/health")
+          ? healthOkResponse(url)
+          : new Response("Not Found", { status: 404 }),
     };
 
     const errWrites: string[] = [];
@@ -538,7 +574,12 @@ describe("cmdJoin payload + saved state", () => {
     const captured: { payload?: any } = {};
     const deps: JoinDeps = {
       ...makeDeps(captured, { killed }),
-      fetch: async () => new Response("<title>You are about to visit</title>"),
+      // health round-trip ok (server-to-server bypasses the interstitial);
+      // the browser-UA camera preflight sees the interstitial page
+      fetch: async (url) =>
+        url.includes("/health")
+          ? healthOkResponse(url)
+          : new Response("<title>You are about to visit</title>"),
     };
 
     const errWrites: string[] = [];
@@ -560,12 +601,12 @@ describe("cmdJoin payload + saved state", () => {
 
   it("--no-presence: skips preflight entirely and omits output_media, no warning", async () => {
     const captured: { payload?: any } = {};
-    let fetchCalls = 0;
+    const fetchedUrls: string[] = [];
     const deps: JoinDeps = {
       ...makeDeps(captured),
-      fetch: async () => {
-        fetchCalls += 1;
-        return new Response("<main class=\"samograph-presence\"></main>");
+      fetch: async (url) => {
+        fetchedUrls.push(url);
+        return tunnelFetch(url);
       },
     };
 
@@ -578,7 +619,8 @@ describe("cmdJoin payload + saved state", () => {
       (process.stderr.write as unknown) = orig;
     }
 
-    expect(fetchCalls).toBe(0);
+    // the tunnel health check may run, but the presence page is never probed
+    expect(fetchedUrls.some((u) => u.includes("/presence"))).toBe(false);
     expect(captured.payload.output_media).toBeUndefined();
     expect(errWrites.join("")).toBe("");
     const state = JSON.parse(readFileSync(sf, "utf-8"));
@@ -613,6 +655,347 @@ describe("cmdJoin payload + saved state", () => {
     const state = JSON.parse(readFileSync(sf, "utf-8"));
     expect(state.presence_page_url).toStartWith(PRESENCE_PREFIX);
     expect(state.local_presence_update_url).toBe("http://127.0.0.1:8080/presence");
+  });
+
+  it("passes --public-base with the resolved tunnel URL to _serve (watchdog)", async () => {
+    const captured: { payload?: any } = {};
+    const spawnCalls: string[][] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      spawn: (cmd) => {
+        spawnCalls.push(cmd);
+        return fakeProc(5000 + spawnCalls.length);
+      },
+    };
+
+    await cmdJoin(joinArgs(), deps);
+
+    const serveCall = spawnCalls.find((cmd) => cmd.includes("_serve"));
+    expect(serveCall).toBeDefined();
+    const i = serveCall!.indexOf("--public-base");
+    expect(i).toBeGreaterThan(-1);
+    expect(serveCall![i + 1]).toBe(WEBHOOK_BASE);
+  });
+
+  it("--webhook-base: _serve receives the normalized base as --public-base", async () => {
+    const captured: { payload?: any } = {};
+    const spawnCalls: string[][] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      spawn: (cmd) => {
+        spawnCalls.push(cmd);
+        return fakeProc(5000 + spawnCalls.length);
+      },
+    };
+
+    await cmdJoin(joinArgs({ webhook_base: "https://my-tunnel.example/some/path/" }), deps);
+
+    const serveCall = spawnCalls.find((cmd) => cmd.includes("_serve"));
+    expect(serveCall).toBeDefined();
+    const i = serveCall!.indexOf("--public-base");
+    expect(i).toBeGreaterThan(-1);
+    expect(serveCall![i + 1]).toBe("https://my-tunnel.example");
+  });
+
+  it("--tunnel cloudflared: uses the cloudflared URL, no ngrok, records tunnel_pid", async () => {
+    const captured: { payload?: any } = {};
+    const spawnCalls: string[][] = [];
+    const fetchedUrls: string[] = [];
+    let cloudflaredPorts: number[] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      spawn: (cmd) => {
+        spawnCalls.push(cmd);
+        return fakeProc(5000 + spawnCalls.length);
+      },
+      startCloudflared: async (port) => {
+        cloudflaredPorts.push(port);
+        return { proc: fakeProc(8888), url: "https://random-words.trycloudflare.com" };
+      },
+      fetch: async (url) => {
+        fetchedUrls.push(url);
+        return tunnelFetch(url);
+      },
+    };
+
+    await cmdJoin(joinArgs({ tunnel: "cloudflared" }), deps);
+
+    // cloudflared tunnel to the callback port; ngrok never spawned
+    expect(cloudflaredPorts).toEqual([8080]);
+    expect(spawnCalls.some((cmd) => cmd[0] === "ngrok")).toBe(false);
+
+    // health round-trip ran against the cloudflared URL
+    expect(
+      fetchedUrls.some((u) =>
+        u.startsWith("https://random-words.trycloudflare.com/health?nonce="),
+      ),
+    ).toBe(true);
+
+    const state = JSON.parse(readFileSync(sf, "utf-8"));
+    expect(state.webhook_url).toStartWith(
+      "https://random-words.trycloudflare.com/webhook?token=",
+    );
+    expect(state.tunnel_pid).toBe(8888);
+    expect(state.ngrok_pid).toBeNull();
+
+    // _serve watchdog probes the cloudflared URL
+    const serveCall = spawnCalls.find((cmd) => cmd.includes("_serve"));
+    const i = serveCall!.indexOf("--public-base");
+    expect(serveCall![i + 1]).toBe("https://random-words.trycloudflare.com");
+  });
+
+  it("--tunnel cloudflared: hard fail with actionable message when it cannot start", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      startCloudflared: async () => null,
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    const { ExitError } = await import("../src/config.ts");
+    try {
+      await expect(
+        cmdJoin(joinArgs({ tunnel: "cloudflared" }), deps),
+      ).rejects.toBeInstanceOf(ExitError);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    const stderrOut = errWrites.join("");
+    expect(stderrOut).toContain("cloudflared");
+    expect(stderrOut).toContain("CLOUDFLARED_BIN");
+    expect(captured.payload).toBeUndefined();
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("--tunnel cloudflared: tunnel process is killed when join fails later", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any; rejectCreateBot?: boolean } = {
+      rejectCreateBot: true,
+    };
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      startCloudflared: async () => ({
+        proc: fakeProc(8888, killed),
+        url: "https://random-words.trycloudflare.com",
+      }),
+    };
+
+    await expect(
+      cmdJoin(joinArgs({ tunnel: "cloudflared" }), deps),
+    ).rejects.toThrow("recall failed");
+
+    expect(killed).toContain(8888);
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("runs a /health round-trip through the public URL before joining", async () => {
+    const captured: { payload?: any } = {};
+    const fetchedUrls: string[] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured),
+      fetch: async (url) => {
+        fetchedUrls.push(url);
+        return tunnelFetch(url);
+      },
+    };
+
+    await cmdJoin(joinArgs(), deps);
+
+    expect(
+      fetchedUrls.some((u) => u.startsWith(`${WEBHOOK_BASE}/health?nonce=`)),
+    ).toBe(true);
+    // health ok → join proceeded
+    expect(captured.payload).toBeDefined();
+    expect(existsSync(sf)).toBe(true);
+  });
+
+  it("ngrok-error-code on /health: hard fail naming the code, cleanup, no bot", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async (url) =>
+        url.includes("/health")
+          ? new Response("ERR_NGROK_727: request limit exceeded", {
+              status: 402,
+              headers: { "ngrok-error-code": "ERR_NGROK_727" },
+            })
+          : new Response(PRESENCE_MARKER_PAGE),
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    const { ExitError } = await import("../src/config.ts");
+    try {
+      await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    const stderrOut = errWrites.join("");
+    expect(stderrOut).toContain("ERR_NGROK_727");
+    expect(stderrOut).toContain("--tunnel cloudflared");
+    expect(stderrOut).toContain("--webhook-base");
+    // no bot created, all spawned processes cleaned up, no state saved
+    expect(captured.payload).toBeUndefined();
+    expect(killed.length).toBeGreaterThan(0);
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("nonce mismatch on /health (interstitial-style body): generic hard fail", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async () => new Response("<title>You are about to visit</title>"),
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    const { ExitError } = await import("../src/config.ts");
+    try {
+      await expect(cmdJoin(joinArgs(), deps)).rejects.toBeInstanceOf(ExitError);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    const stderrOut = errWrites.join("");
+    // generic tunnel failure, not an ngrok error report
+    expect(stderrOut).not.toContain("ERR_NGROK");
+    expect(stderrOut).toContain("tunnel");
+    expect(stderrOut).toContain("--tunnel cloudflared");
+    expect(stderrOut).toContain("--webhook-base");
+    expect(captured.payload).toBeUndefined();
+    expect(killed.length).toBeGreaterThan(0);
+    expect(existsSync(sf)).toBe(false);
+  });
+
+  it("--webhook-base path also runs the tunnel health check and refuses on failure", async () => {
+    const killed: number[] = [];
+    const captured: { payload?: any } = {};
+    const fetchedUrls: string[] = [];
+    const deps: JoinDeps = {
+      ...makeDeps(captured, { killed }),
+      fetch: async (url) => {
+        fetchedUrls.push(url);
+        return new Response("Bad Gateway", { status: 502 });
+      },
+    };
+
+    const errWrites: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (s: string) => { errWrites.push(s); return true; };
+    const { ExitError } = await import("../src/config.ts");
+    try {
+      await expect(
+        cmdJoin(joinArgs({ webhook_base: "https://my-tunnel.example" }), deps),
+      ).rejects.toBeInstanceOf(ExitError);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    expect(
+      fetchedUrls.some((u) => u.startsWith("https://my-tunnel.example/health?nonce=")),
+    ).toBe(true);
+    expect(captured.payload).toBeUndefined();
+    expect(existsSync(sf)).toBe(false);
+  });
+});
+
+describe("checkTunnelHealth", () => {
+  const BASE = "https://tunnel.example";
+
+  it("succeeds on first matching nonce+marker response; never sleeps", async () => {
+    const sleeps: number[] = [];
+    const result = await checkTunnelHealth(
+      BASE,
+      async (url) => healthOkResponse(url),
+      async (ms) => { sleeps.push(ms); },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.ngrokErrorCode).toBeNull();
+    expect(sleeps).toEqual([]);
+  });
+
+  it("retries through fetch errors and succeeds once the tunnel is up", async () => {
+    let calls = 0;
+    const result = await checkTunnelHealth(
+      BASE,
+      async (url) => {
+        calls += 1;
+        if (calls <= 2) throw new Error("tunnel not up yet");
+        return healthOkResponse(url);
+      },
+      async () => {},
+    );
+    expect(result.ok).toBe(true);
+    expect(calls).toBe(3);
+  });
+
+  it("fails fast with the code when the ngrok-error-code header is present", async () => {
+    let calls = 0;
+    const result = await checkTunnelHealth(
+      BASE,
+      async () => {
+        calls += 1;
+        return new Response("limit page", {
+          status: 402,
+          headers: { "ngrok-error-code": "ERR_NGROK_727" },
+        });
+      },
+      async () => {},
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ngrokErrorCode).toBe("ERR_NGROK_727");
+    // a tunnel-account error is definitive: no point burning the retry budget
+    expect(calls).toBe(1);
+  });
+
+  it("extracts an ERR_NGROK code from an error body when the header is missing", async () => {
+    const result = await checkTunnelHealth(
+      BASE,
+      async () =>
+        new Response("ngrok gateway error: ERR_NGROK_3200 tunnel not found", {
+          status: 404,
+        }),
+      async () => {},
+      3,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ngrokErrorCode).toBe("ERR_NGROK_3200");
+  });
+
+  it("fails generically when responses never echo the nonce", async () => {
+    let calls = 0;
+    const result = await checkTunnelHealth(
+      BASE,
+      async () => {
+        calls += 1;
+        return Response.json({ ok: true, nonce: "someone-elses", marker: "samograph-health" });
+      },
+      async () => {},
+      4,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ngrokErrorCode).toBeNull();
+    expect(calls).toBe(4);
+  });
+
+  it("fails generically on interstitial HTML (non-JSON 200)", async () => {
+    const result = await checkTunnelHealth(
+      BASE,
+      async () => new Response("<title>You are about to visit</title>"),
+      async () => {},
+      3,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ngrokErrorCode).toBeNull();
   });
 });
 

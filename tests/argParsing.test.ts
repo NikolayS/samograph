@@ -273,6 +273,23 @@ describe("argParsing", () => {
     expect(args.presence_write_token).toBe("write-secret");
   });
 
+  it("serve parses --public-base for the tunnel watchdog", () => {
+    const args = parseArgs([
+      "_serve",
+      "--transcript-file",
+      "/tmp/t.txt",
+      "--public-base",
+      "https://abc.ngrok.app",
+    ]);
+    expect(args.public_base).toBe("https://abc.ngrok.app");
+  });
+
+  it("serve public-base defaults to empty", () => {
+    expect(
+      parseArgs(["_serve", "--transcript-file", "/tmp/t.txt"]).public_base,
+    ).toBe("");
+  });
+
   it("invalid command throws", () => {
     expect(() => parseArgs(["bogus"])).toThrow();
   });
@@ -311,6 +328,49 @@ describe("argParsing", () => {
     ).toBe("https://my-tunnel.example");
   });
 
+  it("join tunnel defaults to ngrok", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).tunnel).toBe("ngrok");
+  });
+
+  it("join tunnel accepts cloudflared and ngrok", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--tunnel", "cloudflared"]).tunnel,
+    ).toBe("cloudflared");
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--tunnel", "ngrok"]).tunnel,
+    ).toBe("ngrok");
+  });
+
+  it("join tunnel rejects unknown values", () => {
+    expect(() =>
+      parseArgs(["join", "https://zoom.us/j/1", "--tunnel", "teleport"]),
+    ).toThrow("invalid choice");
+  });
+
+  it("join tunnel conflicts with --webhook-base", () => {
+    expect(() =>
+      parseArgs([
+        "join",
+        "https://zoom.us/j/1",
+        "--tunnel",
+        "cloudflared",
+        "--webhook-base",
+        "https://my-tunnel.example",
+      ]),
+    ).toThrow("--webhook-base");
+    // even --tunnel ngrok is an explicit contradiction with an external tunnel
+    expect(() =>
+      parseArgs([
+        "join",
+        "https://zoom.us/j/1",
+        "--tunnel",
+        "ngrok",
+        "--webhook-base",
+        "https://my-tunnel.example",
+      ]),
+    ).toThrow("--webhook-base");
+  });
+
   it("--help uses current product positioning", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "--help"], { cwd: repoRoot });
     const stdout = new TextDecoder().decode(proc.stdout);
@@ -330,6 +390,8 @@ describe("argParsing", () => {
     expect(stdout).toContain("--no-presence");
     expect(stdout).toContain("--presence-bg");
     expect(stdout).toContain("sphere|field|static|cycle");
+    expect(stdout).toContain("--tunnel");
+    expect(stdout).toContain("ngrok|cloudflared");
   });
 
   it("presence --help shows command-specific help", () => {
