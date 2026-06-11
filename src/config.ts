@@ -17,28 +17,28 @@ function repoRoot(): string {
   return dirname(dirname(fileURLToPath(import.meta.url)));
 }
 
-/** Path to the runtime state.json. Overridable via SAMOCALL_STATE_FILE for tests. */
+/** Path to the runtime state.json. Overridable via SAMOGRAPH_STATE_FILE for tests. */
 export function stateFile(): string {
   return (
-    process.env.SAMOCALL_STATE_FILE ??
-    join(homedir(), ".samocall", "state.json")
+    process.env.SAMOGRAPH_STATE_FILE ??
+    join(homedir(), ".samograph", "state.json")
   );
 }
 
-/** Directory containing keyword dictionaries. Overridable via SAMOCALL_DICT_DIR for tests. */
+/** Directory containing keyword dictionaries. Overridable via SAMOGRAPH_DICT_DIR for tests. */
 export function dictDir(): string {
-  return process.env.SAMOCALL_DICT_DIR ?? join(repoRoot(), "dictionaries");
+  return process.env.SAMOGRAPH_DICT_DIR ?? join(repoRoot(), "dictionaries");
 }
 
-/** Default transcript directory (~/.samocall or under SAMOCALL_HOME). */
-export function samocallDir(): string {
-  const base = process.env.SAMOCALL_HOME ?? homedir();
-  return join(base, ".samocall");
+/** Default transcript directory (~/.samograph or under SAMOGRAPH_HOME). */
+export function samographDir(): string {
+  const base = process.env.SAMOGRAPH_HOME ?? homedir();
+  return join(base, ".samograph");
 }
 
-/** Default transcript file path. Overridable via SAMOCALL_HOME for tests. */
+/** Default transcript file path. Overridable via SAMOGRAPH_HOME for tests. */
 export function defaultTranscriptFile(): string {
-  return join(samocallDir(), "transcript.txt");
+  return join(samographDir(), "transcript.txt");
 }
 
 export function apiKey(): string {

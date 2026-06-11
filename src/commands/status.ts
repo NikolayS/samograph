@@ -58,7 +58,7 @@ export async function cmdStatus(
   if (typeof frameMetadataUrl === "string" && frameMetadataUrl) {
     const headers: Record<string, string> = {};
     if (typeof state.frame_token === "string" && state.frame_token) {
-      headers["X-Samocall-Frame-Token"] = state.frame_token;
+      headers["X-Samograph-Frame-Token"] = state.frame_token;
     }
     try {
       const resp = await fetchFn(frameMetadataUrl, { headers });

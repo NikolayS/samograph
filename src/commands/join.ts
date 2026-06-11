@@ -106,7 +106,7 @@ export function spawnDetached(
   };
 }
 
-const PRESENCE_PAGE_MARKER = "samocall-presence";
+const PRESENCE_PAGE_MARKER = "samograph-presence";
 
 // Browser-like UA so the preflight sees what Recall's Chromium sees —
 // ngrok-free/localtunnel serve their interstitials only to browser UAs.
@@ -206,10 +206,10 @@ export async function cmdJoin(
     ],
     {
       env: {
-        SAMOCALL_WEBHOOK_TOKEN: webhookToken,
-        SAMOCALL_FRAME_TOKEN: frameToken,
-        SAMOCALL_PRESENCE_TOKEN: presenceToken,
-        SAMOCALL_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+        SAMOGRAPH_WEBHOOK_TOKEN: webhookToken,
+        SAMOGRAPH_FRAME_TOKEN: frameToken,
+        SAMOGRAPH_PRESENCE_TOKEN: presenceToken,
+        SAMOGRAPH_PRESENCE_WRITE_TOKEN: presenceWriteToken,
       },
     },
   );
@@ -300,7 +300,7 @@ export async function cmdJoin(
           "Warning: the presence camera page is not reachable by a browser — " +
             "likely a tunnel interstitial (free ngrok / localtunnel show one to browser " +
             "user agents). Joining WITHOUT the presence camera; transcription and chat " +
-            "are unaffected, and `samocall presence` will be unavailable for this call. " +
+            "are unaffected, and `samograph presence` will be unavailable for this call. " +
             "Use a paid/clean tunnel for the camera, or pass --no-presence to skip this check.\n",
         );
         presencePageUrl = null;
@@ -469,7 +469,7 @@ export async function cmdJoin(
 
   const newState: Record<string, unknown> = {
     bot_id: bid,
-    agent_name: args.name || "samocall",
+    agent_name: args.name || "samograph",
     bot_name: name,
     webhook_url: webhookUrl,
     server_pid: server.pid,
@@ -482,7 +482,7 @@ export async function cmdJoin(
   };
   if (presencePageUrl) {
     // Presence state is saved only when the camera page is actually in use:
-    // without it, `samocall presence` updates would have no visible effect,
+    // without it, `samograph presence` updates would have no visible effect,
     // so the command should report "no active dynamic presence server".
     newState.presence_page_url = presencePageUrl;
     newState.local_presence_update_url = `http://127.0.0.1:${port}/presence`;
@@ -521,7 +521,7 @@ export async function cmdJoin(
     `IMPORTANT: You must now monitor the live transcript for the duration of the call.\n`,
   );
   process.stdout.write(`Run this command with your Monitor tool (persistent=true):\n`);
-  process.stdout.write(`  samocall watch\n`);
+  process.stdout.write(`  samograph watch\n`);
   process.stdout.write(
     `Each line you receive is a new utterance: [timestamp] Speaker: text\n`,
   );
@@ -529,30 +529,30 @@ export async function cmdJoin(
     `React to what is said. If someone addresses you or asks a question, respond in chat.\n`,
   );
   process.stdout.write(
-    `To send a message in the meeting chat: samocall chat 'your message'\n`,
+    `To send a message in the meeting chat: samograph chat 'your message'\n`,
   );
   if (presencePageUrl) {
     process.stdout.write(
-      `To update bot presence:       samocall presence thinking 'short status'\n`,
+      `To update bot presence:       samograph presence thinking 'short status'\n`,
     );
   }
   if (rtmpLocalUrl) {
     process.stdout.write(
-      `To capture call frame:        samocall frame  (ffmpeg from RTMP stream)\n`,
+      `To capture call frame:        samograph frame  (ffmpeg from RTMP stream)\n`,
     );
   } else if (useWsVideo) {
     process.stdout.write(
-      `To list frame sources:       samocall frames\n`,
+      `To list frame sources:       samograph frames\n`,
     );
     process.stdout.write(
-      `To capture call frame:        samocall frame  (latest WebSocket PNG, written on demand)\n`,
+      `To capture call frame:        samograph frame  (latest WebSocket PNG, written on demand)\n`,
     );
   } else {
     process.stdout.write(
-      `To capture what's on screen:  samocall screenshot  (then Read screenshot.png)\n`,
+      `To capture what's on screen:  samograph screenshot  (then Read screenshot.png)\n`,
     );
   }
-  process.stdout.write(`To stop:                      samocall leave\n`);
+  process.stdout.write(`To stop:                      samograph leave\n`);
   process.stdout.write(`--------------------------\n`);
   } catch (err) {
     cleanupUnsaved();

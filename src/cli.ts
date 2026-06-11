@@ -17,10 +17,10 @@ import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 
-const USAGE = `usage: samocall <command> [options]
+const USAGE = `usage: samograph <command> [options]
 
 Put your AI agent in Zoom and Google Meet calls.
-samocall joins through Recall.ai, streams live transcript lines,
+samograph joins through Recall.ai, streams live transcript lines,
 captures call frames on demand, and sends explicit chat messages.
 
 Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and ngrok (or an alternative tunnel via --webhook-base).
@@ -46,14 +46,14 @@ flags:
 `;
 
 const COMMAND_HELP: Record<string, string> = {
-  join: `usage: samocall join <url> [options]
+  join: `usage: samograph join <url> [options]
 
 Join a Zoom or Google Meet call as a Recall.ai bot.
-By default, samocall streams transcript events and receives call frames over WebSocket.
+By default, samograph streams transcript events and receives call frames over WebSocket.
 
 options:
   --name N               Bot display name
-  --dict D               Deepgram keyword dictionary name
+  --dict D               Deepgram keyword dictionary name (default: postgresfm)
   --port P               Local callback server port (default: 8080)
   --transcript-dir DIR   Directory for timestamped transcript files
   --frame-dir DIR        Directory for on-demand frame output
@@ -61,20 +61,20 @@ options:
   --webhook-base URL     Use an existing public tunnel URL instead of starting ngrok
                          (e.g. localtunnel/cloudflared pointing at --port)
   --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
-                         Use web_4_core when webpage camera rendering is choppy
+                         (default: web_4_core; smoothest camera rendering)
   --no-presence          Join without the presence camera page (skips the
                          camera-page preflight entirely)
-  --presence-bg MODE     Presence camera background: sphere|field|static|cycle
-                         (default: sphere; static is the cheapest to render)
+  --presence-bg MODE     Presence camera look: robot|sphere|field|static|cycle
+                         (default: robot — static samoagent avatar image)
   --rtmp                 Use local RTMP path through ngrok TCP
   --rtmp-url URL         Use an existing RTMP endpoint
 
 examples:
-  samocall join "https://meet.google.com/abc-defg-hij" --name Leo
-  samocall join "https://zoom.us/j/123" --dict postgresfm
-  samocall join "https://zoom.us/j/123" --variant web_4_core
+  samograph join "https://meet.google.com/abc-defg-hij" --name Leo
+  samograph join "https://zoom.us/j/123" --dict postgresfm
+  samograph join "https://zoom.us/j/123" --variant web_4_core
 `,
-  frame: `usage: samocall frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
+  frame: `usage: samograph frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
 
 Write the latest call frame to disk.
 With the default WebSocket path, frames stay in memory until this command is run.
@@ -85,22 +85,22 @@ options:
   --archive        Also write a timestamped PNG+JSON archive copy.
 
 examples:
-  samocall frame
-  samocall frame --source screen --out /tmp/screen.png
-  samocall frame --out /tmp/current-call.png
-  samocall frame --archive
+  samograph frame
+  samograph frame --source screen --out /tmp/screen.png
+  samograph frame --out /tmp/current-call.png
+  samograph frame --archive
 `,
-  frames: `usage: samocall frames
+  frames: `usage: samograph frames
 
 List WebSocket frame sources currently buffered in memory.
-Use the source keys with: samocall frame --source SOURCE
+Use the source keys with: samograph frame --source SOURCE
 `,
-  doctor: `usage: samocall doctor
+  doctor: `usage: samograph doctor
 
 Check local prerequisites for joining meetings:
-Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samocall state.
+Bun, RECALL_API_KEY, ngrok, ffmpeg, and active samograph state.
 `,
-  presence: `usage: samocall presence <state> [message]
+  presence: `usage: samograph presence <state> [message]
 
 Update the bot camera presence shown in the meeting.
 States: listening|thinking|speaking|acting|idle
@@ -110,11 +110,11 @@ state's default label and nothing is added to the Comments lane. With a
 message, the state changes AND the message appears in the Comments lane.
 
 examples:
-  samocall presence listening
-  samocall presence thinking "Checking the migration plan"
-  samocall presence speaking "Answering in chat"
+  samograph presence listening
+  samograph presence thinking "Checking the migration plan"
+  samograph presence speaking "Answering in chat"
 `,
-  notes: `usage: samocall notes <init|point|decision|action|transcript> [options]
+  notes: `usage: samograph notes <init|point|decision|action|transcript> [options]
 
 Maintain a GitLab-style live meeting doc.
 Uses GOOGLE_DOC_ID and GOOGLE_APPLICATION_CREDENTIALS when flags are omitted.
@@ -130,13 +130,13 @@ options:
   --from-start          For transcript: copy existing lines before tailing live lines
 
 examples:
-  samocall notes init --doc-id 1abc...
-  samocall notes point "Customer is blocked on migration risk" --speaker Alice
-  samocall notes decision "Use logical replication for phase 1"
-  samocall notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
-  samocall notes transcript --from-start
+  samograph notes init --doc-id 1abc...
+  samograph notes point "Customer is blocked on migration risk" --speaker Alice
+  samograph notes decision "Use logical replication for phase 1"
+  samograph notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
+  samograph notes transcript --from-start
 `,
-  transcript: `usage: samocall transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
+  transcript: `usage: samograph transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
 
 Print a finished Recall.ai transcript, falling back to the local live transcript.
 
@@ -147,11 +147,11 @@ options:
   --local      Read the active/default local transcript instead of Recall
 
 examples:
-  samocall transcript
-  samocall transcript --local --cursor 0 --limit 20
-  samocall transcript --file ~/.samocall/20260604_022915_transcript.txt --cursor 0 --limit 20
-  samocall transcript --cursor 0 --limit 20
-  samocall transcript --cursor 20 --limit 20 <bot_id>
+  samograph transcript
+  samograph transcript --local --cursor 0 --limit 20
+  samograph transcript --file ~/.samograph/20260604_022915_transcript.txt --cursor 0 --limit 20
+  samograph transcript --cursor 0 --limit 20
+  samograph transcript --cursor 20 --limit 20 <bot_id>
 `,
 };
 
@@ -256,7 +256,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       result.url = positionals[0];
       result.name = (opts["--name"] as string) ?? null;
-      result.dict = (opts["--dict"] as string) ?? null;
+      // Default to the postgresfm keyterm dictionary; pass --dict "" to disable.
+      result.dict = (opts["--dict"] as string) ?? "postgresfm";
       const rawPort = opts["--port"];
       if (rawPort !== undefined) {
         const p = Number(rawPort);
@@ -276,14 +277,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.presence_bg = (opts["--presence-bg"] as string) ?? null;
       if (
         result.presence_bg !== null &&
-        !["sphere", "field", "static", "cycle"].includes(result.presence_bg)
+        !["robot", "sphere", "field", "static", "cycle"].includes(result.presence_bg)
       ) {
         throw new ArgError(
-          `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from sphere, field, static, cycle)`,
+          `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from robot, sphere, field, static, cycle)`,
         );
       }
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
-      result.variant = (opts["--variant"] as string) ?? null;
+      // Default Recall Output Media bot size: web_4_core renders the camera
+      // webpage smoothly (plain `web` is often choppy). Override with --variant.
+      result.variant = (opts["--variant"] as string) ?? "web_4_core";
       if (result.variant !== null && !["web", "web_4_core", "web_gpu"].includes(result.variant)) {
         throw new ArgError(
           `argument --variant: invalid choice: '${result.variant}' (choose from web, web_4_core, web_gpu)`,
@@ -449,7 +452,7 @@ async function main(): Promise<void> {
   }
   if (argv[0] === "--version" || argv[0] === "-v") {
     const pkg = (await import("../package.json")) as { version: string };
-    process.stdout.write(`samocall ${pkg.version}\n`);
+    process.stdout.write(`samograph ${pkg.version}\n`);
     process.exit(0);
   }
   let args: ParsedArgs;
@@ -457,7 +460,7 @@ async function main(): Promise<void> {
     args = parseArgs(argv);
   } catch (e) {
     if (e instanceof ArgError) {
-      process.stderr.write(`samocall: error: ${e.message}\n`);
+      process.stderr.write(`samograph: error: ${e.message}\n`);
       process.exit(2);
     }
     throw e;
@@ -472,7 +475,7 @@ async function main(): Promise<void> {
     // response surfacing as a SyntaxError, etc.) — emit a single clean line to
     // stderr instead of dumping a Bun stack trace.
     process.stderr.write(
-      `samocall: error: ${e instanceof Error ? e.message : String(e)}\n`,
+      `samograph: error: ${e instanceof Error ? e.message : String(e)}\n`,
     );
     process.exit(1);
   }

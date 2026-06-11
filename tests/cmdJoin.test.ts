@@ -65,7 +65,7 @@ function makeDeps(
     waitForNgrok: async () => WEBHOOK_BASE,
     startMediamtx: async () => fakeProc(7000, opts.killed),
     startNgrokTcpTunnel: async () => "tcp://ngrok.tcp:12345",
-    fetch: async () => new Response("<main class=\"samocall-presence\"></main>"),
+    fetch: async () => new Response("<main class=\"samograph-presence\"></main>"),
     sleep: async () => {},
   };
 }
@@ -98,9 +98,9 @@ describe("cmdJoin payload + saved state", () => {
     sf = join(tmp, "state.json");
     dictDir = join(tmp, "dicts");
     mkdirSync(dictDir, { recursive: true });
-    process.env.SAMOCALL_STATE_FILE = sf;
-    process.env.SAMOCALL_HOME = tmp; // transcripts -> <tmp>/.samocall/<timestamp>_transcript.txt
-    process.env.SAMOCALL_DICT_DIR = dictDir;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
+    process.env.SAMOGRAPH_HOME = tmp; // transcripts -> <tmp>/.samograph/<timestamp>_transcript.txt
+    process.env.SAMOGRAPH_DICT_DIR = dictDir;
   });
   afterEach(() => {
     restoreEnv(env);
@@ -301,10 +301,10 @@ describe("cmdJoin payload + saved state", () => {
       expect(serveCall!.cmd).not.toContain(flag);
     }
     expect(serveCall!.env).toMatchObject({
-      SAMOCALL_WEBHOOK_TOKEN: webhookToken,
-      SAMOCALL_FRAME_TOKEN: state.frame_token,
-      SAMOCALL_PRESENCE_TOKEN: state.presence_token,
-      SAMOCALL_PRESENCE_WRITE_TOKEN: state.presence_write_token,
+      SAMOGRAPH_WEBHOOK_TOKEN: webhookToken,
+      SAMOGRAPH_FRAME_TOKEN: state.frame_token,
+      SAMOGRAPH_PRESENCE_TOKEN: state.presence_token,
+      SAMOGRAPH_PRESENCE_WRITE_TOKEN: state.presence_write_token,
     });
   });
 
@@ -565,7 +565,7 @@ describe("cmdJoin payload + saved state", () => {
       ...makeDeps(captured),
       fetch: async () => {
         fetchCalls += 1;
-        return new Response("<main class=\"samocall-presence\"></main>");
+        return new Response("<main class=\"samograph-presence\"></main>");
       },
     };
 
@@ -618,7 +618,7 @@ describe("cmdJoin payload + saved state", () => {
 
 describe("waitForPresenceCamera", () => {
   const URL = "https://ngrok.example/presence?token=abc";
-  const MARKER_PAGE = "<main class=\"samocall-presence\"></main>";
+  const MARKER_PAGE = "<main class=\"samograph-presence\"></main>";
 
   it("returns true on a 200 with the marker on the first attempt; never sleeps", async () => {
     const sleeps: number[] = [];

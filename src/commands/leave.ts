@@ -40,13 +40,13 @@ export async function cmdLeave(
 
   const state = loadState();
 
-  // Write sentinel line so `samocall watch` exits cleanly.
+  // Write sentinel line so `samograph watch` exits cleanly.
   const transcriptFile = state.transcript_file;
   if (typeof transcriptFile === "string" && transcriptFile) {
     if (existsSync(transcriptFile)) {
       const ts = fmtSentinelTs(now());
       try {
-        appendFileSync(transcriptFile, `[${ts}] SAMOCALL_CALL_ENDED\n`);
+        appendFileSync(transcriptFile, `[${ts}] SAMOGRAPH_CALL_ENDED\n`);
       } catch {
         // OSError equivalent — ignore
       }

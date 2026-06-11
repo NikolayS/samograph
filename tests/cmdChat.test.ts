@@ -22,7 +22,7 @@ describe("cmdChat", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOCALL_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOGRAPH_STATE_FILE = join(tmp, "state.json");
     process.env.RECALL_API_KEY = "fake-key";
     writeFileSync(join(tmp, "state.json"), JSON.stringify({ bot_id: "bot-abc" }));
   });

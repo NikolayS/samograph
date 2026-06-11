@@ -12,7 +12,7 @@ describe("cmdPresence", () => {
   beforeEach(() => {
     env = saveEnv();
     tmp = makeTmpDir();
-    process.env.SAMOCALL_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOGRAPH_STATE_FILE = join(tmp, "state.json");
   });
 
   afterEach(() => {
@@ -55,7 +55,7 @@ describe("cmdPresence", () => {
     expect((capturedInit?.headers as Record<string, string>)["Content-Type"]).toBe(
       "application/json",
     );
-    expect((capturedInit?.headers as Record<string, string>)["X-Samocall-Presence-Token"]).toBe(
+    expect((capturedInit?.headers as Record<string, string>)["X-Samograph-Presence-Token"]).toBe(
       "write-secret",
     );
     expect(JSON.parse(capturedInit?.body as string)).toEqual({

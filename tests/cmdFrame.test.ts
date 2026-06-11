@@ -46,7 +46,7 @@ describe("cmdFrame — no RTMP", () => {
     env = saveEnv();
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     process.env.RECALL_API_KEY = "fake-key";
   });
   afterEach(() => {
@@ -196,8 +196,8 @@ describe("cmdFrame — no RTMP", () => {
 
     expect(new Uint8Array(readFileSync(out))).toEqual(new Uint8Array([1, 2, 3]));
     expect(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).toContain("bot-123");
-    expect(calls[0]?.headers).toEqual({ "X-Samocall-Frame-Token": "secret-token" });
-    expect(calls[1]?.headers).toEqual({ "X-Samocall-Frame-Token": "secret-token" });
+    expect(calls[0]?.headers).toEqual({ "X-Samograph-Frame-Token": "secret-token" });
+    expect(calls[1]?.headers).toEqual({ "X-Samograph-Frame-Token": "secret-token" });
     expect(existsSync(join(tmp, "latest.png"))).toBe(false);
   });
 
@@ -362,7 +362,7 @@ describe("cmdFrame — with RTMP", () => {
     env = saveEnv();
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
     process.env.RECALL_API_KEY = "fake-key";
   });
   afterEach(() => {

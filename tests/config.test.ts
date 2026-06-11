@@ -43,25 +43,25 @@ describe("path overrides", () => {
     restoreEnv(env);
   });
 
-  it("stateFile honors SAMOCALL_STATE_FILE", () => {
-    process.env.SAMOCALL_STATE_FILE = "/tmp/x/state.json";
+  it("stateFile honors SAMOGRAPH_STATE_FILE", () => {
+    process.env.SAMOGRAPH_STATE_FILE = "/tmp/x/state.json";
     expect(stateFile()).toBe("/tmp/x/state.json");
   });
 
   it("stateFile default under home", () => {
-    delete process.env.SAMOCALL_STATE_FILE;
-    expect(stateFile()).toBe(join(homedir(), ".samocall", "state.json"));
+    delete process.env.SAMOGRAPH_STATE_FILE;
+    expect(stateFile()).toBe(join(homedir(), ".samograph", "state.json"));
   });
 
-  it("dictDir honors SAMOCALL_DICT_DIR", () => {
-    process.env.SAMOCALL_DICT_DIR = "/tmp/dicts";
+  it("dictDir honors SAMOGRAPH_DICT_DIR", () => {
+    process.env.SAMOGRAPH_DICT_DIR = "/tmp/dicts";
     expect(dictDir()).toBe("/tmp/dicts");
   });
 
-  it("defaultTranscriptFile honors SAMOCALL_HOME", () => {
-    process.env.SAMOCALL_HOME = "/tmp/home";
+  it("defaultTranscriptFile honors SAMOGRAPH_HOME", () => {
+    process.env.SAMOGRAPH_HOME = "/tmp/home";
     expect(defaultTranscriptFile()).toBe(
-      join("/tmp/home", ".samocall", "transcript.txt"),
+      join("/tmp/home", ".samograph", "transcript.txt"),
     );
   });
 });

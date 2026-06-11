@@ -22,10 +22,10 @@ describe("resolveServeOptions", () => {
 
   beforeEach(() => {
     env = saveEnv();
-    delete process.env.SAMOCALL_WEBHOOK_TOKEN;
-    delete process.env.SAMOCALL_FRAME_TOKEN;
-    delete process.env.SAMOCALL_PRESENCE_TOKEN;
-    delete process.env.SAMOCALL_PRESENCE_WRITE_TOKEN;
+    delete process.env.SAMOGRAPH_WEBHOOK_TOKEN;
+    delete process.env.SAMOGRAPH_FRAME_TOKEN;
+    delete process.env.SAMOGRAPH_PRESENCE_TOKEN;
+    delete process.env.SAMOGRAPH_PRESENCE_WRITE_TOKEN;
   });
 
   afterEach(() => {
@@ -33,10 +33,10 @@ describe("resolveServeOptions", () => {
   });
 
   it("falls back to env vars when token flags are absent", () => {
-    process.env.SAMOCALL_WEBHOOK_TOKEN = "env-webhook";
-    process.env.SAMOCALL_FRAME_TOKEN = "env-frame";
-    process.env.SAMOCALL_PRESENCE_TOKEN = "env-presence";
-    process.env.SAMOCALL_PRESENCE_WRITE_TOKEN = "env-presence-write";
+    process.env.SAMOGRAPH_WEBHOOK_TOKEN = "env-webhook";
+    process.env.SAMOGRAPH_FRAME_TOKEN = "env-frame";
+    process.env.SAMOGRAPH_PRESENCE_TOKEN = "env-presence";
+    process.env.SAMOGRAPH_PRESENCE_WRITE_TOKEN = "env-presence-write";
 
     const opts = resolveServeOptions(serveArgs());
     expect(opts.webhookToken).toBe("env-webhook");
@@ -46,7 +46,7 @@ describe("resolveServeOptions", () => {
   });
 
   it("prefers explicit flags over env vars", () => {
-    process.env.SAMOCALL_WEBHOOK_TOKEN = "env-webhook";
+    process.env.SAMOGRAPH_WEBHOOK_TOKEN = "env-webhook";
     const opts = resolveServeOptions(serveArgs({ webhook_token: "flag-webhook" }));
     expect(opts.webhookToken).toBe("flag-webhook");
   });

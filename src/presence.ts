@@ -1,3 +1,5 @@
+import { ROBOT_DATA_URI } from "./robotImage";
+
 // Order matches help text and docs (listed in typical-use order); the initial
 // snapshot state is set explicitly in newPresenceSnapshot, not from index 0.
 export const PRESENCE_STATES = [
@@ -115,7 +117,7 @@ export function presencePageHtml(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>samocall presence</title>
+  <title>samograph presence</title>
   <style>
     :root {
       color-scheme: dark;
@@ -139,7 +141,7 @@ export function presencePageHtml(): string {
         #070a0f;
       background-size: 56px 56px;
     }
-    .samocall-presence {
+    .samograph-presence {
       width: 100vw;
       min-height: 100vh;
       display: grid;
@@ -196,6 +198,16 @@ export function presencePageHtml(): string {
       z-index: 1;
       opacity: 1;
       filter: saturate(1.1) contrast(1.08);
+      pointer-events: none;
+    }
+    .robot-img {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: 2147483647;
+      display: none;
       pointer-events: none;
     }
     .header {
@@ -400,10 +412,10 @@ export function presencePageHtml(): string {
   </style>
 </head>
 <body>
-  <main class="samocall-presence">
+  <main class="samograph-presence">
     <section class="tile" aria-live="polite">
       <header class="header">
-        <div class="brand"><span class="mark">S</span><span>samocall live presence</span></div>
+        <div class="brand"><span class="mark">S</span><span>samograph live presence</span></div>
         <div class="live" id="live">listening</div>
       </header>
       <div class="lanes">
@@ -411,8 +423,9 @@ export function presencePageHtml(): string {
           <div class="lane-title">Heard</div>
           <div class="activity" id="heard"></div>
         </section>
-      <div class="mind" aria-label="AI mind plasma ball">
+      <div class="mind" aria-label="samoagent avatar">
         <canvas class="plasma-canvas" id="plasma" aria-hidden="true"></canvas>
+        <img class="robot-img" id="robot" src="${ROBOT_DATA_URI}" alt="samoagent" aria-hidden="true">
       </div>
         <section class="lane" data-kind="comment">
           <div class="lane-title">Comments</div>
@@ -429,9 +442,9 @@ export function presencePageHtml(): string {
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
-    const bgParam = params.get("bg") || "sphere";
-    // Named modes only; unknown values fall back to sphere.
-    const backgroundMode = ["sphere", "field", "static", "cycle"].includes(bgParam) ? bgParam : "sphere";
+    const bgParam = params.get("bg") || "robot";
+    // Named modes only; unknown values fall back to the robot avatar.
+    const backgroundMode = ["robot", "sphere", "field", "static", "cycle"].includes(bgParam) ? bgParam : "robot";
     const styles = {
       idle: ["#64748b", "rgba(100, 116, 139, 0.18)", "rgba(100, 116, 139, 0.36)"],
       listening: ["#38bdf8", "rgba(56, 189, 248, 0.16)", "rgba(56, 189, 248, 0.44)"],
@@ -455,6 +468,20 @@ export function presencePageHtml(): string {
     }
     function cssVarRgb(name) {
       return hexToRgb(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+    }
+    function initRobot() {
+      // Robot mode is just a full-frame static picture. Move the image to be a
+      // direct child of <body> (escaping the tile's stacking/overflow context),
+      // then remove the entire dynamic dashboard so no header/lanes/footer/FPS
+      // text can show. No refresh/FPS loops run in this mode.
+      const robot = document.getElementById("robot");
+      const root = document.querySelector(".samograph-presence");
+      if (robot) {
+        document.body.appendChild(robot);
+        robot.style.display = "block";
+      }
+      if (root) root.remove();
+      document.body.style.background = "#000";
     }
     function initPlasma() {
       const canvas = document.getElementById("plasma");
@@ -637,7 +664,7 @@ export function presencePageHtml(): string {
       try {
         const response = await fetch("/presence.json", {
           cache: "no-store",
-          headers: { "X-Samocall-Presence-Token": token },
+          headers: { "X-Samograph-Presence-Token": token },
         });
         if (!response.ok) return;
         const data = await response.json();
@@ -663,10 +690,14 @@ export function presencePageHtml(): string {
         document.documentElement.style.setProperty("--accent-mid", pair[2]);
       } catch {}
     }
-    initPlasma();
-    initFpsProbe();
-    refresh();
-    setInterval(refresh, 1000);
+    if (backgroundMode === "robot") {
+      initRobot();
+    } else {
+      initPlasma();
+      initFpsProbe();
+      refresh();
+      setInterval(refresh, 1000);
+    }
   </script>
 </body>
 </html>`;

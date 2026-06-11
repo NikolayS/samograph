@@ -24,7 +24,7 @@ describe("cmdFrames", () => {
     env = saveEnv();
     tmp = makeTmpDir();
     sf = join(tmp, "state.json");
-    process.env.SAMOCALL_STATE_FILE = sf;
+    process.env.SAMOGRAPH_STATE_FILE = sf;
   });
   afterEach(() => {
     restoreEnv(env);
@@ -54,7 +54,7 @@ describe("cmdFrames", () => {
     }));
 
     expect(seen[0]?.url).toBe("http://127.0.0.1:18080/frames.json");
-    expect(seen[0]?.headers).toEqual({ "X-Samocall-Frame-Token": "frame-secret" });
+    expect(seen[0]?.headers).toEqual({ "X-Samograph-Frame-Token": "frame-secret" });
     expect(out).toContain("type:screen_share");
     expect(out).toContain("screen_share");
     expect(out).toContain("123456 bytes");
