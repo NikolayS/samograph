@@ -21,6 +21,9 @@ import {
   presencePageHtml,
   sanitizePresenceMessage,
   sanitizePresenceText,
+  sanitizeReactionCount,
+  sanitizeReactionEmoji,
+  withReaction,
   type PresenceSnapshot,
 } from "./presence.ts";
 
@@ -422,6 +425,33 @@ export function serve(
           presence.activities,
         );
         return Response.json({ ok: true, presence });
+      }
+      if (req.method === "POST" && url.pathname === "/reaction") {
+        if (!presenceWriteAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        const contentLength = req.headers.get("content-length");
+        if (contentLength !== null && Number(contentLength) > WEBHOOK_MAX_BYTES) {
+          return Response.json({ error: "payload too large" }, { status: 413 });
+        }
+        let payload: unknown = {};
+        try {
+          const body = await req.text();
+          if (new TextEncoder().encode(body).byteLength > WEBHOOK_MAX_BYTES) {
+            return Response.json({ error: "payload too large" }, { status: 413 });
+          }
+          payload = body ? JSON.parse(body) : {};
+        } catch {
+          payload = {};
+        }
+        const rawPayload = payload as { emoji?: unknown; count?: unknown };
+        const emoji = sanitizeReactionEmoji(rawPayload.emoji);
+        if (emoji === null) {
+          return Response.json({ error: "invalid reaction emoji" }, { status: 400 });
+        }
+        const count = sanitizeReactionCount(rawPayload.count);
+        presence = withReaction(presence, emoji, count);
+        return Response.json({ ok: true, reaction: presence.reaction });
       }
       if (url.pathname === "/video-ws") {
         if (!tokensEqual(url.searchParams.get("token"), opts.frameToken)) {

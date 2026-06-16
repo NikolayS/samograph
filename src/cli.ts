@@ -16,6 +16,7 @@ import { cmdServe } from "./commands/serve.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
+import { cmdReact } from "./commands/react.ts";
 
 const USAGE = `usage: samograph <command> [options]
 
@@ -33,6 +34,7 @@ commands:
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID]
   presence <listening|thinking|speaking|acting|idle> [message]
+  react <emoji> [--count N]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
   watch
@@ -120,6 +122,18 @@ examples:
   samograph presence thinking "Checking the migration plan"
   samograph presence speaking "Answering in chat"
 `,
+  react: `usage: samograph react <emoji> [--count N]
+
+Burst floating emoji across the bot camera so everyone in the call sees it.
+Visible only on a dynamic presence background (--presence-bg sphere|field|
+static|cycle); the default robot background is a static image.
+
+--count N   how many emoji fly per burst (1-24, default 8)
+
+examples:
+  samograph react 🎉
+  samograph react 👍 --count 12
+`,
   notes: `usage: samograph notes <init|point|decision|action|transcript> [options]
 
 Maintain a GitLab-style live meeting doc.
@@ -185,6 +199,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     screenshot: new Set(["--out"]),
     chat: new Set(["--bot-id"]),
     presence: new Set(),
+    react: new Set(["--count"]),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
     watch: new Set(),
@@ -201,6 +216,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     screenshot: new Set(),
     chat: new Set(),
     presence: new Set(),
+    react: new Set(),
     transcript: new Set(["--local"]),
     dicts: new Set(),
     watch: new Set(),
@@ -372,6 +388,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.message = positionals.slice(1).join(" ") || undefined;
       break;
     }
+    case "react": {
+      if (positionals.length < 1) {
+        throw new ArgError("the following arguments are required: emoji");
+      }
+      result.emoji = positionals[0];
+      if (opts["--count"] !== undefined) {
+        const c = Number(opts["--count"]);
+        if (!Number.isInteger(c) || c < 1) {
+          throw new ArgError(`argument --count: invalid count: '${opts["--count"]}'`);
+        }
+        result.reaction_count = c;
+      }
+      break;
+    }
     case "dicts":
     case "watch":
     case "doctor":
@@ -436,6 +466,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdChat(args);
     case "presence":
       return cmdPresence(args);
+    case "react":
+      return cmdReact(args);
     case "frame":
       return cmdFrame(args);
     case "frames":
