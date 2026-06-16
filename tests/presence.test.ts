@@ -8,6 +8,10 @@ import {
   newPresenceSnapshot,
   appendPresenceActivity,
   activityFromTranscriptLine,
+  sanitizeReactionEmoji,
+  sanitizeReactionCount,
+  withReaction,
+  REACTION_MAX_COUNT,
   type PresenceSnapshot,
 } from "../src/presence.ts";
 
@@ -218,5 +222,71 @@ describe("newPresenceSnapshot", () => {
     expect(snapshot.state).toBe("acting");
     expect(snapshot.message).toBe("Opening PR");
     expect(snapshot.activities).toBe(activities);
+  });
+
+  it("starts with no reaction", () => {
+    expect(newPresenceSnapshot().reaction).toBeNull();
+  });
+});
+
+describe("sanitizeReactionEmoji", () => {
+  it("keeps a single emoji", () => {
+    expect(sanitizeReactionEmoji("🎉")).toBe("🎉");
+  });
+
+  it("counts surrogate-pair emoji as one glyph when capping", () => {
+    // Six distinct emoji are allowed; the seventh is dropped.
+    expect(sanitizeReactionEmoji("😀😀😀😀😀😀😀")).toBe("😀😀😀😀😀😀");
+  });
+
+  it("strips whitespace between glyphs", () => {
+    expect(sanitizeReactionEmoji("👍 🔥")).toBe("👍🔥");
+  });
+
+  it("returns null for empty or whitespace-only input", () => {
+    expect(sanitizeReactionEmoji("")).toBeNull();
+    expect(sanitizeReactionEmoji("   ")).toBeNull();
+  });
+
+  it("returns null for non-string input", () => {
+    expect(sanitizeReactionEmoji(null)).toBeNull();
+    expect(sanitizeReactionEmoji(42)).toBeNull();
+    expect(sanitizeReactionEmoji(undefined)).toBeNull();
+  });
+});
+
+describe("sanitizeReactionCount", () => {
+  it("clamps to the 1..max range", () => {
+    expect(sanitizeReactionCount(0)).toBe(1);
+    expect(sanitizeReactionCount(-5)).toBe(1);
+    expect(sanitizeReactionCount(1000)).toBe(REACTION_MAX_COUNT);
+  });
+
+  it("floors fractional counts", () => {
+    expect(sanitizeReactionCount(3.9)).toBe(3);
+  });
+
+  it("parses numeric strings", () => {
+    expect(sanitizeReactionCount("12")).toBe(12);
+  });
+
+  it("falls back to the default for non-numeric input", () => {
+    expect(sanitizeReactionCount("nope")).toBe(8);
+    expect(sanitizeReactionCount(NaN)).toBe(8);
+    expect(sanitizeReactionCount(null)).toBe(8);
+  });
+});
+
+describe("withReaction", () => {
+  it("stamps a reaction and bumps updated_at without touching activities", () => {
+    const base = newPresenceSnapshot("acting", "Working", [
+      { kind: "heard" as const, label: "Alice", text: "hi", at: "2024-01-01T00:00:00.000Z" },
+    ]);
+    const next = withReaction(base, "🎉", 5);
+    expect(next.reaction?.emoji).toBe("🎉");
+    expect(next.reaction?.count).toBe(5);
+    expect(Number.isNaN(Date.parse(next.reaction?.at ?? ""))).toBe(false);
+    expect(next.state).toBe("acting");
+    expect(next.activities).toBe(base.activities);
   });
 });

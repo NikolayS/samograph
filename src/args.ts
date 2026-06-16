@@ -30,6 +30,8 @@ export interface ParsedArgs {
   presence_token?: string;
   presence_write_token?: string;
   presence_state?: string;
+  emoji?: string;
+  reaction_count?: number;
   doc_id?: string | null;
   credentials?: string | null;
   from_start?: boolean;

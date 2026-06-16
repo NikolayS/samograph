@@ -429,6 +429,55 @@ describe("webhook handler", () => {
     }
   });
 
+  it("POST /reaction stamps a reaction visible in presence json", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const blocked = await fetch(`http://localhost:${server.port}/reaction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emoji: "🎉" }),
+      });
+      expect(blocked.status).toBe(403);
+
+      const bad = await fetch(`http://localhost:${server.port}/reaction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samograph-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ emoji: "   " }),
+      });
+      expect(bad.status).toBe(400);
+
+      const ok = await fetch(`http://localhost:${server.port}/reaction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Samograph-Presence-Token": "write-token",
+        },
+        body: JSON.stringify({ emoji: "🎉", count: 99 }),
+      });
+      expect(ok.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samograph-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as {
+        reaction: { emoji: string; count: number; at: string } | null;
+      };
+      expect(json.reaction?.emoji).toBe("🎉");
+      // count is clamped to the server-side maximum.
+      expect(json.reaction?.count).toBe(24);
+      expect(Number.isNaN(Date.parse(json.reaction?.at ?? ""))).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("bare state toggle without message uses the default message and adds no activity", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",
