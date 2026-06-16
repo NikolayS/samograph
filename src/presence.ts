@@ -327,9 +327,10 @@ export function presencePageHtml(): string {
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      /* Newest line sits at the bottom (chat-style), so anchor the stack there
-         and let older lines overflow off the top. */
-      justify-content: flex-end;
+      /* Pin the stack to the top: the first line appears at the top and each
+         new line is added below it (newest at the bottom, chat order). Once the
+         lane is full, the oldest lines overflow off the top. */
+      justify-content: flex-start;
     }
     .item {
       display: block;
