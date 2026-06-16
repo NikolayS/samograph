@@ -46,6 +46,85 @@ describe("cmdChat", () => {
     expect(writes.join("")).toContain("hello meeting");
   });
 
+  it("rings the chime on the local presence server after a successful send", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        bot_id: "bot-abc",
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_write_token: "write-secret",
+      }),
+    );
+    let chimeUrl = "";
+    let chimeInit: RequestInit | undefined;
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hello", bot_id: null },
+        {
+          recall: makeRecall(new Response("{}", { status: 200 })),
+          fetchFn: async (url, init) => {
+            chimeUrl = String(url);
+            chimeInit = init;
+            return new Response("{}", { status: 200 });
+          },
+        },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(chimeUrl).toBe("http://127.0.0.1:8080/chime");
+    expect(chimeInit?.method).toBe("POST");
+    expect((chimeInit?.headers as Record<string, string>)["X-Samograph-Presence-Token"]).toBe(
+      "write-secret",
+    );
+  });
+
+  it("does not ring the chime (or fail) when no presence server is in state", async () => {
+    let chimeCalled = false;
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hello", bot_id: null },
+        {
+          recall: makeRecall(new Response("{}", { status: 200 })),
+          fetchFn: async () => { chimeCalled = true; return new Response("{}", { status: 200 }); },
+        },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(chimeCalled).toBe(false);
+  });
+
+  it("still sends chat even if the chime ping throws", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({
+        bot_id: "bot-abc",
+        local_presence_update_url: "http://127.0.0.1:8080/presence",
+        presence_write_token: "write-secret",
+      }),
+    );
+    const writes: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (s: string) => { writes.push(s); return true; };
+    try {
+      await cmdChat(
+        { command: "chat", message: "hello", bot_id: null },
+        {
+          recall: makeRecall(new Response("{}", { status: 200 })),
+          fetchFn: async () => { throw new Error("connection refused"); },
+        },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(writes.join("")).toContain("hello");
+  });
+
   it("throws on non-ok response", async () => {
     const errResp = new Response("Forbidden", { status: 403 });
     let threw = false;

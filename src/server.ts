@@ -21,6 +21,7 @@ import {
   presencePageHtml,
   sanitizePresenceMessage,
   sanitizePresenceText,
+  withChime,
   type PresenceSnapshot,
 } from "./presence.ts";
 
@@ -422,6 +423,15 @@ export function serve(
           presence.activities,
         );
         return Response.json({ ok: true, presence });
+      }
+      if (req.method === "POST" && url.pathname === "/chime") {
+        if (!presenceWriteAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        // No body needed — a chime is a pure transient signal. The page plays a
+        // sound once per new chime timestamp.
+        presence = withChime(presence);
+        return Response.json({ ok: true, chime: presence.chime });
       }
       if (url.pathname === "/video-ws") {
         if (!tokensEqual(url.searchParams.get("token"), opts.frameToken)) {

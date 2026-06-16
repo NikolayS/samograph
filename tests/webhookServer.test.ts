@@ -429,6 +429,33 @@ describe("webhook handler", () => {
     }
   });
 
+  it("POST /chime sets a chime timestamp visible in presence json", async () => {
+    const server = serve(0, tf, {
+      webhookToken: "webhook-token",
+      presenceToken: "presence-token",
+      presenceWriteToken: "write-token",
+    });
+    try {
+      const blocked = await fetch(`http://localhost:${server.port}/chime`, { method: "POST" });
+      expect(blocked.status).toBe(403);
+
+      const ok = await fetch(`http://localhost:${server.port}/chime`, {
+        method: "POST",
+        headers: { "X-Samograph-Presence-Token": "write-token" },
+      });
+      expect(ok.status).toBe(200);
+
+      const jsonResp = await fetch(`http://localhost:${server.port}/presence.json`, {
+        headers: { "X-Samograph-Presence-Token": "presence-token" },
+      });
+      const json = await jsonResp.json() as { chime: { at: string } | null };
+      expect(json.chime).not.toBeNull();
+      expect(Number.isNaN(Date.parse(json.chime?.at ?? ""))).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("bare state toggle without message uses the default message and adds no activity", async () => {
     const server = serve(0, tf, {
       webhookToken: "webhook-token",

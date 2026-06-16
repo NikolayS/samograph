@@ -8,6 +8,7 @@ import {
   newPresenceSnapshot,
   appendPresenceActivity,
   activityFromTranscriptLine,
+  withChime,
   type PresenceSnapshot,
 } from "../src/presence.ts";
 
@@ -218,5 +219,22 @@ describe("newPresenceSnapshot", () => {
     expect(snapshot.state).toBe("acting");
     expect(snapshot.message).toBe("Opening PR");
     expect(snapshot.activities).toBe(activities);
+  });
+
+  it("starts with no chime", () => {
+    expect(newPresenceSnapshot().chime).toBeNull();
+  });
+});
+
+describe("withChime", () => {
+  it("stamps a chime timestamp and bumps updated_at without touching activities", () => {
+    const base = newPresenceSnapshot("listening", "Listening", [
+      { kind: "heard" as const, label: "Alice", text: "hi", at: "2024-01-01T00:00:00.000Z" },
+    ]);
+    const next = withChime(base);
+    expect(next.chime).not.toBeNull();
+    expect(Number.isNaN(Date.parse(next.chime?.at ?? ""))).toBe(false);
+    expect(next.state).toBe("listening");
+    expect(next.activities).toBe(base.activities);
   });
 });
