@@ -33,6 +33,7 @@ samograph gives an AI agent a small set of meeting tools:
 - `notes` - maintain a structured Google Doc agenda with important points, decisions, and action items.
 - `chat` - send a deliberate message into the meeting chat.
 - `presence` - update the bot camera state shown in the meeting.
+- `react` - burst floating emoji across the bot camera, visible to everyone in the call.
 - `frame` - export the current call view on demand.
 - `leave` - remove the bot and clean up local state.
 - `status` - show the current Recall bot state.
@@ -199,6 +200,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat.
 - `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; explicit messages are shown as live Comments activity on the camera page, bare state toggles only switch the state with its default message, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
+- `react <emoji> [--count N]` - burst floating emoji across the bot camera (`--count` 1-24, default 8). Rendered as Twemoji images so they show even though the camera renderer has no emoji font. Visible only on a dynamic presence background (`--presence-bg sphere|field|static|cycle`), not the default robot image.
 - `frames` - list buffered WebSocket frame sources and metadata.
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.
