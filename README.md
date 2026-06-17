@@ -31,7 +31,7 @@ samograph gives an AI agent a small set of meeting tools:
 - `join` - bring a Recall.ai bot into a Zoom or Google Meet call.
 - `watch` - stream live transcript lines to the agent.
 - `notes` - maintain a structured Google Doc agenda with important points, decisions, and action items.
-- `chat` - send a deliberate message into the meeting chat.
+- `chat` - send a deliberate message into the meeting chat (plays a soft chime on the bot camera so people notice it).
 - `presence` - update the bot camera state shown in the meeting.
 - `frame` - export the current call view on demand.
 - `leave` - remove the bot and clean up local state.
@@ -197,7 +197,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes decision <text>` - add a decision.
 - `notes action <text>` - add an action item.
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
-- `chat <message>` - send meeting chat.
+- `chat <message>` - send meeting chat. After a successful send it best-effort pings the local presence server so the bot camera plays a short, soft chime (synthesized on the page, streamed as the bot's audio); chat still succeeds if the presence server is absent or the ping fails. Audible only with the presence camera active on a dynamic background.
 - `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; explicit messages are shown as live Comments activity on the camera page, bare state toggles only switch the state with its default message, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
 - `frames` - list buffered WebSocket frame sources and metadata.
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.

@@ -17,6 +17,14 @@ export interface PresenceSnapshot {
   message: string;
   updated_at: string;
   activities: PresenceActivity[];
+  chime: PresenceChime | null;
+}
+
+// A transient audio cue. The camera page plays a short sound once per distinct
+// `at` timestamp (e.g. when the bot posts a meeting-chat message), so the same
+// chime sitting in the snapshot never replays.
+export interface PresenceChime {
+  at: string;
 }
 
 export type PresenceActivityKind = "heard" | "comment";
@@ -69,6 +77,17 @@ export function newPresenceSnapshot(
     message,
     updated_at: new Date().toISOString(),
     activities,
+    chime: null,
+  };
+}
+
+// Stamp a transient chime onto the snapshot. Bumping updated_at makes the
+// page's adaptive poller treat it as fresh activity and pick it up quickly.
+export function withChime(snapshot: PresenceSnapshot): PresenceSnapshot {
+  return {
+    ...snapshot,
+    updated_at: new Date().toISOString(),
+    chime: { at: new Date().toISOString() },
   };
 }
 
@@ -612,6 +631,54 @@ export function presencePageHtml(): string {
       resize();
       requestAnimationFrame(draw);
     }
+    // Soft "blip" audio cue, synthesized with WebAudio (no asset files). Played
+    // once per new chime timestamp — e.g. when the bot posts a meeting-chat
+    // message — so people notice it without watching the camera. Recall renders
+    // this page as the bot camera and streams its audio into the call.
+    let audioCtx = null;
+    function chimeAudioContext() {
+      if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        try { audioCtx = new Ctx(); } catch { return null; }
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+      return audioCtx;
+    }
+    function playChime() {
+      const ctx = chimeAudioContext();
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 1800; // shave harshness for a soft tone
+      osc.type = "sine";
+      // A gentle upward "bl-ip" rather than a flat beep.
+      osc.frequency.setValueAtTime(540, t);
+      osc.frequency.exponentialRampToValueAtTime(680, t + 0.06);
+      // Quick soft attack, smooth decay; low peak gain so it stays unobtrusive.
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.16, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+      osc.connect(lp);
+      lp.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.32);
+    }
+    let lastChimeAt = "";
+    let chimeReady = false;
+    function handleChime(chime) {
+      const at = chime && chime.at ? String(chime.at) : "";
+      // First poll establishes a baseline without playing, so a chime already
+      // sitting in the snapshot at page load does not fire on join.
+      if (!chimeReady) { lastChimeAt = at; chimeReady = true; return; }
+      if (!at || at === lastChimeAt) return;
+      lastChimeAt = at;
+      playChime();
+    }
     function formatUpdated(value) {
       const date = new Date(String(value || ""));
       if (Number.isNaN(date.getTime())) return "Waiting for live signal";
@@ -674,6 +741,7 @@ export function presencePageHtml(): string {
         });
         if (!response.ok) return;
         const data = await response.json();
+        handleChime(data.chime);
         const signature = String(data.updated_at || "");
         if (signature !== lastSignature) {
           lastSignature = signature;
