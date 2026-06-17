@@ -346,6 +346,9 @@ export function presencePageHtml(): string {
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      /* Pin the stack to the top: the first line appears at the top and each
+         new line is added below it (newest at the bottom, chat order). Once the
+         lane is full, the oldest lines overflow off the top. */
       justify-content: flex-start;
     }
     .item {
@@ -710,8 +713,10 @@ export function presencePageHtml(): string {
         element.append(empty);
         return;
       }
+      // items arrive newest-first; render oldest-first so the newest line lands
+      // at the bottom of the lane (chat order). Keep only the newest 14.
       let lastLabel = "";
-      for (const item of items.slice(0, 14)) {
+      for (const item of items.slice(0, 14).reverse()) {
         const row = document.createElement("div");
         row.className = "item";
         const label = document.createElement("div");
