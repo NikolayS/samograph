@@ -39,4 +39,7 @@ export interface ParsedArgs {
   owner?: string | null;
   due?: string | null;
   title?: string | null;
+  intro?: boolean;
+  intro_text?: string | null;
+  context?: boolean;
 }

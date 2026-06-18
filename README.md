@@ -32,6 +32,7 @@ samograph gives an AI agent a small set of meeting tools:
 - `watch` - stream live transcript lines to the agent.
 - `notes` - maintain a structured Google Doc agenda with important points, decisions, and action items.
 - `chat` - send a deliberate message into the meeting chat (plays a soft chime into the call audio so people notice it).
+- `intro` - post a short self-introduction into the meeting chat (also available as `join --intro`).
 - `presence` - update the bot camera state shown in the meeting.
 - `frame` - export the current call view on demand.
 - `leave` - remove the bot and clean up local state.
@@ -198,6 +199,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `notes action <text>` - add an action item.
 - `notes transcript [--from-start]` - explicitly mirror raw transcript lines.
 - `chat <message>` - send meeting chat. After a successful send it best-effort plays a short, soft chime **into the call's audio** via Recall's `output_audio` endpoint, so participants actually hear that the bot posted; chat still succeeds if audio output fails. It also pings the local presence server so the bot camera animates the same cue (camera-page WebAudio is video-only and inaudible in Recall's headless renderer, so the call-audio path is what people hear).
+- `intro [--intro-text TEXT] [--context] [--bot-id ID]` - post a short self-introduction (who the bot is and what it can do) into the meeting chat on demand. Reuses `chat` (same bot-id resolution, error handling, and chime). Default text is English and concise; override it with `--intro-text` (e.g. a localized or freshly generated intro the agent composes). `--context` appends the first spoken line the bot has heard so far ("The first thing I heard was — …"), skipped when the transcript is still empty. See also `join --intro`, which posts the default intro automatically once the bot is admitted (English, since no transcript exists yet to detect the call's language).
 - `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; explicit messages are shown as live Comments activity on the camera page, bare state toggles only switch the state with its default message, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
 - `frames` - list buffered WebSocket frame sources and metadata.
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
