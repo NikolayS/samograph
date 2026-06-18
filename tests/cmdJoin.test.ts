@@ -36,6 +36,7 @@ function makeFakeRecall(captured: { payload?: any; rejectCreateBot?: boolean }):
     async sendChat() {
       return new Response("{}", { status: 200 });
     },
+    async outputAudio() { return new Response(); },
     async screenshot() {
       return new Response("{}", { status: 200 });
     },

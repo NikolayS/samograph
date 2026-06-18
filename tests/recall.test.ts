@@ -83,6 +83,16 @@ describe("recall client URL/method/header contract", () => {
     expect(calls[0]!.headers.Authorization).toBe(`Token ${KEY}`);
   });
 
+  it("outputAudio -> POST .../bot/<id>/output_audio/ with {kind, b64_data}", async () => {
+    const { fetchFn, calls } = makeFakeFetch(() => jsonResponse({}));
+    await makeRecallClient(fetchFn).outputAudio("bot-x", "QUJD");
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.url).toBe(`${RECALL_BASE}/bot/bot-x/output_audio/`);
+    expect(calls[0]!.method).toBe("POST");
+    expect(calls[0]!.body).toEqual({ kind: "mp3", b64_data: "QUJD" });
+    expect(calls[0]!.headers.Authorization).toBe(`Token ${KEY}`);
+  });
+
   it("screenshot -> GET .../bot/<id>/screenshot/", async () => {
     const { fetchFn, calls } = makeFakeFetch(() => jsonResponse({}));
     await makeRecallClient(fetchFn).screenshot("bot-x");

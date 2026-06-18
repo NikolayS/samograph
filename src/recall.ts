@@ -6,6 +6,7 @@ export interface RecallClient {
   leaveCall(botId: string): Promise<Response>;
   getBot(botId: string): Promise<unknown>;
   sendChat(botId: string, message: string): Promise<Response>;
+  outputAudio(botId: string, b64Mp3: string): Promise<Response>;
   screenshot(botId: string): Promise<Response>;
   createBot(payload: unknown): Promise<unknown>;
 }
@@ -43,6 +44,18 @@ export function makeRecallClient(fetchFn: FetchFn = fetch): RecallClient {
         headers: headers(),
         body: JSON.stringify({ message }),
         signal: AbortSignal.timeout(10000),
+      });
+    },
+
+    // Play a short MP3 (base64) into the call's audio track. Unlike the camera
+    // page's WebAudio cue — which Recall renders as video only and a headless
+    // browser keeps suspended — this is actually audible to participants.
+    async outputAudio(botId: string, b64Mp3: string): Promise<Response> {
+      return fetchFn(`${RECALL_BASE}/bot/${botId}/output_audio/`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ kind: "mp3", b64_data: b64Mp3 }),
+        signal: AbortSignal.timeout(15000),
       });
     },
 
