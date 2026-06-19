@@ -8,6 +8,7 @@ import { cmdStatus } from "./commands/status.ts";
 import { cmdScreenshot } from "./commands/screenshot.ts";
 import { cmdTranscript } from "./commands/transcript.ts";
 import { cmdChat } from "./commands/chat.ts";
+import { cmdIntro } from "./commands/intro.ts";
 import { cmdFrame } from "./commands/frame.ts";
 import { cmdFrames } from "./commands/frames.ts";
 import { cmdDicts } from "./commands/dicts.ts";
@@ -27,11 +28,12 @@ Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and a tunnel:
 ngrok (default), cloudflared (--tunnel cloudflared), or your own via --webhook-base.
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE] [--intro] [--intro-text TEXT]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID]
+  intro [--intro-text TEXT] [--context] [--bot-id ID]
   presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
@@ -74,6 +76,11 @@ options:
                          (default: robot — static samoagent avatar image)
   --rtmp                 Use local RTMP path through ngrok TCP
   --rtmp-url URL         Use an existing RTMP endpoint
+  --intro                After joining, post a short self-introduction into the
+                         meeting chat once the bot is admitted (best-effort).
+                         Default text is English (no transcript yet to detect
+                         the call language).
+  --intro-text TEXT      Custom introduction text for --intro (overrides default)
 
 examples:
   samograph join "https://meet.google.com/abc-defg-hij" --name Leo
@@ -179,7 +186,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--intro-text"]),
+    intro: new Set(["--bot-id", "--intro-text"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
@@ -195,7 +203,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token", "--public-base"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--no-ws-video", "--no-presence"]),
+    join: new Set(["--rtmp", "--no-ws-video", "--no-presence", "--intro"]),
+    intro: new Set(["--context"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),
@@ -302,6 +311,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
           `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from robot, sphere, field, static, cycle)`,
         );
       }
+      result.intro = opts["--intro"] === true;
+      result.intro_text = (opts["--intro-text"] as string) ?? null;
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
       // Default Recall Output Media bot size: web_4_core renders the camera
       // webpage smoothly (plain `web` is often choppy). Override with --variant.
@@ -355,6 +366,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       result.message = positionals[0];
       result.bot_id = (opts["--bot-id"] as string) ?? null;
+      break;
+    }
+    case "intro": {
+      result.bot_id = (opts["--bot-id"] as string) ?? null;
+      result.intro_text = (opts["--intro-text"] as string) ?? null;
+      result.context = opts["--context"] === true;
       break;
     }
     case "presence": {
@@ -434,6 +451,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdTranscript(args);
     case "chat":
       return cmdChat(args);
+    case "intro":
+      return cmdIntro(args);
     case "presence":
       return cmdPresence(args);
     case "frame":

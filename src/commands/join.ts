@@ -10,6 +10,8 @@ import { botName } from "../botName.ts";
 import { loadState, saveState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
+import { postIntroOnJoin } from "./intro.ts";
+import { DEFAULT_INTRO_TEXT } from "../introText.ts";
 import { probeTunnelHealth, type TunnelProbeResult } from "../server.ts";
 import { startCloudflared, type CloudflaredTunnel } from "../tunnel.ts";
 import {
@@ -663,6 +665,19 @@ export async function cmdJoin(
   }
   process.stdout.write(`To stop:                      samograph leave\n`);
   process.stdout.write(`--------------------------\n`);
+
+  if (args.intro) {
+    // Best-effort, non-fatal, fire-and-forget: poll the bot status in the
+    // background and post a short self-introduction once it is admitted, so
+    // `join` returns promptly and the agent can start `watch` without waiting
+    // ~30s. Default text is English — at join time there is no transcript yet
+    // to detect the call's language. postIntroOnJoin never throws.
+    const introText =
+      args.intro_text && args.intro_text.trim()
+        ? args.intro_text.trim()
+        : DEFAULT_INTRO_TEXT;
+    void postIntroOnJoin(recall, bid, introText);
+  }
   } catch (err) {
     cleanupUnsaved();
     throw err;

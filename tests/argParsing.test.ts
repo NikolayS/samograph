@@ -463,4 +463,31 @@ describe("argParsing", () => {
     expect(proc.exitCode).not.toBe(0);
     expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samograph \d+\.\d+\.\d+/);
   });
+
+  it("join --intro flag and --intro-text are parsed", () => {
+    const args = parseArgs(["join", "https://zoom.us/j/1", "--intro", "--intro-text", "Hola"]);
+    expect(args.intro).toBe(true);
+    expect(args.intro_text).toBe("Hola");
+  });
+
+  it("join intro defaults: off, no custom text", () => {
+    const args = parseArgs(["join", "https://zoom.us/j/1"]);
+    expect(args.intro).toBe(false);
+    expect(args.intro_text).toBeNull();
+  });
+
+  it("intro command parses --intro-text, --context, --bot-id", () => {
+    const args = parseArgs(["intro", "--intro-text", "Hi there", "--context", "--bot-id", "bot-9"]);
+    expect(args.command).toBe("intro");
+    expect(args.intro_text).toBe("Hi there");
+    expect(args.context).toBe(true);
+    expect(args.bot_id).toBe("bot-9");
+  });
+
+  it("intro command defaults: no custom text, context off", () => {
+    const args = parseArgs(["intro"]);
+    expect(args.intro_text).toBeNull();
+    expect(args.context).toBe(false);
+    expect(args.bot_id).toBeNull();
+  });
 });
