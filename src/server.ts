@@ -57,7 +57,7 @@ export async function probeTunnelHealth(
   try {
     const response = await fetchFn(
       `${publicBaseUrl}/health?nonce=${encodeURIComponent(nonce)}`,
-      { cache: "no-store" },
+      { cache: "no-store", signal: AbortSignal.timeout(5000) },
     );
     const headerCode = response.headers.get("ngrok-error-code");
     if (headerCode) {
