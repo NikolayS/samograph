@@ -787,8 +787,11 @@ export function presencePageHtml(): string {
     } else {
       initPlasma();
       initFpsProbe();
-      pollLoop();
     }
+    // Poll on every background, including the static robot avatar: the loop
+    // drives the chime cue and live activity lanes, which must not depend on
+    // the animated plasma backgrounds being active.
+    pollLoop();
   </script>
 </body>
 </html>`;

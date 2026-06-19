@@ -9,6 +9,7 @@ import {
   appendPresenceActivity,
   activityFromTranscriptLine,
   withChime,
+  presencePageHtml,
   type PresenceSnapshot,
 } from "../src/presence.ts";
 
@@ -236,5 +237,18 @@ describe("withChime", () => {
     expect(Number.isNaN(Date.parse(next.chime?.at ?? ""))).toBe(false);
     expect(next.state).toBe("listening");
     expect(next.activities).toBe(base.activities);
+  });
+});
+
+describe("presencePageHtml polling", () => {
+  it("starts the poll loop on every background, including the static robot avatar", () => {
+    const html = presencePageHtml();
+    const dispatch = html.slice(html.indexOf('if (backgroundMode === "robot")'));
+    // The plasma-only branch ends here; pollLoop() must run after the dispatch,
+    // not nested inside it, so the static robot avatar still polls for chimes.
+    const elseClose = dispatch.indexOf("}", dispatch.indexOf("initFpsProbe();"));
+    const pollAt = dispatch.indexOf("pollLoop();");
+    expect(elseClose).toBeGreaterThan(-1);
+    expect(pollAt).toBeGreaterThan(elseClose);
   });
 });
