@@ -110,3 +110,27 @@ samograph leave
 ```
 
 `leave` removes the bot, stops local helper processes, writes the `SAMOCALL_CALL_ENDED` sentinel, and lets `watch` exit cleanly.
+
+## Merge Gate (samorev)
+
+Every pull request must pass our review gate before it is merged. The gate is
+[Tanya301/samorev](https://github.com/Tanya301/samorev) — a CLI-first code-review
+tool. **Do not merge a PR unless both of the following are satisfied:**
+
+1. **CI is green** — all CI/test checks pass (locally: `bun test` and
+   `bunx tsc --noEmit` clean).
+2. **samorev review passed and is posted as a PR comment** — run the gate and
+   post its result to the PR. A merge is blocked if either check is missing,
+   failing, or was forgotten.
+
+```bash
+# Deterministic gate (CI status + draft state) — posts a PASS/FAIL comment:
+bun run samorev review https://github.com/<owner>/<repo>/pull/<n> --fetch
+# Read-only (print to stdout, no posting):
+bun run samorev review https://github.com/<owner>/<repo>/pull/<n> --no-comment --fetch
+```
+
+The Bun CLI gate checks CI status + draft state only. For real code analysis run
+the `/review-mr` slash command (or spawn the samorev review agents — Security and
+Bug Hunter are blocking), then post a comment with the combined result. Both
+surfaces authenticate through `gh`/`glab`; see the repo's `docs/bot-operation.md`.
