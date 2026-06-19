@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>samograph.dev — Product Brief</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --ink: #1a1f2b;
+    --muted: #5c6675;
+    --line: #e6e9ef;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --v1: #0d9488;
+    --v1-soft: #d9f5f0;
+    --v2: #b45309;
+    --v2-soft: #fdf0d9;
+    --risk: #be123c;
+    --risk-soft: #fde7ec;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    font-size: 16px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+  header.hero {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 38px 34px;
+    box-shadow: 0 8px 30px rgba(79,70,229,0.25);
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 2rem; letter-spacing: -0.02em; }
+  header.hero .tagline { margin: 0; font-size: 1.12rem; opacity: 0.95; font-weight: 500; }
+  header.hero .meta { margin-top: 16px; font-size: 0.86rem; opacity: 0.85; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 8px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 0.8rem; font-weight: 600; padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card);
+  }
+  .chip .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .chip.v1 .dot { background: var(--v1); }
+  .chip.v2 .dot { background: var(--v2); }
+  .chip.risk .dot { background: var(--risk); }
+  section.card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 26px 28px;
+    margin-top: 22px;
+    box-shadow: 0 1px 3px rgba(20,30,50,0.04);
+  }
+  h2 {
+    margin: 0 0 14px; font-size: 1.32rem; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2 .num {
+    font-size: 0.78rem; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 8px; padding: 3px 9px;
+  }
+  h3 { font-size: 1.02rem; margin: 20px 0 8px; }
+  p { margin: 10px 0; }
+  .muted { color: var(--muted); }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  strong { color: var(--ink); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 8px; }
+  .persona {
+    border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #fbfcfe;
+  }
+  .persona h4 { margin: 0 0 4px; font-size: 1rem; }
+  .persona .role { font-size: 0.78rem; color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stories { list-style: none; padding: 0; margin: 0; }
+  .stories li {
+    border-left: 3px solid var(--v1); background: var(--v1-soft);
+    border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 8px 0;
+  }
+  .stories li .tag { font-weight: 700; color: var(--v1); margin-right: 6px; }
+  .v2list li { border-left-color: var(--v2); background: var(--v2-soft); }
+  .v2list li .tag { color: var(--v2); }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  td .qid { font-weight: 700; color: var(--risk); }
+  .diagram {
+    background: #fbfcfe; border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px; margin-top: 12px; overflow-x: auto;
+  }
+  .mermaid { text-align: center; }
+  .metric {
+    background: var(--accent-soft); border-radius: 12px; padding: 14px 16px; margin-top: 8px;
+    font-size: 0.95rem;
+  }
+  .metric b { color: var(--accent); }
+  footer { text-align: center; color: var(--muted); font-size: 0.82rem; margin-top: 30px; }
+  footer a { color: var(--accent); }
+  @media (max-width: 560px) {
+    header.hero { padding: 28px 22px; }
+    header.hero h1 { font-size: 1.6rem; }
+    section.card { padding: 20px 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>samograph.dev — Product Brief</h1>
+    <p class="tagline">Zero-setup hosted meeting bot that streams a shareable, persisted live transcript you can read along with — and keep forever.</p>
+    <p class="meta">SPEC v0.2 · 2026-06-19 · Human-skimmable summary of the authoritative <code>SPEC.md</code></p>
+  </header>
+
+  <div class="legend">
+    <span class="chip v1"><span class="dot"></span>v1 — build this week</span>
+    <span class="chip v2"><span class="dot"></span>v2 — explicitly deferred</span>
+    <span class="chip risk"><span class="dot"></span>open question / risk</span>
+  </div>
+
+  <section class="card">
+    <h2><span class="num">01</span>Goal &amp; why</h2>
+    <p><strong>Goal.</strong> A zero-setup, hosted SaaS that puts a Recall.ai bot in your calls and streams a perfect, shareable, persisted <strong>live</strong> transcript to a page you (and anyone with the link) can read along with as the call happens — then keeps that transcript forever in your account.</p>
+    <h3>Why it exists</h3>
+    <ul>
+      <li>The existing <strong>CLI samograph</strong> works, but it demands Bun, a <code>RECALL_API_KEY</code>, and an ngrok/cloudflared tunnel — out of reach for nearly every non-CLI user.</li>
+      <li>Paid tools (Otter, Fireflies, Read, tl;dv) bury the <strong>live</strong> transcript and <strong>none offers a public shareable live read-along link</strong>.</li>
+      <li>Live read-along is the weekly killer use case: strong-accent stand-ups, multilingual customer calls, hard-to-hear audio.</li>
+      <li>Recall.ai keeps <strong>video only ~7 days</strong> on the free plan, so transcripts must be persisted to our DB in real time — and transcript-first is what we want anyway.</li>
+    </ul>
+    <h3>Anti-framing (binding)</h3>
+    <p class="muted">NOT a desktop CLI for end users (no token, no tunnel) · NOT a Zoom/Meet plugin (bot joins via the standard link) · NOT an AI-summary product in v1 (the thesis: streaming + persisting a great live transcript already beats every paid tool).</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">02</span>Personas</h2>
+    <div class="grid">
+      <div class="persona">
+        <div class="role">Primary v1</div>
+        <h4>Priya — Distributed PM</h4>
+        <p class="muted">Runs daily customer calls with strong accents; needs a live read-along link to share mid-call and a perfect post-call transcript. Locked-down laptop — cannot install CLIs.</p>
+      </div>
+      <div class="persona">
+        <div class="role">Secondary</div>
+        <h4>Marco — Eng Manager</h4>
+        <p class="muted">Forwards Calendar invites to the bot for calls he can't attend; reads the live transcript from the next room and pastes lines into Slack.</p>
+      </div>
+      <div class="persona">
+        <div class="role">Secondary</div>
+        <h4>Sasha — Non-native speaker</h4>
+        <p class="muted">Opens the live page on a second monitor and <em>reads</em> the fast-talking meeting in real time to keep up.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">03</span>Architecture at a glance</h2>
+    <p class="muted">User → samograph.dev auth → Google Calendar auto-join → one shared Recall token → thin per-call Recall bot → webhook worker → persist to user DB + WebSocket fan-out → shareable <code>/c/&lt;token&gt;</code> read-along page. Billing arrives only in v2.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    U["User (browser)"] --> AUTH["samograph.dev auth<br/>magic-link + Google OAuth"]
+    AUTH --> CAL["Google Calendar<br/>poller (60s) → auto-join"]
+    CAL --> BOT["Thin Recall bot<br/>(per call, one shared token)"]
+    BOT --> MEET["Recall.ai → Meet / Zoom"]
+    MEET -->|transcript.data webhooks| WORK["Webhook worker<br/>shared cloudflared tunnel"]
+    WORK --> DB[("User DB — Postgres/Neon<br/>append-only transcript_lines<br/>RLS tenant isolation")]
+    WORK --> HUB["WebSocket fan-out hub<br/>(pub/sub per call_id)"]
+    HUB --> PAGE["Shareable /c/&lt;token&gt;<br/>live read-along page"]
+    DB --> PAGE
+    BILL["Stripe billing + seats"]:::v2 -.->|deferred| AUTH
+    classDef v2 fill:#fdf0d9,stroke:#b45309,color:#7a3a06,stroke-dasharray:5 4;
+      </div>
+    </div>
+    <p class="muted" style="font-size:0.86rem;">Critical departure from the CLI: one persistent, multi-tenant cloudflared tunnel per region (routed by <code>bot_id</code>) instead of one ngrok per call.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">04</span>Primary user journey</h2>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart LR
+    A["Sign in<br/>(Google / magic-link)"] --> B["Connect calendar<br/>one consent, two jobs"]
+    B --> C["Bot auto-joins<br/>at T-60s, posts consent msg"]
+    C --> D["Read live transcript<br/>word-by-word over WS"]
+    D --> E["Share /c/&lt;token&gt;<br/>teammates read along"]
+    E --> F["Revisit later<br/>durable, exportable .txt/.md"]
+      </div>
+    </div>
+    <div class="metric">
+      <b>Single success metric — W2 live-transcript-open ratio.</b> Distinct opens of <code>/c/&lt;token&gt;</code> for owned meetings in week 2 ÷ meetings auto-joined that week. <b>Target ≥ 0.6.</b> Measures whether the read-along differentiator is actually used — not vanity signups.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">05</span>v1 user stories</h2>
+    <p class="muted">Each ships with a persona, outcome, and manual-test recipe in the spec.</p>
+    <ul class="stories">
+      <li><span class="tag">U1</span>Sign in with Google in under 30s → dashboard with "Calendar connected" badge.</li>
+      <li><span class="tag">U2</span>Connect Calendar; bot auto-joins the next meeting and the per-call page streams live.</li>
+      <li><span class="tag">U3</span>Read along live and share the link; words appear ≤2s after spoken, "live • N viewers" badge, no PII.</li>
+      <li><span class="tag">U4</span>Custom dictionary (Recall keyterm hints) improves recognition on the next call.</li>
+      <li><span class="tag">U5</span>Post-call: transcript is durable, attributed, exportable to <code>.txt</code> / <code>.md</code> — even after Recall video expires.</li>
+      <li><span class="tag">U6</span>Consent &amp; recording disclosure: bot name says "recording transcript" + auto-posted in-chat disclosure; one-click Leave.</li>
+      <li><span class="tag">U7</span>Per-meeting opt-out (toggle or <code>[private]</code>/<code>[notranscribe]</code> in title) keeps 1:1s private.</li>
+      <li><span class="tag">U8</span>The SaaS promise: tunnel-free, key-free, install-free — all Recall plumbing runs server-side.</li>
+    </ul>
+    <h3>Explicit v1 non-goals</h3>
+    <p class="muted">No LLM/AI features · no long-term video storage · no MS Teams · no paid plans/seats (single free tier with rate limits) · no branded bots · no post-call email · no native mobile (responsive web only).</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">06</span>v2 scope — deferred</h2>
+    <p class="muted">Listed so v1 architecture leaves the right seams open.</p>
+    <ul class="stories v2list">
+      <li><span class="tag">V2</span>Synced transcript + video viewer (click a word → video seeks).</li>
+      <li><span class="tag">V2</span>Cheap long-term video storage (R2 / Backblaze B2 cold storage).</li>
+      <li><span class="tag">V2</span>Consistent per-workspace named bot identities.</li>
+      <li><span class="tag">V2</span>Post-call email of transcript to detected participants.</li>
+      <li><span class="tag">V2</span>Multi-language UI (i18n keys laid out in v1).</li>
+      <li><span class="tag">V2</span>MS Teams support.</li>
+      <li><span class="tag">V2</span>Team workspaces, shared libraries, per-seat <strong>billing (Stripe)</strong>.</li>
+      <li><span class="tag">V2</span>Live AI assist (opt-in — the first AI feature).</li>
+      <li><span class="tag">V2</span>Pre-admit consent flow (hold bot in lobby until host admits).</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">07</span>Open questions &amp; risks</h2>
+    <table>
+      <thead><tr><th>#</th><th>Risk</th><th>Plan</th></tr></thead>
+      <tbody>
+        <tr><td class="qid">Q1</td><td>Recall.ai per-minute cost at v1 volume</td><td>Pricing call week 1; hard-cap free tier until known.</td></tr>
+        <tr><td class="qid">Q2</td><td>Shared Recall token tenant isolation — a bug could leak A's transcript to B</td><td>Postgres RLS + <code>bot_id</code>-scoped writes; pen-test before launch.</td></tr>
+        <tr><td class="qid">Q3</td><td>Minimum viable Google OAuth scopes</td><td><code>calendar.events.readonly</code> only; defer write scopes to v2.</td></tr>
+        <tr><td class="qid">Q4</td><td>Shareable-link security — a leaked link exposes the transcript</td><td>131-bit token, revoke button, per-call rotation (410 on revoked).</td></tr>
+        <tr><td class="qid">Q5</td><td>Consent disclosure across jurisdictions (EU/CA two-party)</td><td>Bot name + in-chat disclosure; TOS shifts duty to host.</td></tr>
+        <tr><td class="qid">Q6</td><td>Tunnel as SPOF — regional cloudflared down = all calls lose webhooks</td><td>Two active/active replicas per region; watchdog warns into every live transcript.</td></tr>
+        <tr><td class="qid">Q9</td><td>One Recall account for all bots vs. per-user</td><td>v1: one bot per call under a shared account; name carries identity.</td></tr>
+        <tr><td class="qid">Q12</td><td>Live page WS scaling (≈10k connections/region)</td><td>Bun WS on one node; sticky-by-<code>call_id</code> once past one worker.</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:0.85rem;">Abridged — Q1–Q12 in full live in <code>SPEC.md §10</code>.</p>
+  </section>
+
+  <footer>
+    Authoritative spec: <a href="./SPEC.md">SPEC.md</a> · Human view: this page · See <a href="./README.md">README.md</a><br>
+    Authored with <a href="https://github.com/NikolayS/samospec">samospec</a> · SPEC v0.2
+  </footer>
+
+</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+</script>
+</body>
+</html>
