@@ -10,6 +10,7 @@ function makeRecall(resp: Response): RecallClient {
     async leaveCall() { return new Response(); },
     async getBot() { return {}; },
     async sendChat() { return resp; },
+    async outputAudio() { return new Response("{}", { status: 200 }); },
     async screenshot() { return new Response(); },
     async createBot() { return { id: "x" }; },
   };
@@ -44,6 +45,52 @@ describe("cmdChat", () => {
       (process.stdout.write as unknown) = orig;
     }
     expect(writes.join("")).toContain("hello meeting");
+  });
+
+  it("plays the chime into the call audio (outputAudio) after a successful send", async () => {
+    let audioBotId = "";
+    let audioB64 = "";
+    const recall: RecallClient = {
+      async leaveCall() { return new Response(); },
+      async getBot() { return {}; },
+      async sendChat() { return new Response("{}", { status: 200 }); },
+      async outputAudio(bid: string, b64: string) {
+        audioBotId = bid;
+        audioB64 = b64;
+        return new Response("{}", { status: 200 });
+      },
+      async screenshot() { return new Response(); },
+      async createBot() { return { id: "x" }; },
+    };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat({ command: "chat", message: "hello", bot_id: null }, { recall });
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(audioBotId).toBe("bot-abc");
+    expect(audioB64.length).toBeGreaterThan(0);
+  });
+
+  it("still sends chat (and does not throw) when outputAudio fails", async () => {
+    const writes: string[] = [];
+    const recall: RecallClient = {
+      async leaveCall() { return new Response(); },
+      async getBot() { return {}; },
+      async sendChat() { return new Response("{}", { status: 200 }); },
+      async outputAudio() { throw new Error("audio output unavailable"); },
+      async screenshot() { return new Response(); },
+      async createBot() { return { id: "x" }; },
+    };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (s: string) => { writes.push(s); return true; };
+    try {
+      await cmdChat({ command: "chat", message: "hello", bot_id: null }, { recall });
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(writes.join("")).toContain("hello");
   });
 
   it("rings the chime on the local presence server after a successful send", async () => {
@@ -146,6 +193,7 @@ describe("cmdChat", () => {
       async leaveCall() { return new Response(); },
       async getBot() { return {}; },
       async sendChat(bid: string) { capturedBotId = bid; return new Response("{}", { status: 200 }); },
+      async outputAudio() { return new Response("{}", { status: 200 }); },
       async screenshot() { return new Response(); },
       async createBot() { return { id: "x" }; },
     };
@@ -162,6 +210,7 @@ describe("cmdChat", () => {
       async leaveCall() { return new Response(); },
       async getBot() { return {}; },
       async sendChat(bid: string) { capturedBotId = bid; return new Response("{}", { status: 200 }); },
+      async outputAudio() { return new Response("{}", { status: 200 }); },
       async screenshot() { return new Response(); },
       async createBot() { return { id: "x" }; },
     };
