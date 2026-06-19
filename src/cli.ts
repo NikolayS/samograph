@@ -17,6 +17,8 @@ import { cmdServe } from "./commands/serve.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
+import { cmdChimes } from "./commands/chimes.ts";
+import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
 
 const USAGE = `usage: samograph <command> [options]
 
@@ -28,12 +30,13 @@ Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and a tunnel:
 ngrok (default), cloudflared (--tunnel cloudflared), or your own via --webhook-base.
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE] [--intro] [--intro-text TEXT]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE] [--intro] [--intro-text TEXT] [--chime NAME]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
-  chat <message> [--bot-id ID]
+  chat <message> [--bot-id ID] [--chime NAME] [--list-chimes]
   intro [--intro-text TEXT] [--context] [--bot-id ID]
+  chimes
   presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
@@ -74,6 +77,9 @@ options:
                          camera-page preflight entirely)
   --presence-bg MODE     Presence camera look: robot|sphere|field|static|cycle
                          (default: robot — static samoagent avatar image)
+  --chime NAME           Default chat chime for the session, played into the
+                         call audio when the bot posts a meeting-chat message
+                         (default: blip). See: samograph chimes
   --rtmp                 Use local RTMP path through ngrok TCP
   --rtmp-url URL         Use an existing RTMP endpoint
   --intro                After joining, post a short self-introduction into the
@@ -107,6 +113,30 @@ examples:
 
 List WebSocket frame sources currently buffered in memory.
 Use the source keys with: samograph frame --source SOURCE
+`,
+  chat: `usage: samograph chat <message> [--bot-id ID] [--chime NAME] [--list-chimes]
+
+Post a message to the meeting chat. A short, soft chime is played into the call
+audio so participants hear that the bot posted.
+
+options:
+  --bot-id ID    Target a specific bot (defaults to the active bot in state)
+  --chime NAME   Chime sound for this message (default: the session chime set at
+                 join, else 'blip'). See: samograph chimes
+  --list-chimes  Print available chime names and exit (sends nothing)
+
+examples:
+  samograph chat "Short message to the meeting"
+  samograph chat "Done" --chime bell
+  samograph chat --list-chimes
+`,
+  chimes: `usage: samograph chimes
+
+List the available chat chime sounds. The library default is marked "default";
+a session default set via 'join --chime' is marked "session".
+
+Select per message with 'chat --chime NAME', or for the whole session with
+'join --chime NAME'.
 `,
   doctor: `usage: samograph doctor
 
@@ -186,12 +216,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--intro-text"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--intro-text", "--chime"]),
     intro: new Set(["--bot-id", "--intro-text"]),
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(["--out"]),
-    chat: new Set(["--bot-id"]),
+    chat: new Set(["--bot-id", "--chime"]),
+    chimes: new Set(),
     presence: new Set(),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
@@ -208,7 +239,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     leave: new Set(),
     status: new Set(),
     screenshot: new Set(),
-    chat: new Set(),
+    chat: new Set(["--list-chimes"]),
+    chimes: new Set(),
     presence: new Set(),
     transcript: new Set(["--local"]),
     dicts: new Set(),
@@ -313,6 +345,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       result.intro = opts["--intro"] === true;
       result.intro_text = (opts["--intro-text"] as string) ?? null;
+      // Session default chime. Validate eagerly (like --variant/--presence-bg)
+      // so a typo fails at join rather than silently falling back per-message.
+      if (opts["--chime"] !== undefined) {
+        const requested = normalizeChimeName(opts["--chime"]);
+        if (!isChimeName(requested)) {
+          throw new ArgError(
+            `argument --chime: invalid choice: '${opts["--chime"]}' (choose from ${chimeNames().join(", ")})`,
+          );
+        }
+        result.chime = requested;
+      } else {
+        result.chime = null;
+      }
       result.frame_dir = (opts["--frame-dir"] as string) ?? null;
       // Default Recall Output Media bot size: web_4_core renders the camera
       // webpage smoothly (plain `web` is often choppy). Override with --variant.
@@ -361,11 +406,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
       break;
     }
     case "chat": {
-      if (positionals.length < 1) {
+      result.list_chimes = opts["--list-chimes"] === true;
+      // --list-chimes just prints names; no message needed.
+      if (!result.list_chimes && positionals.length < 1) {
         throw new ArgError("the following arguments are required: message");
       }
       result.message = positionals[0];
       result.bot_id = (opts["--bot-id"] as string) ?? null;
+      // Keep --chime lenient here: an unknown name falls back to the default
+      // with a runtime warning (cmdChat), matching the documented behavior.
+      result.chime = (opts["--chime"] as string) ?? null;
       break;
     }
     case "intro": {
@@ -393,6 +443,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     case "watch":
     case "doctor":
     case "frames":
+    case "chimes":
       break;
     case "notes": {
       result.doc_id = (opts["--doc-id"] as string) ?? null;
@@ -453,6 +504,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdChat(args);
     case "intro":
       return cmdIntro(args);
+    case "chimes":
+      return cmdChimes();
     case "presence":
       return cmdPresence(args);
     case "frame":
