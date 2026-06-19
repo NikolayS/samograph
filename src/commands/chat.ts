@@ -1,7 +1,7 @@
 import { botIdFromArgsOrState, loadState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
-import { CHIME_MP3_BASE64 } from "../chimeAudio.ts";
+import { chimeNames, resolveChime } from "../chime.ts";
 
 export interface ChatDeps {
   recall?: RecallClient;
@@ -16,9 +16,10 @@ export interface ChatDeps {
 async function ringCallAudio(
   recall: RecallClient,
   botId: string,
+  mp3Base64: string,
 ): Promise<void> {
   try {
-    const resp = await recall.outputAudio(botId, CHIME_MP3_BASE64);
+    const resp = await recall.outputAudio(botId, mp3Base64);
     if (!resp.ok) await resp.text().catch(() => "");
   } catch {
     // ignore — the chime is a non-critical nicety
@@ -48,18 +49,38 @@ async function ringChime(
   }
 }
 
+// Pick the chime for this message. Precedence: --chime flag, else the
+// session default saved at join time (state.chime), else the library default.
+// An unknown name falls back to the default and prints a one-line warning.
+function selectChime(args: ParsedArgs): { name: string; mp3Base64: string } {
+  const requested = args.chime ?? loadState().chime;
+  const resolved = resolveChime(requested);
+  if (resolved.fellBack) {
+    process.stderr.write(
+      `samograph: warning: unknown chime '${String(requested)}', using '${resolved.name}' ` +
+        `(available: ${chimeNames().join(", ")})\n`,
+    );
+  }
+  return { name: resolved.name, mp3Base64: resolved.mp3Base64 };
+}
+
 export async function cmdChat(
   args: ParsedArgs,
   deps: ChatDeps = {},
 ): Promise<void> {
+  if (args.list_chimes) {
+    process.stdout.write(`${chimeNames().join("\n")}\n`);
+    return;
+  }
   const recall = deps.recall ?? makeRecallClient();
   const bid = botIdFromArgsOrState(args.bot_id);
+  const chime = selectChime(args);
   const resp = await recall.sendChat(bid, args.message ?? "");
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`send_chat_message failed: ${resp.status} ${body}`);
   }
-  await ringCallAudio(recall, bid);
+  await ringCallAudio(recall, bid, chime.mp3Base64);
   await ringChime(deps.fetchFn ?? fetch);
   process.stdout.write(`Sent: ${args.message}\n`);
 }

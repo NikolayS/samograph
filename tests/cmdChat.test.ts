@@ -3,7 +3,21 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cmdChat } from "../src/commands/chat.ts";
 import type { RecallClient } from "../src/recall.ts";
+import { CHIME_LIBRARY } from "../src/chimeLibrary.ts";
+import { chimeNames } from "../src/chime.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
+
+// A recall double that records the base64 audio passed to outputAudio.
+function makeAudioCapturingRecall(sink: { b64: string }): RecallClient {
+  return {
+    async leaveCall() { return new Response(); },
+    async getBot() { return {}; },
+    async sendChat() { return new Response("{}", { status: 200 }); },
+    async outputAudio(_bid: string, b64: string) { sink.b64 = b64; return new Response("{}", { status: 200 }); },
+    async screenshot() { return new Response(); },
+    async createBot() { return { id: "x" }; },
+  };
+}
 
 function makeRecall(resp: Response): RecallClient {
   return {
@@ -170,6 +184,139 @@ describe("cmdChat", () => {
       (process.stdout.write as unknown) = orig;
     }
     expect(writes.join("")).toContain("hello");
+  });
+
+  it("defaults to the 'blip' chime asset when no chime is selected", async () => {
+    const sink = { b64: "" };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hi", bot_id: null, chime: null },
+        { recall: makeAudioCapturingRecall(sink) },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(sink.b64).toBe(CHIME_LIBRARY["blip"]!);
+  });
+
+  it("selects the asset for an explicit --chime", async () => {
+    const sink = { b64: "" };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hi", bot_id: null, chime: "bell" },
+        { recall: makeAudioCapturingRecall(sink) },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(sink.b64).toBe(CHIME_LIBRARY["bell"]!);
+    expect(sink.b64).not.toBe(CHIME_LIBRARY["blip"]!);
+  });
+
+  it("resolves --chime case-insensitively", async () => {
+    const sink = { b64: "" };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hi", bot_id: null, chime: "  MARIMBA " },
+        { recall: makeAudioCapturingRecall(sink) },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(sink.b64).toBe(CHIME_LIBRARY["marimba"]!);
+  });
+
+  it("uses the session chime from state when --chime is absent", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({ bot_id: "bot-abc", chime: "glass" }),
+    );
+    const sink = { b64: "" };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hi", bot_id: null, chime: null },
+        { recall: makeAudioCapturingRecall(sink) },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(sink.b64).toBe(CHIME_LIBRARY["glass"]!);
+  });
+
+  it("--chime overrides the session chime from state", async () => {
+    writeFileSync(
+      join(tmp, "state.json"),
+      JSON.stringify({ bot_id: "bot-abc", chime: "glass" }),
+    );
+    const sink = { b64: "" };
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = () => true;
+    try {
+      await cmdChat(
+        { command: "chat", message: "hi", bot_id: null, chime: "pop" },
+        { recall: makeAudioCapturingRecall(sink) },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    expect(sink.b64).toBe(CHIME_LIBRARY["pop"]!);
+  });
+
+  it("falls back to the default asset and warns for an unknown chime", async () => {
+    const sink = { b64: "" };
+    const warns: string[] = [];
+    const origOut = process.stdout.write.bind(process.stdout);
+    const origErr = process.stderr.write.bind(process.stderr);
+    (process.stdout.write as unknown) = () => true;
+    (process.stderr.write as unknown) = (s: string) => { warns.push(s); return true; };
+    try {
+      await cmdChat(
+        { command: "chat", message: "hi", bot_id: null, chime: "kazoo" },
+        { recall: makeAudioCapturingRecall(sink) },
+      );
+    } finally {
+      (process.stdout.write as unknown) = origOut;
+      (process.stderr.write as unknown) = origErr;
+    }
+    expect(sink.b64).toBe(CHIME_LIBRARY["blip"]!);
+    const warning = warns.join("");
+    expect(warning).toContain("unknown chime");
+    expect(warning).toContain("kazoo");
+    expect(warning).toContain("blip");
+  });
+
+  it("--list-chimes prints names and sends nothing", async () => {
+    let sent = false;
+    const recall: RecallClient = {
+      async leaveCall() { return new Response(); },
+      async getBot() { return {}; },
+      async sendChat() { sent = true; return new Response("{}", { status: 200 }); },
+      async outputAudio() { return new Response("{}", { status: 200 }); },
+      async screenshot() { return new Response(); },
+      async createBot() { return { id: "x" }; },
+    };
+    const writes: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (s: string) => { writes.push(s); return true; };
+    try {
+      await cmdChat(
+        { command: "chat", message: undefined, bot_id: null, list_chimes: true },
+        { recall },
+      );
+    } finally {
+      (process.stdout.write as unknown) = orig;
+    }
+    const out = writes.join("");
+    for (const name of chimeNames()) expect(out).toContain(name);
+    expect(sent).toBe(false);
   });
 
   it("throws on non-ok response", async () => {

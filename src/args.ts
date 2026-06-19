@@ -15,6 +15,8 @@ export interface ParsedArgs {
   frame_dir?: string | null;
   variant?: string | null;
   bot_id?: string | null;
+  chime?: string | null;
+  list_chimes?: boolean;
   transcript_cursor?: number;
   transcript_limit?: number;
   transcript_local?: boolean;

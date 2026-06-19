@@ -584,6 +584,7 @@ export async function cmdJoin(
     started_at: new Date().toISOString(),
     dict: args.dict ?? null,
     variant: args.variant ?? null,
+    chime: args.chime ?? null,
     meeting_url: args.url,
     transcript_file: transcriptFile,
   };
