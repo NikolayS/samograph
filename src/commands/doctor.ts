@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { stateFile } from "../config.ts";
+import { stateFile, readConfig } from "../config.ts";
 
 interface Check {
   name: string;
@@ -42,8 +42,12 @@ export async function cmdDoctor(): Promise<void> {
     },
     {
       name: "RECALL_API_KEY",
-      ok: Boolean(process.env.RECALL_API_KEY),
-      detail: process.env.RECALL_API_KEY ? "set" : "missing",
+      ok: Boolean(process.env.RECALL_API_KEY) || Boolean(readConfig().recall_api_key),
+      detail: process.env.RECALL_API_KEY
+        ? "set via env var"
+        : readConfig().recall_api_key
+          ? "set via ~/.samograph/config.json"
+          : "missing (set via env var or: samograph config set recall-api-key <key>)",
     },
     {
       name: "ngrok",

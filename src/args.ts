@@ -1,5 +1,8 @@
 export interface ParsedArgs {
   command: string;
+  config_action?: string;
+  config_key?: string;
+  config_value?: string;
   url?: string;
   name?: string | null;
   dict?: string | null;
