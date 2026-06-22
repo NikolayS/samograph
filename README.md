@@ -73,6 +73,15 @@ A tunnel that stops relaying requests is worse than no tunnel: the bot would sit
 - **a mid-call watchdog warns in the transcript stream.** The callback server re-checks the tunnel every 60 s. After 2 consecutive failures it appends a line like `[2026-06-11 17:03:05] SAMOGRAPH-WARNING: tunnel unreachable (ERR_NGROK_727) - transcript may be incomplete; rejoin with --tunnel cloudflared or --webhook-base` to the live transcript — so an agent following `samograph watch` sees it immediately — and mirrors it to stderr. It warns once per outage and writes a single `SAMOGRAPH-WARNING: tunnel recovered` line when the tunnel comes back.
 - **quota math.** The presence camera page is loaded by Recall through the tunnel, so its same-origin `/presence.json` polls also count against tunnel request quotas: at the old fixed 1 s poll that alone was ~3600 requests/hour. The page now polls at 1 s only while the presence snapshot is changing and backs off to 5 s after 30 s of no changes; the watchdog adds ~60/hour. If you are on a free ngrok account, prefer `--tunnel cloudflared` (no request limits) for long or camera-heavy calls.
 
+## Transcript Health
+
+A healthy tunnel that delivers video frames but no transcript is the silent killer: the bot reports `in_call_recording`, the presence camera shows "listening", and the agent believes it is following along — while the transcription provider connection has actually failed inside Recall (e.g. Deepgram `provider_connection_failed` from an expired key or exhausted credits) and **zero** transcript lines are produced. To the agent this is indistinguishable from "nobody has spoken yet." samograph treats transcript-stream health as core, mirroring the tunnel watchdog:
+
+- **a mid-call transcript watchdog warns in the transcript stream.** The callback server polls Recall's recording transcript status every 20 s. The moment it reports `failed`, it appends a line like `[2026-06-22 09:46:31] SAMOGRAPH-WARNING: transcript stream failed (provider_connection_failed) - no transcript is being produced; check the transcription provider key/credits in the Recall dashboard` to the live transcript — so an agent following `samograph watch` sees it immediately — and mirrors it to stderr. It warns once per outage and writes a single `transcript stream recovered` line if it comes back.
+- **`status` shows the stream state.** `samograph status` prints `Transcript stream: <code>` so a `0`-line transcript is never ambiguous between "nobody spoke" and "the provider connection died."
+
+Provider failures are usually account-side (key/credits/plan in the Recall workspace) and not something samograph can prevent — so it makes them loud instead of letting the bot sit silently deaf.
+
 ## Agent Workflow
 
 ```bash
