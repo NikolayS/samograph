@@ -179,6 +179,143 @@ export function startTunnelWatchdog(
   return { tick, stop: () => scheduled.stop() };
 }
 
+// Transcript-stream watchdog polls more often than the tunnel one: a provider
+// failure (e.g. Deepgram `provider_connection_failed`) is a reported terminal
+// status, not a flaky probe, so we want to surface it within ~20s rather than
+// at the 60s tunnel cadence.
+export const TRANSCRIPT_WATCHDOG_INTERVAL_MS = 20_000;
+
+export interface TranscriptStreamStatus {
+  /** Recall recording transcript status code, e.g. "processing" | "failed" | "done". */
+  code: string | null;
+  /** Recall sub_code, e.g. "provider_connection_failed". */
+  subCode: string | null;
+}
+
+export interface TranscriptWatchdogHandle {
+  /** Run one status poll + state transition (exposed for tests; the schedule calls it). */
+  tick(): Promise<void>;
+  stop(): void;
+}
+
+export interface TranscriptWatchdogOptions {
+  /**
+   * Fetches the current Recall transcript-stream status. Falsy disables the
+   * watchdog entirely (e.g. no bot id available). Returning null means "no
+   * status yet" (recording not started) and is treated as healthy.
+   */
+  fetchStatus:
+    | (() => Promise<TranscriptStreamStatus | null>)
+    | null
+    | undefined;
+  transcriptPath: string;
+  intervalMs?: number;
+  now?: () => Date;
+  stderr?: (s: string) => void;
+  schedule?: (fn: () => void, ms: number) => { stop(): void };
+}
+
+/**
+ * Mid-call transcript-stream watchdog. The tunnel watchdog catches a dead
+ * tunnel, but a *healthy* tunnel that delivers frames while the transcription
+ * provider connection has failed looks, to the agent, exactly like "nobody has
+ * spoken yet" — the bot sits deaf and silent. This watchdog polls Recall's
+ * recording transcript status and, the moment it reports `failed`, appends a
+ * SAMOGRAPH-WARNING line to the transcript file (so `samograph watch` relays it
+ * immediately) and mirrors it to stderr. It warns once per outage and writes a
+ * single recovery line if the stream comes back. Transient status-fetch errors
+ * are ignored — only a reported `failed` status warns.
+ */
+export function startTranscriptWatchdog(
+  options: TranscriptWatchdogOptions,
+): TranscriptWatchdogHandle | null {
+  const fetchStatus = options.fetchStatus;
+  if (!fetchStatus) return null;
+
+  const now = options.now ?? (() => new Date());
+  const writeStderr =
+    options.stderr ?? ((s: string) => void process.stderr.write(s));
+
+  let inFailure = false;
+
+  const emit = (text: string): void => {
+    const line = `[${fmtTranscriptTs(now())}] ${text}`;
+    try {
+      appendFileSync(options.transcriptPath, line + "\n");
+    } catch {
+      // Transcript file may be gone (call torn down) — stderr still fires.
+    }
+    writeStderr(line + "\n");
+  };
+
+  const tick = async (): Promise<void> => {
+    let status: TranscriptStreamStatus | null;
+    try {
+      status = await fetchStatus();
+    } catch {
+      // Transient Recall API error — not a transcript failure; ignore.
+      return;
+    }
+    if (!status || !status.code) return;
+
+    if (status.code === "failed") {
+      if (!inFailure) {
+        inFailure = true;
+        const sub = status.subCode ?? "unknown";
+        emit(
+          `SAMOGRAPH-WARNING: transcript stream failed (${sub}) - no transcript ` +
+            "is being produced; check the transcription provider key/credits in " +
+            "the Recall dashboard",
+        );
+      }
+      return;
+    }
+
+    // Any non-failed status is healthy.
+    if (inFailure) {
+      inFailure = false;
+      emit(
+        "SAMOGRAPH-WARNING: transcript stream recovered - transcript delivery resumed",
+      );
+    }
+  };
+
+  const scheduled = (options.schedule ?? defaultSchedule)(
+    () => void tick(),
+    options.intervalMs ?? TRANSCRIPT_WATCHDOG_INTERVAL_MS,
+  );
+  return { tick, stop: () => scheduled.stop() };
+}
+
+/**
+ * Extract the transcript-stream status from a Recall bot object
+ * (`recordings[].media_shortcuts.transcript.status`). Returns the first
+ * recording that carries a transcript status, or null when none is present yet
+ * (e.g. recording not started). Defensive against the API shape changing.
+ */
+export function transcriptStatusFromBot(
+  bot: unknown,
+): TranscriptStreamStatus | null {
+  if (typeof bot !== "object" || bot === null) return null;
+  const recordings = (bot as { recordings?: unknown }).recordings;
+  if (!Array.isArray(recordings)) return null;
+  for (const rec of recordings) {
+    const status = (
+      rec as {
+        media_shortcuts?: { transcript?: { status?: unknown } };
+      }
+    )?.media_shortcuts?.transcript?.status;
+    if (status && typeof status === "object") {
+      const code = (status as { code?: unknown }).code;
+      if (typeof code === "string") {
+        const sub = (status as { sub_code?: unknown }).sub_code;
+        return { code, subCode: typeof sub === "string" ? sub : null };
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Constant-time token comparison. Both sides are hashed to a fixed length so
  * timingSafeEqual never leaks length information; empty/missing tokens never

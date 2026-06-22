@@ -5,6 +5,7 @@ import { loadState, botIdFromArgsOrState } from "../state.ts";
 import { SENTINEL_RE } from "../transcript.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
+import { transcriptStatusFromBot } from "../server.ts";
 
 export interface StatusDeps {
   recall?: RecallClient;
@@ -30,6 +31,20 @@ export async function cmdStatus(
   process.stdout.write(`Bot:    ${bid}\n`);
   process.stdout.write(`Name:   ${name}\n`);
   process.stdout.write(`Status: ${status}\n`);
+
+  // Transcript-stream health from Recall. Without this, "Transcript lines: 0"
+  // is ambiguous between "nobody has spoken" and "the provider connection died".
+  const transcript = transcriptStatusFromBot(bot);
+  if (transcript) {
+    const detail = transcript.subCode ? ` (${transcript.subCode})` : "";
+    process.stdout.write(`Transcript stream: ${transcript.code}${detail}\n`);
+    if (transcript.code === "failed") {
+      process.stdout.write(
+        "  ⚠ transcript provider connection failed — no transcript is being " +
+          "produced; check the transcription provider key/credits in the Recall dashboard\n",
+      );
+    }
+  }
 
   const state = loadState();
   const tf =
