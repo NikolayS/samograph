@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>samograph.dev — Product Brief</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --ink: #1a1f2b;
+    --muted: #5c6675;
+    --line: #e6e9ef;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --v1: #0d9488;
+    --v1-soft: #d9f5f0;
+    --v2: #b45309;
+    --v2-soft: #fdf0d9;
+    --risk: #be123c;
+    --risk-soft: #fde7ec;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    font-size: 16px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+  header.hero {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 38px 34px;
+    box-shadow: 0 8px 30px rgba(79,70,229,0.25);
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 2rem; letter-spacing: -0.02em; }
+  header.hero .tagline { margin: 0; font-size: 1.12rem; opacity: 0.95; font-weight: 500; }
+  header.hero .meta { margin-top: 16px; font-size: 0.86rem; opacity: 0.85; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 8px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 0.8rem; font-weight: 600; padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card);
+  }
+  .chip .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .chip.v1 .dot { background: var(--v1); }
+  .chip.v2 .dot { background: var(--v2); }
+  .chip.risk .dot { background: var(--risk); }
+  section.card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 26px 28px;
+    margin-top: 22px;
+    box-shadow: 0 1px 3px rgba(20,30,50,0.04);
+  }
+  h2 {
+    margin: 0 0 14px; font-size: 1.32rem; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2 .num {
+    font-size: 0.78rem; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 8px; padding: 3px 9px;
+  }
+  h3 { font-size: 1.02rem; margin: 20px 0 8px; }
+  p { margin: 10px 0; }
+  .muted { color: var(--muted); }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  strong { color: var(--ink); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 8px; }
+  .persona {
+    border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #fbfcfe;
+  }
+  .persona h4 { margin: 0 0 4px; font-size: 1rem; }
+  .persona .role { font-size: 0.78rem; color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stories { list-style: none; padding: 0; margin: 0; }
+  .stories li {
+    border-left: 3px solid var(--v1); background: var(--v1-soft);
+    border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 8px 0;
+  }
+  .stories li .tag { font-weight: 700; color: var(--v1); margin-right: 6px; }
+  .v2list li { border-left-color: var(--v2); background: var(--v2-soft); }
+  .v2list li .tag { color: var(--v2); }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  td .qid { font-weight: 700; color: var(--risk); }
+  .diagram {
+    background: #fbfcfe; border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px; margin-top: 12px; overflow-x: auto;
+  }
+  .mermaid { text-align: center; }
+  .metric {
+    background: var(--accent-soft); border-radius: 12px; padding: 14px 16px; margin-top: 8px;
+    font-size: 0.95rem;
+  }
+  .metric b { color: var(--accent); }
+  footer { text-align: center; color: var(--muted); font-size: 0.82rem; margin-top: 30px; }
+  footer a { color: var(--accent); }
+  @media (max-width: 560px) {
+    header.hero { padding: 28px 22px; }
+    header.hero h1 { font-size: 1.6rem; }
+    section.card { padding: 20px 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>samograph.dev — Product Brief</h1>
+    <p class="tagline">Zero-setup hosted samograph: paste a meeting link, get a live shareable transcript — then hand your AI agent a secure link to listen and act.</p>
+    <p class="meta">SPEC v0.3 · 2026-06-23 · authored with <a href="https://github.com/NikolayS/samospec" style="color:#fff;text-decoration:underline;">samospec</a> · reviewed via 2 Claude review rounds (round 1: 15 findings applied; round 2: 12 findings applied) · human-skimmable summary of the authoritative <code>SPEC.md</code></p>
+  </header>
+
+  <div class="legend">
+    <span class="chip v1"><span class="dot"></span>v1 — MVP, build this week</span>
+    <span class="chip v2"><span class="dot"></span>v2 — designed-for, deferred</span>
+    <span class="chip risk"><span class="dot"></span>open question / risk</span>
+  </div>
+
+  <section class="card">
+    <h2><span class="num">01</span>Goal &amp; why</h2>
+    <p><strong>Goal.</strong> A hosted, fully-managed SaaS at <code>samograph.dev</code> that wraps the existing <strong>samograph CLI</strong> and its Recall.ai meeting bot so an end user never runs a CLI, holds a Recall token, or operates a tunnel. v1 delivers exactly one experience: <em>sign in → paste a Zoom or Google Meet URL → the bot is in the call → a per-call page streams a live, persisted transcript that's also shareable read-only.</em> v2 layers a <strong>secure bidirectional AI-agent channel</strong> on top of any active call.</p>
+    <h3>Why it exists</h3>
+    <ul>
+      <li>samograph is fundamentally about <strong>AI agents participating in live meetings</strong> (Claude Code, Codex, …). The CLI proves the surface — <code>join</code>, <code>watch</code>, <code>chat</code>, <code>presence</code>, <code>frame</code>, <code>frames</code>, <code>leave</code> — but forces every user to install Bun, hold a <code>RECALL_API_KEY</code>, run a local callback server, and operate an ngrok/cloudflared tunnel.</li>
+      <li>That setup tax is the only thing between "AI agent in your meeting" and a turnkey product. v1 removes the tax; v2 mounts the scoped, revocable AI-agent channel on top.</li>
+      <li>v1 alone (zero-install, live, persisted, shareable transcript) already differentiates against Otter / Fireflies / Read / tl;dv for this use case. v2 is the strategic differentiator no general meeting-notes product offers.</li>
+    </ul>
+    <h3>Explicit v1 non-goals (do not silently re-introduce)</h3>
+    <p class="muted">No calendar integration · no Google OAuth · no AI features in the product UI · no billing / plans / seats · no video storage · no AI-generated summaries · no email digests · no MS Teams · no branded bot identity · no multi-language UI. The Phase-2 AI-agent channel is <strong>designed for but not built</strong> in v1 — only the <em>seams</em> ship.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">02</span>Two-phase scope</h2>
+    <div class="grid">
+      <div class="persona">
+        <div class="role">v1 — MVP (this week)</div>
+        <h4>Zero-setup live transcript</h4>
+        <p class="muted">Marketing + app at <code>samograph.dev</code>. Email magic-link auth only. One primary action: paste a Zoom / Meet URL → bot joins via a shared server-side Recall key → per-call page streams the transcript live over WebSocket, line-by-line (<code>[timestamp] Speaker: utterance</code>) → shareable read-only via a signed link → persisted to Postgres in real time (durable past Recall's ~7-day video TTL).</p>
+      </div>
+      <div class="persona">
+        <div class="role">v2 — Phase 2 (pre-wired)</div>
+        <h4>Secure AI-agent channel</h4>
+        <p class="muted">For an active call, the owner mints a per-call, capability-scoped, short-TTL, revocable token to paste into an external AI tool. <strong>LISTEN</strong> = subscribe to live transcript + bounded backfill. <strong>ACT</strong> = remote <code>chat</code>/<code>frame</code>/<code>frames</code>/<code>presence</code>/<code>leave</code> (1:1 with CLI verbs). Exposed as HTTP+WS API and an MCP server endpoint. Hard tenant isolation, full audit log, rate limits, one-click revoke.</p>
+      </div>
+      <div class="persona">
+        <div class="role">v3+ — explicitly deferred</div>
+        <h4>Not in v1's design</h4>
+        <p class="muted">Billing / plans / seats; Google Calendar auto-join; branded bot identities; post-call transcript email; multi-language UI; long-term video storage + synced transcript+video viewer; MS Teams.</p>
+      </div>
+    </div>
+    <h3>v1 ships the seams for v2</h3>
+    <p class="muted">A <strong>capability-token model</strong> (read/share now; <code>act:*</code> later — same verifier) · a loopback <strong>bot-worker command/act API</strong> mapping 1:1 to CLI verbs · a single <code>authorizeCall</code> <strong>tenancy gate</strong> · an <code>audit_log</code> table. The multi-region tunnel pattern is also proved in build-week (Sprint 3 second region) but a single region is sufficient to ship — multi-region is not a launch gate.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">03</span>Architecture at a glance</h2>
+    <p class="muted">Browser / per-call page → app-api (magic-link auth, create call, mint share / agent tokens) → bot-orchestrator (holds the ONE shared Recall key) + token-service → Recall.ai → one persistent regional cloudflared <strong>named</strong> tunnel (not per-call ngrok) → ingest (webhook routed by <code>bot_id</code>, signature + ingest_secret verified, normalize, persist) → ws-hub fan-out → per-call page. A bot-worker exposes the chat/frame/presence/leave act API; Postgres is single multi-tenant with RLS.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    PAGE["Browser / per-call page (Next.js)<br/>live transcript · share · status · degraded banner"] --> API["app-api (Bun/Hono)<br/>magic-link · /calls · /share · /agent-token (v2)"]
+    API --> ORCH["bot-orchestrator<br/>holds ONE shared Recall key"]
+    API --> TOK["token-service<br/>capability tokens (share now, act:* in v2)<br/>per-call ingest_secret"]
+    ORCH -->|createBot + webhook_url<br/>?bot=id&amp;t=ingest_secret| RECALL["Recall.ai (Zoom / Google Meet)"]
+    RECALL -->|signed webhooks + WSS frames| TUN["Regional cloudflared NAMED tunnel<br/>(one per region, persistent)"]
+    TUN --> ING["ingest (Bun/Hono)<br/>verify Recall sig + ingest_secret<br/>tenancy gate · normalize · lifecycle<br/>per-region watchdog (leader-elected)"]
+    ING --> DB[("Postgres — single multi-tenant DB, RLS<br/>users · calls · transcripts (append-only)<br/>tokens · audit_log · workers · regions")]
+    ING -->|pub/sub per call_id| HUB["ws-hub<br/>/calls/:id/stream · bounded queues + backpressure<br/>auth: session | share token | agent token (v2)"]
+    HUB -->|WSS| PAGE
+    API -->|owner actions| WORKER["bot-worker (process-per-call)<br/>chat / frame / frames / presence / leave<br/>registers host:port+secret in workers table"]
+    WORKER -->|act via Recall| RECALL
+    AGW["agent-gateway (v2)<br/>HTTP + WS + MCP"]:::v2 -.->|act:* via token-service| WORKER
+    classDef v2 fill:#fdf0d9,stroke:#b45309,color:#7a3a06,stroke-dasharray:5 4;
+      </div>
+    </div>
+    <p class="muted" style="font-size:0.86rem;">Critical departure from the CLI: one persistent multi-tenant cloudflared <strong>named</strong> tunnel per region (per-call routing encoded as <code>?bot=&lt;id&gt;&amp;t=&lt;ingest_secret&gt;</code>, verified at the tenancy gate) instead of one ngrok per call — killing the <code>ERR_NGROK_727</code> failure mode.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">04</span>User journey</h2>
+    <div class="diagram">
+      <div class="mermaid">
+sequenceDiagram
+    participant U as Owner (browser)
+    participant API as app-api
+    participant R as Recall.ai
+    participant ING as ingest
+    participant HUB as ws-hub
+    participant AG as AI agent (v2)
+    U->>API: enter email, click magic link
+    API-->>U: signed session, dashboard
+    U->>API: paste Zoom / Meet URL → "Add to call"
+    API->>R: createBot (shared Recall key + webhook_url)
+    R-->>API: ack (status JOINING, SLO le 5s)
+    R->>ING: in_call_recording lifecycle event
+    ING->>HUB: status IN_CALL (pickup p95 le 1s)
+    R->>ING: transcript.data webhooks
+    ING->>HUB: normalized lines + persist to Postgres
+    HUB-->>U: live transcript streams over WS
+    U->>API: "Share" → signed read-only link
+    Note over U,HUB: recipient opens link, reads live, no sign-in
+    rect rgb(253,240,217)
+    Note over U,AG: v2 overlay — secure AI-agent channel
+    U->>API: "Connect AI agent" → mint scoped token (listen / act:*)
+    AG->>HUB: LISTEN — subscribe to live transcript
+    AG->>API: ACT — chat / frame / presence / leave (audited, rate-limited)
+    U->>API: one-click revoke → token dies le 1s
+    end
+      </div>
+    </div>
+    <div class="metric">
+      <b>Single v1 success metric — W1 activation ≥ 0.5.</b> Fraction of new signups who, within their first week, (a) paste a meeting link, (b) get the bot admitted into a real call (Recall reaches <code>in_call_recording</code>, not first transcript line), and (c) watch <b>≥30 s</b> of live transcript on the per-call page. Pickup latency (event received → status visible, p95 ≤ 1 s) is a secondary health metric only.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">05</span>v1 user stories</h2>
+    <p class="muted">Each ships with a persona, outcome, and manual-test recipe in the spec (§3).</p>
+    <ul class="stories">
+      <li><span class="tag">S1</span>Zero-setup live transcript (primary JTBD): paste URL → per-call page opens ≤2 s, status <code>JOINING</code> ≤5 s of submit, <code>IN_CALL</code> on Recall <code>in_call_recording</code>; lines stream live; reopening the tab resumes without loss.</li>
+      <li><span class="tag">S2</span>Share the live transcript read-only via a signed link — recipient reads live without signing in; revoke takes effect ≤1 s; share caps: ≤200 concurrent conns, ≤20 cmds/min/conn, ≤1000 establishments/hour/token.</li>
+      <li><span class="tag">S3</span>Durable transcript after Recall's ~7-day video TTL — full final transcript with timestamps + speakers, downloadable as plain text identical to the CLI format.</li>
+      <li><span class="tag">S4</span>Bot fails to join → terminal <code>COULD_NOT_JOIN</code> with the Recall reason in plain English; "Try again" returns to the dashboard with the URL pre-filled (no implicit retry, one user action = one Call row).</li>
+      <li><span class="tag">S5</span>Mid-call tunnel/ingest outage is loud, never silent — banner + a <code>SAMOGRAPH-WARNING: tunnel unreachable</code> line appended to the stream; recovery clears both. Driven by a separate <code>ingest_degraded</code> overlay (a call can be <code>IN_CALL</code> + degraded at once).</li>
+      <li><span class="tag">S6</span>In-call recording disclosure — bot name <code>samograph (recording)</code> + a single chat post on <code>in_call_recording</code>. If Recall reports <code>in_call_not_recording</code>, no disclosure is posted; the call goes terminal <code>COULD_NOT_RECORD</code> and the bot leaves cleanly.</li>
+    </ul>
+    <h3>v2 stories (specified now to keep v1 architecture honest; not built in v1)</h3>
+    <ul class="stories v2list">
+      <li><span class="tag">S7</span>Mint a scoped AI-agent link for an active call — pick scopes (<code>listen</code>, <code>act:chat</code>, <code>act:frame</code>, <code>act:presence</code>, <code>act:leave</code>), TTL bounded by call lifetime; one-time-display token + URL; "Revoke" kills it immediately.</li>
+      <li><span class="tag">S8</span>AI agent acts through the channel — subscribes to the live transcript, posts chat (same chime as the CLI), pulls a frame, sets presence. Never sees the Recall token or other tenants; rate-limited per token; every action audited.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">06</span>How v1 stays safe &amp; honest</h2>
+    <ul>
+      <li><strong>Shared Recall key, isolation above it.</strong> The key lives only in bot-orchestrator + ingest; every request that names a <code>bot_id</code> passes the single <code>authorizeCall</code> tenancy gate before any Recall call; the audit log captures every Recall-mediated action.</li>
+      <li><strong>Webhook authenticity.</strong> Each <code>/webhook</code> POST is checked in order: Recall HMAC signature → known <code>bot_id</code> → constant-time <code>ingest_secret</code> match → tenancy gate. The <code>ingest_secret</code> is server-side-only, never a user-visible token.</li>
+      <li><strong>Persisted vs derived scopes.</strong> <code>read</code> is derived from the owner's session (no <code>tokens</code> row); only <code>share</code> (v1) and <code>act:*</code> (v2) are persisted capability tokens — HMAC-SHA256, KID-rotated (90 d / 30 d overlap), <code>jti</code>-unique, constant-time verified, no verifier cache in v1.</li>
+      <li><strong>WS fan-out + backpressure.</strong> Per-<code>call_id</code> channel, bounded queue (256 msgs OR 512 KB, drop-oldest + gap frame); a slow client never blocks others; publisher p99 ≤ 5 ms holds for k ≤ 32 stalled subscribers.</li>
+      <li><strong>Loud, leader-elected watchdog.</strong> Per-region probe every 20 s; a Postgres advisory lock makes warnings fire exactly once per outage across ingest replicas.</li>
+      <li><strong>Postgres RLS everywhere.</strong> Every <code>tenant_id</code>-bearing table filtered by <code>current_setting('app.tenant_id')</code>, set only by the tenancy gate.</li>
+    </ul>
+    <p class="muted" style="font-size:0.86rem;">The subtle pieces are TDD-built: transcript normalizer, capability token verifier, WS backpressure, tenancy gate, magic-link security, webhook authenticity, bot-lifecycle/pickup-latency, worker discovery, share-scope limits (§6.2).</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">07</span>Open questions &amp; risks</h2>
+    <table>
+      <thead><tr><th>#</th><th>Risk</th><th>Plan</th></tr></thead>
+      <tbody>
+        <tr><td class="qid">R1</td><td>Shared Recall API key — a bug could leak tenant A's call to B</td><td>Key never leaves bot-orchestrator + ingest; every request flows through the tenancy gate; full audit log; pen-test the gate before v2 launches the agent channel.</td></tr>
+        <tr><td class="qid">R2</td><td>AI-agent / act-channel security &amp; abuse (v2)</td><td>Capability-scoped, short-TTL, revocable tokens; per-token rate limits + per-tenant daily caps; full audit; agent never holds the Recall key; explicit security review before v2 ships.</td></tr>
+        <tr><td class="qid">R3</td><td>Consent / recording disclosure in two-party-consent jurisdictions</td><td>Three layers: host dashboard disclosure; bot name <code>samograph (recording)</code>; single in-call chat post on <code>in_call_recording</code> only. Legal sign-off before broad launch.</td></tr>
+        <tr><td class="qid">R4</td><td>Recall.ai cost guardrails &amp; free-tier limits</td><td>Per-tenant active-call cap + minutes/day cap with conservative defaults, surfaced as a friendly error rather than silent failure.</td></tr>
+        <tr><td class="qid">R5</td><td>Tunnel as single point of failure</td><td>One regional named tunnel + leader-elected loud watchdog; multi-region seam built &amp; validated in Sprint 3 (single region still sufficient to ship).</td></tr>
+        <tr><td class="qid">R6</td><td>Magic-link deliverability on corporate mail</td><td>SPF/DKIM/DMARC from day one; warmed transactional-provider IP; "didn't get it?" resend + alternate-email affordance. Tracked as a launch blocker.</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:0.85rem;">Abridged — the full risk list (R1–R12, incl. WS reconnect storms, worker crash mid-call, benchmark-runner availability) lives in <code>SPEC.md §10</code>.</p>
+  </section>
+
+  <footer>
+    Authoritative spec: <a href="./SPEC.md">SPEC.md</a> · Human view: this page<br>
+    Authored with <a href="https://github.com/NikolayS/samospec">samospec</a> · SPEC v0.3 · 2 Claude review rounds applied
+  </footer>
+
+</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+</script>
+</body>
+</html>
