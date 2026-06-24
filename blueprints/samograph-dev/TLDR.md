@@ -20,4 +20,4 @@ See SPEC.md for the full goal statement.
 
 ## Next action
 
-`samospec resume samograph-dev`
+`samospec publish samograph-dev`
