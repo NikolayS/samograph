@@ -24,7 +24,8 @@ phases:
   architecture, user stories, test plan, and risks.
 - **[brief.html](./brief.html)** — a polished, self-contained **human view**: a
   skimmable summary with architecture and user-journey Mermaid diagrams. Open it
-  directly in a browser.
+  directly in a browser, or read the published copy at
+  **https://samoagent.dev/samograph-dev/brief.html** (served from `docs/`).
 - **[TLDR.md](./TLDR.md)** — one-screen scope summary.
 
 ## Provenance
