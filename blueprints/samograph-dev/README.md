@@ -19,7 +19,7 @@ phases:
 
 ## Contents
 
-- **[SPEC.md](./SPEC.md)** — the **authoritative** specification (v0.3). This is
+- **[SPEC.md](./SPEC.md)** — the **authoritative** specification (v0.4). This is
   the source of truth for agents and engineers building the product: full scope,
   architecture, user stories, test plan, and risks.
 - **[brief.html](./brief.html)** — a polished, self-contained **human view**: a
@@ -32,5 +32,9 @@ phases:
 
 The spec was authored with [samospec](https://github.com/NikolayS/samospec) and
 reached **v0.3** through two Claude review rounds (round 1: 15 findings applied;
-round 2: 12 findings applied). The commit history in this PR shows each
-iteration (v0.1 → v0.2 → v0.3).
+round 2: 12 findings applied). **v0.4** folds in a stakeholder-feedback round
+(tenant compute isolation roadmap, Cloudflare posture, scheduled key rotation,
+the RLS InitPlan fix, a Settings model, retention + GDPR deletion, v2 Stripe
+billing, and an error-code reference) — backed by web research on
+Firecracker-on-Hetzner, Cloudflare runner reliability/pricing, and Circleback's
+pricing/features. See §11 for the per-version changelog.
