@@ -1,367 +1,428 @@
-# samograph.dev — SPEC v0.2
+# samograph.dev — SPEC v0.3
 
 ## 1. Goal & why it's needed
 
-**Goal.** A zero-setup, hosted SaaS that puts a Recall.ai meeting bot in your calls and streams a perfect, shareable, persisted **live** transcript to a page you (and anyone you share the link with) can read along with as the call happens — then keeps that transcript forever in your account.
+**Goal.** Ship a hosted, fully-managed SaaS at `samograph.dev` that wraps the existing `samograph` CLI and its Recall.ai meeting bot so an end user NEVER runs the CLI, manages a Recall token, or sets up an ngrok/cloudflared tunnel. v1 delivers exactly one experience: *sign in → paste a Zoom or Google Meet URL → the bot is in the call → a per-call page streams a live, persisted transcript that's also shareable read-only.* v2 layers a **secure bidirectional AI-agent channel** on top of any active call.
 
-**Why this exists.**
+**Why this exists.** samograph is fundamentally about **AI agents participating in live meetings** (Claude Code, Codex, etc.). The CLI proves the capability surface — `join`, `watch`, `chat`, `presence`, `frame`, `frames`, `leave` — but it forces every user to install Bun, hold a Recall API key, run a local callback server, and operate an ngrok/cloudflared tunnel. That setup tax is the only thing standing between "AI agent in your meeting" and a turnkey product. The hosted product removes that tax in v1 and uses v1 as the platform on which v2's scoped, revocable AI-agent channel is mounted. v1 alone (zero-install, live, persisted, shareable transcript) is already differentiated against Otter/Fireflies/Read/tl;dv for this use case; v2 is the strategic differentiator that no general meeting-notes product offers.
 
-- The existing CLI `samograph` already gives engineers a meeting bot, but it requires running Bun, managing a `RECALL_API_KEY`, and operating an ngrok/cloudflared tunnel. That puts it out of reach for ~every non-CLI user, and out of the daily workflow even of most engineers.
-- Current paid tools (Otter, Fireflies, Read, tl;dv) bury the *live* transcript: they show it post-call or behind sluggish polling, and **none offers a public shareable live read-along link**.
-- Live read-along is the killer use case the team hits every week: stand-ups with strong-accent speakers, multilingual customer calls, calls with hard-to-hear audio. Reading word-by-word as the call happens makes those calls usable.
-- Recall.ai keeps **video for only ~7 days** on the free developer plan. Transcripts must therefore be persisted to our DB in real time or they vanish — and a transcript-first product is exactly what we want anyway.
+**Explicit non-goals for v1 (do not silently re-introduce):** no calendar integration, no Google OAuth, no AI features in the product UI, no billing, no plans/seats, no video storage, no AI-generated summaries, no email digests, no MS Teams, no consistent/branded bot identity, no multi-language UI. The Phase-2 AI-agent channel is designed for but **not built** in v1; only the **seams** ship in v1 (per-call token model, command/act API in the bot worker, per-call auth, capability scoping, audit log).
 
-**Why now.** Recall.ai's WebSocket transcript stream is mature (we already proved it in the CLI), magic-link auth + Google OAuth are commodity, and Bun + Postgres on a single VPS comfortably handles dozens of concurrent calls in v1.
+## 2. Scope phases (authoritative)
 
-**Anti-framing (honor strictly).** This is **NOT a desktop CLI** distribution — users never touch the CLI, never see a token, never run a tunnel. This is **NOT a Zoom/Meet plugin** — the bot joins via the standard meeting link as any participant would. This is **NOT an AI-summary product in v1** — the v1 thesis is that *just streaming and persisting a great live transcript* already beats every current paid tool. If a future change tries to re-introduce "CLI for end users" or "v1 AI summaries," reject it.
+### v1 — MVP (the entire build target, this week)
+- Marketing + app at `samograph.dev`.
+- Email magic-link auth only (passwordless).
+- Dashboard with ONE primary action: "Add samograph to a call" (paste Zoom or Google Meet URL).
+- Bot joins immediately via shared server-side Recall API key.
+- Per-call page streams transcript live over WebSocket, line-by-line, no reload, no polling. Each line: `[timestamp] Speaker: utterance`.
+- Per-call page is shareable read-only via a signed link.
+- Transcript persists to Postgres in real time, durable beyond Recall's ~7-day video retention.
+- Server-operated, multi-tenant equivalent of `samograph join`: one shared Recall API key (in secret manager), one persistent cloudflared **named** tunnel per region, webhook ingest routed by `bot_id`, WS fan-out hub.
+- In-call recording disclosure (bot name + chat post on `in_call_recording`) so two-party-consent jurisdictions are addressed at the participant level, not just the dashboard (§10 #4).
+- **Multi-region seam proved in build-week:** a second region is deployed in Sprint 3 to validate the regional-tunnel pattern, but a single region is sufficient for ship; multi-region is not a launch gate (§4.7, §8).
 
-## 2. Personas
+### v2 — Phase 2 (next, deliberately deferred but architecturally pre-wired)
+- Secure bidirectional AI-agent channel for an active call. The signed-in owner mints a per-call, capability-scoped, short-TTL, revocable token they paste into an external AI tool.
+- **LISTEN scope:** subscribe to live transcript + bounded backfill.
+- **ACT scope:** remote equivalents of `chat`, `frame`, `frames`, `presence`, `leave`. (1:1 with existing CLI verbs; the bot worker already supports them.)
+- Exposed as HTTP + WebSocket API and an MCP server endpoint.
+- Hard tenant isolation: an agent NEVER sees the Recall token, other calls, or other tenants. Full audit log of every act-channel call. Rate limits on the act channel. One-click revoke.
 
-**The hire authoring this spec:** Veteran real-time meeting SaaS product engineer. Has shipped Otter-like products and knows the Recall.ai stack, WebSocket fan-out at meeting scale, and the OAuth + calendar minefield.
+### v3+ — explicitly deferred (do not design into v1)
+Billing/plans/seats; Google Calendar auto-join; branded/consistent bot identities; post-call transcript email; multi-language UI; long-term video storage + synced transcript+video viewer; MS Teams.
 
-**Intended end-user personas the product serves:**
+## 3. User stories (manual-test backbone)
 
-- **Priya — Distributed PM** *(primary v1 persona)*: runs daily customer calls with strong accents; needs a live read-along link to share with her team mid-call and a perfect post-call transcript for follow-ups. Locked-down laptop — cannot install CLIs.
-- **Marco — Engineering manager**: forwards Calendar invites to the bot for any call he can't attend; reads the live transcript from the next room and pastes a few lines into Slack.
-- **Sasha — Non-native-English speaker on a fast-talking team**: opens the live page on a second monitor and *reads* the meeting in real time to keep up.
+### v1 stories
 
-## 3. v1 Scope (this week — the primary build target)
+**Story 1 — Zero-setup live transcript (primary v1 JTBD).**
+- *Persona:* AI-forward engineer who already uses Claude Code / Codex and wants samograph in calls without local CLI + Recall token + tunnel.
+- *Action:* opens `samograph.dev`, enters email, clicks the magic link, lands on dashboard, pastes a Zoom URL, clicks "Add to call".
+- *Outcome:* the per-call page opens in ≤ 2 s of submit; status reaches `JOINING` within ≤ 5 s of submit; status reaches `IN_CALL` when Recall reports `in_call_recording` (typically 10–30 s, partly outside our control). **Pickup-latency SLO (what the team actually owns):** from the moment ingest receives the Recall `in_call_recording` event to the moment the per-call page renders the new status, **p95 ≤ 1 s** (asserted in §6.2 #8). Once `IN_CALL`, transcript lines start streaming live. Closing and re-opening the tab resumes without loss. After the call ends, the full transcript remains in the dashboard.
 
-### 3.1 Decisions for the previously-open interview questions
+**Story 2 — Share the live transcript read-only.**
+- *Persona:* same engineer (or a non-signed-in colleague / participant with hard-to-understand accent / multilingual viewer).
+- *Action:* on the per-call page, owner clicks "Share" → gets a signed read-only URL → sends it to a teammate.
+- *Outcome:* recipient opens the URL without signing in and sees the live transcript stream in real time, read-only (no controls to leave, mint AI tokens, or see other calls). The link is revocable from the owner's dashboard and stops working within ≤ 1 s of revoke. The share scope has explicit caps (§5.7): ≤ 200 concurrent WS connections per share token; ≤ 20 client→server commands/minute/connection; ≤ 1000 new connection establishments/hour/token (anti-fuzz). Exceeding any cap yields a friendly 429.
 
-| Question | v1 answer |
-|---|---|
-| **Primary user** | Distributed PMs and EMs who attend many spoken-English calls with at least one hard-to-understand voice (accent, audio quality, jargon). Priya is the avatar. |
-| **Single job-to-be-done** | "I clicked one button last week; today the bot is in my call and I (and anyone I share the link with) can read along live and re-read later — with zero setup." |
-| **Meeting platforms day one** | **Google Meet and Zoom**, both via Recall.ai (already proven by the CLI). MS Teams deferred to v2. |
-| **Auth** | **Email magic-link + Google OAuth.** The Google sign-in is also what unlocks Calendar — one consent, two jobs. |
-| **Single success metric** | **W2 live-transcript-open ratio** = (# distinct opens of `/c/<token>` for meetings the user owns in week 2 after signup) ÷ (# meetings auto-joined for that user in the same week). Target ≥ 0.6 across the W2 cohort. This measures whether the read-along — our differentiator — is actually used, not vanity signups. |
-| **Out of scope for v1** | (a) any LLM/AI features (no summaries, action items, semantic search, sentiment); (b) long-term **video** storage (we keep Recall's free 7-day window); (c) post-call email; (d) multi-language UI; (e) custom/branded bot identities; (f) paid billing and seats (single free tier with rate limits); (g) transcript editing; (h) MS Teams; (i) native mobile apps (mobile *web* only). |
+**Story 3 — Durable transcript after Recall's video TTL.**
+- *Persona:* engineer reviewing a meeting 10 days later (past Recall's ~7-day video retention).
+- *Action:* opens dashboard → "Past calls" → selects the call.
+- *Outcome:* the full final transcript is shown with timestamps and speaker labels, downloadable as plain text (`[timestamp] Speaker: utterance` per line — identical to the CLI's local transcript format).
 
-### 3.2 User stories (each: persona + action + outcome + manual-test recipe)
+**Story 4 — Bot fails to join, clear failure mode.**
+- *Persona:* engineer pasting a link to a meeting that has not started, or a malformed URL.
+- *Action:* pastes URL, clicks "Add to call".
+- *Outcome:* the per-call page transitions to a terminal failure state (`COULD_NOT_JOIN` with the underlying Recall reason surfaced in plain English). No silent hang — terminal states are driven by Recall bot lifecycle events (`call_ended`, `bot_removed`, `fatal`), not by the absence of transcript traffic. **"Try again" navigates back to the dashboard with the original URL pre-filled in the paste input; the user must explicitly re-submit to create a new Call row (no implicit retry).** This keeps the audit log clean (one user action = one Call row) and gives the user a chance to edit the URL.
 
-**U1 — Sign in with Google in under 30 seconds.**
-- *Persona:* Priya (first-time visitor).
-- *Action:* Lands on `samograph.dev`, clicks "Sign in with Google," grants the minimum scopes shown on the consent screen.
-- *Outcome:* She is on her dashboard with an empty "Upcoming meetings" list and a green "Calendar connected" badge.
-- *Manual test:* Open an incognito window, complete the OAuth flow, confirm landing on `/app` with the badge visible and rows present in `users` and `oauth_accounts`.
+**Story 5 — Mid-call tunnel/ingest outage is loud, never silent.**
+- *Persona:* engineer watching a live transcript when the regional tunnel or webhook ingest degrades.
+- *Action:* keeps the per-call page open.
+- *Outcome:* within ≤ 2 probe intervals (default probe interval 20 s → banner visible within ≤ 40 s) a banner appears ("Transcript delivery degraded — recovering…") and a `SAMOGRAPH-WARNING: tunnel unreachable …` line is appended to the live transcript stream, mirroring the CLI's behavior. When ingest recovers a `SAMOGRAPH-WARNING: tunnel recovered` line is appended and the banner clears. The user is never silently shown an empty transcript while the bot is in the call. The banner is driven by `calls.ingest_degraded = true` (an overlay flag, not a status enum value — see §5.10), so a call can be `IN_CALL` and `ingest_degraded` simultaneously.
 
-**U2 — Connect Calendar; bot auto-joins the next meeting.**
-- *Persona:* Priya.
-- *Action:* Within 5 minutes of signing in, her Calendar shows a new event with a Meet/Zoom link; she does nothing.
-- *Outcome:* At T-1 minute the bot is in the lobby/call as `samograph (Priya) — recording transcript`; at T+0 the per-call page is live with a streaming transcript.
-- *Manual test:* Create a Calendar event 3 minutes out with a real Meet link, watch `/calls/:id` populate with words within 30 s of the bot being admitted; confirm one `bots` row, one `calls` row, and a stream of `transcript_lines` writes.
+**Story 6 — In-call recording disclosure (consent).**
+- *Persona:* any participant in a call the samograph bot joins (not necessarily a samograph user).
+- *Action:* the bot joins the call and Recall reports `in_call_recording`.
+- *Outcome:* the bot's displayed participant name is `samograph (recording)` (recognizable bot identity) and the bot posts a single chat message on entering `in_call_recording` ("samograph is recording this call's audio for the host's live transcript — samograph.dev"). Owner can see, but not suppress, the disclosure in v1. If Recall ever reports `in_call_not_recording` instead, the bot does NOT post a recording disclosure (it would be factually wrong); the call transitions to terminal `COULD_NOT_RECORD` and the bot leaves cleanly (§5.2, §5.9).
 
-**U3 — Read along live and share the link.**
-- *Persona:* Sasha (a teammate of Priya, no account).
-- *Action:* Priya pastes `https://samograph.dev/c/<shareable-token>` into Slack; Sasha opens it on a second monitor.
-- *Outcome:* Words appear chunk-by-chunk over WebSocket (no reload, no polling). A "live • N viewers" badge updates. The page exposes only meeting title + transcript + viewer count — no private user data.
-- *Manual test:* Open the share link in a private window on another device, verify words stream in ≤2 s after they are spoken; confirm the response carries no user PII.
+### v2 stories (specified now to keep v1 architecture honest; **not built in v1**)
 
-**U4 — Custom dictionary improves recognition for the next call.**
-- *Persona:* Marco.
-- *Action:* Before a Postgres deep-dive call, in `/settings/dictionary` he pastes terms: `pg_stat_statements, EXPLAIN ANALYZE, samograph, DBLab`.
-- *Outcome:* In the very next call, those words land correctly in the transcript instead of phonetic guesses.
-- *Manual test:* Hold one call without the term, add it, repeat the same spoken phrase in a second call — confirm transcripts diverge in the expected direction. (Recall.ai's keyterm hints are passed through unchanged.)
+**Story 7 — Mint a scoped AI-agent link for an active call.**
+- *Persona:* AI-forward engineer in an active call who wants their Claude Code agent to listen + act.
+- *Action:* on the per-call page, clicks "Connect AI agent", picks scopes (`listen`, `act:chat`, `act:frame`, `act:presence`, `act:leave`), TTL bounded by the call lifetime, clicks "Mint".
+- *Outcome:* a one-time-display token + connection URL is shown. The agent uses it to call HTTP/WS or MCP endpoints. Every act-channel call is logged. "Revoke" kills the token immediately.
 
-**U5 — Post-call: the transcript is durable, exportable, attributed.**
-- *Persona:* Priya, the next day.
-- *Action:* Opens the call from her dashboard.
-- *Outcome:* Full transcript with per-speaker labels and timestamps; one-click export to `.txt` and `.md`. Recall.ai video may already be expired; the transcript is not.
-- *Manual test:* Wait 24 h after a recorded call (or, in dev, mark Recall video expired); confirm the transcript still loads from our DB and exports correctly.
+**Story 8 — AI agent acts in a call through the channel.**
+- *Persona:* an external AI agent (Claude Code, Codex) authenticated with a minted token.
+- *Action:* subscribes to the live transcript over WS, then posts a chat line, requests a screen-share frame, sets presence to `acting`.
+- *Outcome:* the meeting chat shows the message (with the same chime as the CLI), the frame PNG is returned, the bot camera state changes. The agent can never see other tenants' data, never see the Recall token, and is rate-limited per token. All actions appear in the owner's audit log.
 
-**U6 — Consent and recording disclosure are visible to all participants.**
-- *Persona:* Any meeting participant who is not Priya.
-- *Action:* Sees the bot join.
-- *Outcome:* Bot display name is `samograph (Priya) — recording transcript`. When the bot enters, it auto-posts in meeting chat: *"Hi — I'm samograph, transcribing this meeting on Priya's behalf. Live transcript: samograph.dev/c/<token>. Ask Priya to remove me if you'd prefer not to be transcribed."* The host can `/leave` from their dashboard one-click.
-- *Manual test:* Join a Meet/Zoom call as a third party; confirm the chat message appears within 10 s of the bot's join, the display-name is correct, and a Leave click removes the bot in ≤10 s.
+## 4. Architecture
 
-**U7 — Per-meeting opt-out so private 1:1s stay private.**
-- *Persona:* Priya.
-- *Action:* On her dashboard, she flips a toggle on tomorrow's "1:1 with my therapist" event. Also supported: putting `[private]` or `[notranscribe]` in the event title or description.
-- *Outcome:* The bot does not join that meeting; the dashboard shows the event greyed out with reason.
-- *Manual test:* Create a Calendar event titled `[private] 1:1`; confirm the worker logs `skip:per-event-opt-out` and no bot joins.
+### 4.1 Components and boundaries
+```
+           ┌────────────────────────────────────────┐
+           │              samograph.dev             │
+           │     (marketing + Next.js app shell)    │
+           └──────────────┬─────────────────────────┘
+                          │ HTTPS (magic-link auth, dashboard)
+                          ▼
+  ┌────────────────────────────────────────────────────────┐
+  │  app-api (Bun/Hono)                                    │
+  │   - /auth/magic-link  (request, callback)              │
+  │   - /calls            (create from meeting URL)        │
+  │   - /calls/:id/share  (mint/revoke read-only token)    │
+  │   - /calls/:id/agent-token   [v2 stub in v1]           │
+  │   - /audit            [v2; table exists in v1]         │
+  └─────────┬─────────────────────────────┬────────────────┘
+            │                             │
+            │ enqueues join               │ issues per-call tokens
+            ▼                             ▼
+  ┌────────────────────────┐   ┌──────────────────────────┐
+  │  bot-orchestrator      │   │  token-service           │
+  │   - holds ONE shared   │   │   - per-call capability  │
+  │     Recall API key     │   │     tokens (share now;   │
+  │   - creates Recall bot │   │     act:* in v2)         │
+  │   - registers call_id  │   │   - HMAC-signed, KID     │
+  │     with ingest        │   │     rotated, revocable   │
+  │   - registers bot-     │   │   - read scope is        │
+  │     worker address in  │   │     session-derived,     │
+  │     workers table      │   │     NOT persisted        │
+  │                        │   │   - ingest_secret per    │
+  │                        │   │     call (separate from  │
+  │                        │   │     user-visible tokens) │
+  └─────────┬──────────────┘   └──────────────────────────┘
+            │ POST recall.ai with webhook_url=
+            │   <regional-tunnel>/webhook?bot=<id>&t=<ingest_secret>
+            ▼
+  ┌────────────────────────────────────────────────────────┐
+  │  Recall.ai (Zoom / Google Meet)                        │
+  └─────────┬──────────────────────────────────────────────┘
+            │ webhooks (signed) + WSS video frames
+            ▼
+  ┌────────────────────────────────────────────────────────┐
+  │  Regional ingress  (one PERSISTENT cloudflared NAMED   │
+  │  tunnel per region — NOT one tunnel per call)          │
+  └─────────┬──────────────────────────────────────────────┘
+            │ HTTPS/WSS
+            ▼
+  ┌────────────────────────────────────────────────────────┐
+  │  ingest (Bun/Hono)                                     │
+  │   - POST /webhook?bot=...&t=...                        │
+  │   - GET  /health  (tunnel round-trip marker)           │
+  │   - verifies Recall webhook signature                  │
+  │   - verifies ingest_secret matches calls.ingest_secret │
+  │     for bot_id, in constant time                       │
+  │   - tenancy gate: bot_id → call → tenant               │
+  │   - normalizer → transcript lines                      │
+  │   - lifecycle events drive call status transitions     │
+  │   - persists to Postgres                               │
+  │   - publishes to fan-out hub                           │
+  │   - leader election (per region) for watchdog          │
+  └─────────┬──────────────────────────────────────────────┘
+            │ pub/sub (per-call channel)
+            ▼
+  ┌────────────────────────────────────────────────────────┐
+  │  ws-hub                                                │
+  │   - /calls/:id/stream  (live transcript)               │
+  │   - bounded per-conn outbound queue + backpressure     │
+  │   - auth: owner cookie OR share token OR agent token   │
+  │     [v2: agent scope checks act vs listen]             │
+  │   - no in-process token cache (one DB hit per upgrade) │
+  └─────────┬──────────────────────────────────────────────┘
+            │ WSS
+            ▼
+  ┌────────────────────────────────────────────────────────┐
+  │  per-call page (Next.js)                               │
+  │   - live transcript stream, share button, status,      │
+  │     tunnel-degraded banner                             │
+  └────────────────────────────────────────────────────────┘
 
-**U8 — The SaaS promise: tunnel-free, key-free, install-free.**
-- *Persona:* Priya.
-- *Action:* Nothing — she does not install Bun, does not see a Recall token, does not configure ngrok.
-- *Outcome:* All Recall plumbing runs server-side on our infra; the user surface is a web app.
-- *Manual test:* Inspect Priya's browser network tab during a call — no third-party tokens, no localhost calls, no install prompts.
+  ┌────────────────────────────────────────────────────────┐
+  │  bot-worker (process-per-call command surface)         │
+  │   - exposes chat/frame/frames/presence/leave           │
+  │   - listens on a host:port registered in `workers`     │
+  │     table at start (host, port, call_id, secret)       │
+  │   - app-api / agent-gateway resolve worker via         │
+  │     workers table; authenticate with per-worker        │
+  │     shared secret (mTLS within VPC in production)      │
+  │   - in v1 invoked only by app-api on owner actions     │
+  │   - in v2 invoked by AI-agent channel via token-svc    │
+  │   - same code path; capability scopes gate it          │
+  └────────────────────────────────────────────────────────┘
 
-### 3.3 Explicit non-goals in v1 (do not silently expand)
-
-- No LLM summarization, action-item extraction, semantic search, sentiment, or any "AI" feature.
-- No long-term **video** storage (transcripts only; we accept Recall's 7-day video window).
-- No MS Teams.
-- No paid plans, billing, seats, teams. Single free tier with rate limits (§5.4).
-- No bot identity customization. Display name is `samograph (<owner first name>) — recording transcript`.
-- No post-call email — the dashboard is the durable surface.
-- No native mobile app (responsive web is enough).
-
-## 4. v2 Scope (later — explicitly deferred)
-
-Listed here so v1 architecture leaves the right seams open.
-
-- **Synced transcript+video viewer.** Click a word → video seeks. Needs persistent video.
-- **Cheap long-term video storage.** Egress from Recall → S3-compatible cold storage (Backblaze B2 or Cloudflare R2 at ~$6/TB/mo vs. S3 $23/TB/mo).
-- **Consistent bot identities.** Per-workspace named bots ("Maya from Acme").
-- **Post-call email of transcript** to all detected participants, with one-click unsubscribe.
-- **Multi-language UI** (i18n keys laid out in v1 even though only `en` ships).
-- **MS Teams** (Recall supports it).
-- **Team workspaces** with shared meeting libraries and per-seat billing.
-- **Live AI assist (opt-in).** First AI feature, gated behind a workspace setting.
-- **Pre-admit consent flow** (hold the bot in the lobby until a host clicks "admit + consent recorded").
-
-## 5. Architecture
-
-<!-- architecture:begin -->
-
-```text
-(architecture not yet specified)
+  Postgres (single multi-tenant DB, RLS-enforced per tenant)
+    users, calls, transcripts (append-only),
+    tokens (call_id, scopes, ttl, revoked_at, KID),
+    audit_log (call_id, actor, action, payload-hash, ts),
+    workers (call_id, host, port, worker_secret_hash),
+    regions (tunnel_hostname, status, leader_id, ...)
 ```
 
-<!-- architecture:end -->
+### 4.2 Key abstractions (preserved across v1 → v2)
+- **`Call`** — `(id, tenant_id, recall_bot_id, meeting_url, region, status, ingest_degraded, created_at, ended_at, ingest_secret_hash)`. `status` is a single enum (§5.2); `ingest_degraded` is a separate boolean overlay that does not change `status` (§5.10).
+- **`CapabilityToken`** — `(id, call_id, scopes[], ttl, revoked_at, kid)`. **Only scopes that need server-side persistence are stored as `CapabilityToken` rows.** In v1 that means exactly the `share` scope (defined in §5.7). v2 adds `act:chat | act:frame | act:presence | act:leave`, also persisted. The `read` scope is NOT a CapabilityToken — it is derived from the owner's authenticated session by the tenancy gate (§5.7). The same verifier handles all persisted scopes.
+- **`IngestSecret`** — a per-call, server-side-only secret encoded in the Recall webhook URL as `?t=…`. Not a `CapabilityToken`; never user-visible; never returned by any API. Stored as a SHA-256 hash in `calls.ingest_secret_hash` and verified in constant time on every webhook POST. Survives the full call lifetime (so it CANNOT be "one-time" — Recall posts many webhooks per call) and is invalidated when the call enters a terminal state.
+- **`TranscriptLine`** — append-only `(call_id, seq, ts, speaker, text)`. The normalizer turns Recall transcript events into this canonical shape.
+- **`AuditEvent`** — written on every privileged action (mint token, revoke, bot create/leave, share mint/revoke; v2: every act-channel call).
+- **`Tenancy gate`** — single helper used by every authenticated route + WS upgrade: `(session | token) → tenant_id → call_id ∈ tenant_id`. Detailed in §5.6.
+- **`Worker registration`** — on start, bot-worker writes `(call_id, host, port, worker_secret_hash)` to `workers`; app-api/agent-gateway look up by `call_id` and authenticate the inter-service call with the per-worker secret (and mTLS in prod). Provides service discovery so the "same code path" claim (§5.8) is real, not aspirational.
 
-### 5.1 Components
+### 4.3 Why one named regional tunnel, not one tunnel per call
+The CLI's per-call ngrok model does not scale and is the single largest contributor to mid-call failure (the existing `ERR_NGROK_727` story). One persistent cloudflared **named** tunnel per region gives a stable DNS hostname, no per-call provisioning latency, and one shared health surface. Per-call routing is encoded in the webhook URL (`?bot=<id>&t=<ingest_secret>`) and verified at the tenancy gate. The mid-call watchdog (§4.5) runs once per region, not once per ingest replica (see leader election, §4.6).
 
-```
-                         Browser (Next.js app)
-                          |             ^
-   sign-in / dashboard    |             | WS: transcript chunks
-                          v             |
-                   +-------------------------+
-                   |  API/Edge (Hono on Bun) |
-                   |  - auth, OAuth, calendars
-                   |  - /c/<token> live page
-                   |  - WS fan-out hub
-                   +-------------------------+
-                       |        |        ^
-            +----------+        |        | (transcript writes)
-            v                   v        |
-     Postgres (Neon)     Calendar Poller |
-     - users             - 1 min cron    |
-     - oauth_accounts    - next 15 min   |
-     - calendars                         |
-     - calendar_events    -> enqueue join
-     - bots                              |
-     - calls                             |
-     - transcript_lines  ---------------- + (append-only)
-     - dictionaries                       |
-     - share_tokens                       |
-                                          |
-                               +---------------------+
-                               |   Bot Worker (Bun)  |
-                               |  - spawns Recall bot|
-                               |  - shared cloudflared
-                               |    tunnel (per region)
-                               |  - webhook ingest   |
-                               +---------------------+
-                                          |
-                                          v
-                                   Recall.ai (Meet/Zoom)
-```
+### 4.4 Why a shared Recall API key (and the boundary that makes it safe)
+A single Recall key in a secret manager is the only practical v1 model (Recall does not give per-tenant child keys at our scale). Tenant isolation is therefore enforced **above** Recall: (a) the key only exists in the bot-orchestrator and ingest processes; (b) every request that names a `bot_id` passes through the tenancy gate before any Recall call; (c) the AI-agent channel in v2 is mediated by token-service + bot-worker — the agent never holds or sees the Recall key; (d) the audit log captures every Recall-mediated action; (e) the webhook authenticity check (Recall signature + `ingest_secret`) prevents external spoofing of `?bot=<victim>` (§5.3, §6.2 #7).
 
-- **Frontend:** Next.js (App Router) on Vercel or Cloudflare Pages. The live page is static HTML + a WebSocket — no SSR cost on the hot path.
-- **API/Edge:** Hono on Bun (matches the repo's Bun-first stance). Hosts REST + the WS hub.
-- **DB:** Postgres on Neon (cheap, branchable, RLS-capable). System of record for everything — including transcripts.
-- **Calendar poller:** Bun cron, every 60 s per user; fetches the next 15 minutes of events and enqueues `join` jobs at T-60 s. Google push notifications are added on top of polling for sub-minute latency.
-- **Bot worker:** A pool of long-running Bun processes. The **single shared Recall API key** lives only here, in a secret manager. The worker is essentially the existing `samograph join` flow refactored to (a) use a *managed, multi-tenant* tunnel (one persistent cloudflared per region rather than one ngrok per call), and (b) write transcript chunks to Postgres + publish to the WS hub.
-- **Tunnel:** One cloudflared *named* tunnel per worker region, persistent. Recall webhooks carry the `bot_id`; the worker routes events to the right call by it. This is the critical departure from the CLI (one ngrok per user); N ngroks per N users would not work.
-- **Object storage (v2 only):** R2 or B2 for video egressed from Recall.
+### 4.5 Tunnel watchdog (server-side analog of the CLI watchdog)
+Ingest runs a per-region watchdog that probes `https://<regional-tunnel>/health?nonce=…` with a one-time nonce and the same `samograph-health` marker the CLI already uses (`src/server.ts:HEALTH_MARKER`). **Default probe interval = 20 s.** Two consecutive failures flip the region to `degraded`, which (a) appends `SAMOGRAPH-WARNING: tunnel unreachable …` to every active call's live transcript stream in that region, (b) sets `calls.ingest_degraded = true` for every IN_CALL call in the region, and (c) raises the dashboard banner. Recovery appends `SAMOGRAPH-WARNING: tunnel recovered`, clears `ingest_degraded`, and clears the banner.
 
-### 5.2 Boundaries & key abstractions
+### 4.6 Watchdog leader election (replica-safe "exactly once")
+Ingest scales horizontally. To preserve "exactly one warning line per outage" across replicas, the watchdog runs only on the **leader** for a region. Leader election uses a Postgres advisory lock keyed on `region_id` with a 60 s lease (renewed every 20 s; expires automatically if the leader dies). Only the leader writes to `regions.status` and `calls.ingest_degraded`, only the leader emits warning/recovery lines. Followers run no probes. Tested explicitly under concurrent replicas (§6.2 #5).
 
-- `User`, `Workspace` (one-user-one-workspace in v1; schema designed for many-to-many in v2).
-- `Calendar`, `CalendarEvent` (mirrored from Google).
-- `Call` (one per meeting the bot attends). Owns `bot_id` from Recall, `share_token`, `started_at`, `ended_at`, `state` (see §6.2).
-- `TranscriptLine` (append-only: `call_id`, `speaker`, `text`, `started_at`, `is_final`, `version`). Interim words rewrite the trailing line by bumping `version`; WS sends `{type:"line"}` for finals and `{type:"partial"}` for interims.
-- `Dictionary` (per user; passed as Recall keyterm hints when creating the bot).
-- `ShareToken` (random 22-char URL-safe slug ≈ 131 bits, no PII, revocable/rotatable).
+### 4.7 Region selection policy
+v1 ships to production behind a single region (`us-east`); a second region is deployed in Sprint 3 to prove the multi-region seam (§8) — both decisions live inside the v1 build week. **Multi-region is not a launch gate**: a single healthy region is sufficient for the v1 ship. When ≥ 2 regions are live, `calls.region` is set at orchestrator time by: (a) user-pinned override if present, else (b) lowest-latency healthy region for the orchestrator host (round-robin within ties). A region marked `degraded` fails **closed** for new calls (orchestrator skips it) and the chosen alternative is logged. Already-IN_CALL calls in a degraded region are not migrated (Recall does not support cross-region bot migration); they continue to surface the warning until recovery.
 
-### 5.3 Tenant isolation (the open-question risk turned into a decision)
+## 5. Implementation details
 
-Shared Recall token but per-user bots. The risk is that a bug or compromised `bot_id` lets user A read user B's transcript. Mitigations, all of which must ship in v1:
+### 5.1 Auth (magic link)
+- `POST /auth/magic-link {email}` → server creates a one-time, single-use, 15-minute token, signs it (HMAC + KID), sends an email via a transactional provider (Postmark or Resend).
+- `GET /auth/callback?token=…` → verifies in **constant time**, marks the token consumed (idempotent, replay-safe), creates/loads user, sets a signed session cookie (HttpOnly, Secure, SameSite=Lax). A second use of a consumed token returns 401 with no body.
+- Concurrent outstanding links per email: the most recently issued link supersedes prior ones (older outstanding tokens are invalidated server-side at issue time).
+- Rate limits, expressed as separate counters (whichever fires first blocks):
+  - **per-email**: 5 requests / hour.
+  - **per-IP**: 20 requests / hour.
+- Deliverability: SPF + DKIM + DMARC on `samograph.dev` from day one (corporate mail will silently drop us otherwise — §10).
+- KID rotation: rotated every 90 days; both current and previous KIDs are accepted during a 30-day overlap window.
 
-- Every webhook arriving at our worker is correlated `bot_id → call_id → user_id`; transcript writes go through a `WHERE user_id = ?` constraint enforced by **Postgres Row-Level Security** policies on `calls` and `transcript_lines`.
-- `bot_id` is never exposed to the browser. The `/c/<token>` page authenticates by share token only.
-- The Recall token is read only inside the bot worker process; it is never present in the API/Edge or the DB.
-- Inbound webhooks are validated: we sign join requests with a per-bot nonce, and any webhook for an unknown or expired `bot_id` is dropped before any DB write.
-
-### 5.4 Rate limits and cost guardrails (v1)
-
-To keep the free tier from blowing up the Recall bill:
-
-- Per user: max 4 concurrent calls, 6 hours/day, 30 hours/month. Above the cap, calendar events are silently skipped with a dashboard banner explaining why.
-- Per call: max 100 concurrent share-link viewers on the WS hub.
-- Global `kill_switch` env flag pauses all new joins (incident response).
-
-## 6. Implementation details
-
-### 6.1 Data flow — live transcript end-to-end
-
-1. Recall POSTs `transcript.data` webhooks to `https://<region>.tunnel.samograph.dev/webhook` (the long-lived shared tunnel) with the JSON body and a `bot_id`.
-2. Worker calls `formatTranscriptLine()` (reused unchanged from the CLI repo) → `{speaker, text, t0, t1, is_final}`.
-3. Worker INSERTs (or UPDATEs the same `version`) into `transcript_lines`, then publishes onto an in-process pub/sub channel keyed by `call_id`.
-4. WS hub: each `/c/<token>` connection subscribes to that channel. On subscribe, the hub sends the last 200 finalized lines as backfill, then live messages.
-5. Browser appends finals; replaces the trailing partial.
-
-Reusing `formatTranscriptLine` keeps a single source of truth between CLI and SaaS so Recall payload-shape changes can't drift.
-
-### 6.2 State transitions for a `Call`
+### 5.2 Call lifecycle
+Driven by Recall bot lifecycle events, NOT by transcript traffic. A silent call (no one speaking) must still transition to `IN_CALL`.
 
 ```
-calendar_event_detected
-   -> scheduled        (join job enqueued at T-60s)
-      -> joining       (Recall createBot called, bot_id known)
-         -> in_call    (first transcript.data received)
-            -> finished (Recall call_ended event OR user clicks Leave)
-               -> archived (post-call: clear partials, finalize export caches)
-   -> skipped (per-event opt-out, rate limit, duplicate)
-   -> failed  (Recall error, tunnel unreachable, lobby denied)
+user pastes URL
+  → app-api validates (must be a known Zoom / Google Meet URL pattern)
+  → app-api creates Call (status=PENDING, ingest_degraded=false) in DB
+  → app-api enqueues bot-orchestrator job (call_id)
+  → orchestrator picks region per §4.7, generates ingest_secret,
+    stores ingest_secret_hash on Call, calls Recall createBot with
+       webhook_url = https://<region-tunnel>/webhook?bot=<bot_id>&t=<ingest_secret>
+    and pre-mints per-call share token slot (token row created on user click,
+    not implicitly)
+  → status=JOINING (set on Recall ack of createBot — SLO ≤ 5 s of submit)
+  → status=IN_CALL on Recall bot lifecycle event `in_call_recording`
+    (NOT first transcript line — guarantees silent calls progress.
+    Pickup-latency SLO: event received → status visible on per-call page
+    ≤ 1 s p95, asserted in §6.2 #8.)
+  → status=COULD_NOT_RECORD (terminal) on Recall lifecycle event
+    `in_call_not_recording`. Recording is required for the product to
+    function; bot leaves the call cleanly and no "recording" disclosure
+    chat post is sent (§5.9).
+  → status=ENDED on Recall `call_ended` OR owner "leave" verb
+  → status=COULD_NOT_JOIN on Recall `fatal` / non-recoverable failure;
+    on owner "Try again" the user is returned to the dashboard with
+    URL pre-filled (Story 4); a new Call row is created only on their
+    explicit re-submit.
+  → status=BOT_REMOVED on Recall `bot_removed`
+
+  `ingest_degraded` is an INDEPENDENT boolean overlay column on Call
+  (§5.10). It can flip true/false at any time while status is IN_CALL
+  without changing status, and it is reset to false on any terminal
+  status transition. The per-call page shows "IN_CALL + degraded" by
+  reading both columns; the lifecycle diagram above intentionally does
+  NOT list `INGEST_DEGRADED` as a status enum value.
 ```
+First-line latency is still recorded (`first_line_at`) for the activation funnel (§9) but is not the trigger for `IN_CALL`.
 
-`failed` is terminal with a typed reason surfaced on the dashboard (e.g. "Couldn't join — host denied entry").
+### 5.3 Webhook ingest authenticity
+Every `POST /webhook?bot=…&t=…` to ingest is validated in this order, all failures returning 401 with no body and logging once at WARN:
+1. **Recall webhook signature** verified against Recall's published HMAC scheme (and a per-region webhook secret in secret manager). Rejects external spoofs that never went through Recall.
+2. **`bot` query param** is a known `recall_bot_id` in `calls`.
+3. **`t` query param** matches `calls.ingest_secret_hash` for that `bot_id`, compared in **constant time**.
+4. **Tenancy gate** resolves `bot_id → tenant_id`; subsequent writes set `app.tenant_id` for RLS.
+The `?t=` value is the IngestSecret defined in §4.2 — long-lived for the call, server-side-only, never user-visible, never a `CapabilityToken`. Adversarial test coverage: §6.2 #7.
 
-### 6.3 Key algorithms
+### 5.4 Transcript normalizer
+Reuses `formatTranscriptLine` semantics from `src/transcript.ts` so the wire/disk format is byte-identical to the CLI. Inputs: Recall `transcript.data` payloads (varying word/partial shapes seen historically). Output: canonical `[YYYY-MM-DD HH:MM:SS] Speaker: utterance\n`. Pure function, no I/O, fed by the webhook handler. **TDD-built** (§6.2 #1).
 
-- **WS backpressure.** Each viewer has a 1 MB outbound buffer; on overflow we drop *partials* (never finals) and send `{type:"resync", from: last_seq}` so the client refetches via REST.
-- **Calendar poll dedupe.** Events are keyed by `iCalUID`; a re-scheduled event updates the row in place instead of spawning two joins.
-- **Share-token entropy.** 22 chars base62 ≈ 131 bits, unguessable. Rotatable via `POST /api/calls/:id/rotate-token`; old token returns HTTP 410.
-- **Bot display name.** `samograph (<owner_first_name>) — recording transcript`. Capped at the Recall name length limit; Unicode-normalized to avoid surprise renderings inside Meet/Zoom.
-- **Tunnel-health watchdog (multi-call).** Periodic `probeTunnelHealth` (ported from the CLI). On 2 consecutive failures the worker fans out a `SAMOGRAPH-WARNING: tunnel unreachable` event into **every** active call's WS so all viewers see it, and into every persisted transcript so the durable record reflects the gap.
+### 5.5 WS fan-out + backpressure
+- One in-process pub/sub channel per `call_id`.
+- Each subscriber has a bounded outbound queue, capped by two independent limits — **whichever fires first triggers overflow**: **256 messages** OR **512 KB** outstanding.
+- Overflow policy: **drop oldest**, increment `ws_dropped_total{call_id}`, send a single `{type:"gap", since_seq, until_seq}` control frame so the client can request a backfill via REST.
+- Slow client never blocks other subscribers in the same channel — explicitly including the realistic case of **k > 1 concurrently stalled subscribers** in the same channel (e.g., a share link to a large internal audience on spotty Wi-Fi). The publisher-side per-message latency SLO holds for **k ≤ 32 stalled subscribers at queue-full**: **p99 ≤ 5 ms / message** (asserted in §6.2 #3, with the measurement methodology spelled out there).
+- Reconnect carries `?since_seq=…` for replay from Postgres.
+- No in-process token cache on the hot path; one DB lookup per WS upgrade (revoke-within-1s SLO depends on this — §6.2 #4). If a cache is ever added, a cache-invalidation test must land in the same PR.
+- **TDD-built** (§6.2 #3).
 
-### 6.4 Consent / recording disclosure
+### 5.6 Tenant-isolation authorization gate
+A single function `authorizeCall(req) → { tenantId, callId, scopes }` is the only entry point. Every route, every WS upgrade, every bot-worker invocation calls it before touching state. Inputs accepted: session cookie (derives `read` scope for any `call_id` whose `tenant_id` matches the session's tenant), share token (derives `share` scope, persisted in `tokens`), [v2] agent token (derives `act:*` scopes, persisted in `tokens`). Failure modes return 403 with no body. No code path may reach Recall without going through this gate. **TDD-built**, with adversarial cases (cross-tenant `call_id`, expired token, revoked token, token re-use across tenants) — §6.2 #4.
 
-We will run in two-party-consent jurisdictions (CA, much of EU). v1 minimum:
+### 5.7 Capability tokens & v1 scope model
+**Persisted vs derived scopes.** v1 has exactly two scopes, but they are produced differently and the spec is concrete about that:
 
-- Bot display name contains "recording transcript".
-- Bot auto-posts the U6 disclosure message in meeting chat on join — this is the explicit disclosure act.
-- TOS makes the calendar-connecting user responsible for getting attendee consent.
-- v2: add the pre-admit consent gate.
+- **`read` (derived, not persisted).** Issued implicitly by the tenancy gate (§5.6) when a request carries a valid owner session cookie AND the requested `call_id`'s `tenant_id` matches the session's tenant. There is NO `tokens` row for the `read` scope. "Revocation" of a `read` capability is achieved by signing out / session expiry; it is not independently revocable, and that is by design. Per-connection WS rate limit: 60 client→server commands/minute; max 10 concurrent WS connections per user session per call. Audit entries attribute the actor as `user:<id>`.
+- **`share` (persisted CapabilityToken).** Issued explicitly by the owner via "Share" — this writes a row to `tokens` with `scopes=['share']`, a `kid`, a `jti`, and `expires_at`. Owner-revocable at any time by setting `revoked_at` (one-click; ≤ 1 s revoke SLO, §3 Story 2). Per-connection WS rate limit: 20 client→server commands/minute. Per-token concurrent-connection cap: 200. Per-token connection-establishment rate: 1000 / hour (anti-fuzz). Audit entries attribute the actor as `share:<token-id>`. The read-only HTML page hides all owner-only controls.
 
-## 7. Tests plan
+**v2 additions** (NOT built in v1, but the verifier supports them already): `act:chat | act:frame | act:presence | act:leave`, each persisted in `tokens` with explicit numeric per-token rate limits to be set in the v2 design doc.
 
-CI runs `bun test` and `bunx tsc --noEmit` on every PR; samorev review gate (per `CLAUDE.md`) is required before any merge.
+**Persisted-token shape** (applies to `share` and v2 `act:*`): HMAC-SHA256 with a server secret, KID in the payload, JSON body `{kid, call_id, scopes[], iat, exp, jti}`. Always verified constant-time. `jti` is enforced unique to prevent replay across rotations. KID rotation cadence: 90 days, with 30 days of overlap (same policy as §5.1). **No verifier-side caching in v1** (§5.5).
 
-### 7.1 Pyramid
+**TDD-built** (§6.2 #2).
 
-- **Unit** — everything in `packages/shared/` and `lib/`: transcript-line normalizer, share-token generator, opt-out matcher, rate-limiter, WS fan-out backpressure, Calendar event diff.
-- **Integration** — API endpoints against a real Postgres (testcontainers). Calendar poller against a Google Calendar mock (recorded fixtures). Webhook ingest against synthetic Recall payloads (lifted from the existing CLI tests).
-- **End-to-end** — Playwright scripts for sign-in, dashboard, live page open + WS messages. A nightly real-bot E2E against a dedicated test Meet link using a Recall sandbox bot.
+### 5.8 Bot-worker command/act API (v1 seam for v2)
+The bot-worker process per call exposes an HTTP surface bound to a registered `host:port`:
+- `POST /v1/call/:id/chat {message}`
+- `POST /v1/call/:id/presence {state, message?}`
+- `GET  /v1/call/:id/frames`
+- `GET  /v1/call/:id/frame?source=…`
+- `POST /v1/call/:id/leave`
+**Service discovery + auth.** On start, bot-worker generates a per-instance secret, writes `(call_id, host, port, worker_secret_hash, last_heartbeat_at)` to the `workers` table, and binds to a private network interface. app-api (v1) and agent-gateway (v2) resolve the worker by querying `workers` for `call_id`, then call it with the per-instance secret in an `Authorization: Bearer` header. In production the call is also mTLS (VPC-internal CA). In dev the worker binds to loopback and the secret alone authenticates. **No new bot-worker work in v2** other than wiring the agent gateway to it.
 
-### 7.2 Built test-first (TDD red → green — mandatory)
+### 5.9 In-call recording disclosure (consent)
+- Bot's Recall display name is `samograph (recording)` in v1. Cannot be customized.
+- The disclosure chat line is posted **exactly once, only on the `in_call_recording` lifecycle event**: `"samograph is recording this call's audio for the host's live transcript — samograph.dev"`.
+- If Recall instead reports `in_call_not_recording`, the bot **does NOT post any recording disclosure** (claiming "is recording" would be factually wrong and harmful). The call transitions to terminal `COULD_NOT_RECORD` (§5.2) and the bot leaves the call cleanly. The dashboard surfaces a friendly "Could not start recording — please check meeting recording permissions" message.
+- The disclosure post is non-suppressible in v1 (owner cannot disable it). Future per-jurisdiction tuning is deferred.
+- This is the in-call leg of the two-party-consent mitigation; the dashboard-side disclosure (§10 #4) remains for the host.
 
-These are the pieces most likely to be subtly wrong; each one must be written test-first:
+### 5.10 Data model (Postgres, RLS-enforced)
+```
+users          (id, email, created_at)
+tenants        (id, owner_user_id, created_at)              -- 1:1 with user in v1
+calls          (id, tenant_id, recall_bot_id, meeting_url,
+                region, status, ingest_degraded boolean,
+                created_at, ended_at, first_line_at,
+                ingest_secret_hash)
+transcripts    (call_id, seq, ts, speaker, text)            -- append-only, PK (call_id, seq)
+tokens         (id, call_id, scopes text[], kid, jti,
+                expires_at, revoked_at)                     -- ONLY persisted scopes:
+                                                            --   share (v1), act:* (v2).
+                                                            --   read is NOT stored here.
+audit_log      (id, tenant_id, call_id, actor, action,
+                payload_sha256, ts)
+workers        (call_id PK, host, port, worker_secret_hash,
+                registered_at, last_heartbeat_at)
+regions        (id, tunnel_hostname, status, last_probe_ts,
+                leader_id, leader_lease_expires_at)
+```
+RLS policy: every table that has `tenant_id` (directly or via `call_id`) is filtered by `tenant_id = current_setting('app.tenant_id')`. The tenancy gate is the only thing that sets that setting. `workers` is RLS-filtered by joining `calls.tenant_id`. `calls.status` is a single enum (`PENDING | JOINING | IN_CALL | ENDED | COULD_NOT_JOIN | COULD_NOT_RECORD | BOT_REMOVED`); `calls.ingest_degraded` is an INDEPENDENT boolean overlay (§5.2), reset to false on any terminal status transition.
 
-1. `formatTranscriptLine` adapter for the worker (partial/final emission semantics).
-2. Share-token generator + validator (entropy, revocation, 410 on revoked).
-3. WS hub (backpressure, backfill of last 200 lines, drop-partials-never-finals policy).
-4. Rate limiter (per-user concurrent / daily / monthly).
-5. Calendar opt-out matcher (title/description keywords + per-event toggle).
-6. **Webhook → call_id → user_id authorization gate** (every transcript write must go through it — this is the tenant-isolation hinge from §5.3).
-7. Multi-call tunnel-health watchdog (the worker's tunnel down = every active call degraded; the test must assert warnings fan out to *every* call's WS, not just one).
+### 5.11 Observability (v1, minimum bar)
+- Structured logs (JSON) with `call_id`, `tenant_id`, `region`.
+- Counters: `bot_join_total{result}`, `transcript_lines_total{region}`, `ws_dropped_total{call_id}`, `tunnel_probe_failed_total{region}`, `webhook_rejected_total{reason}`, `pickup_latency_ms{p50,p95,p99}` (event-received → status-visible).
+- A single "activation funnel" dashboard: signup → magic-link clicked → call created → first transcript line → 30s of stream. This IS the v1 success metric (§9).
 
-### 7.3 Not TDD'd (built behavior-first, covered after)
+## 6. Tests plan
 
-UI components, OAuth flow plumbing, dashboard styling, marketing landing page — snapshot + Playwright after the fact.
+### 6.1 CI baseline
+- `bun test` (existing harness) + `bunx tsc --noEmit` clean on every PR (same merge gate the repo already enforces, see CLAUDE.md). Adds new packages under `apps/web`, `apps/app-api`, `apps/ingest`, `apps/ws-hub`, `apps/bot-worker`, `packages/shared`.
+- Postgres-backed integration tests run against an ephemeral container (no mocks — keep parity with prod migrations).
+- CI smoke test: **uses a deterministic in-repo Recall fake** (`packages/test-fakes/recall`) on every PR. A separate **nightly** job runs the same scenario against the real Recall sandbox endpoint.
 
-## 8. Team (veteran experts to hire)
+### 6.2 Red/green TDD list (write tests first; these are the subtle pieces)
+1. **Transcript normalizer** (`packages/shared/transcript`). Inputs: a corpus of real Recall `transcript.data` shapes captured from the CLI's history; outputs: canonical lines. Red cases first — empty words array, partial vs final, missing speaker, Unicode, very long utterance, timestamp drift. Property test: same input → same output, idempotent across reorderings of words within a single utterance event.
+2. **Capability token generator/verifier** (`packages/shared/tokens`). Red cases: wrong KID, expired, revoked, scope mismatch (request asks for `act:chat`, token holds only `share`), jti replay, tampered payload, timing-attack resistance (always constant-time compare). Green: round-trip for every PERSISTED scope (`share` in v1; `act:*` in v2). Separate test surface for the `read` scope: confirm the tenancy gate (§5.6) issues `read` purely from a valid session + matching tenant on `call_id`, with **no `tokens` row created** (verified by row-count assertion on `tokens`), and confirm that signing out invalidates the implied `read` capability within 1 s.
+3. **WS fan-out backpressure** (`apps/ws-hub`). Red cases: with **k stalled subscribers** at queue-full for k ∈ {1, 4, 16, 32} in the same `call_id` channel, **publisher-side per-message latency p99 ≤ 5 ms** must hold; overflow must drop oldest and emit a single gap control frame; reconnect with `?since_seq` must produce exact missing range from Postgres; isolation across `call_id` channels; queue cap hits at min(256 msgs, 512 KB). **Measurement methodology (explicit, not handwaved):** dedicated CI runner with single-tenant isolation (one benchmark per job, no co-tenant load), 1 healthy subscriber + k stalled subscribers, 1000-message warmup, 10 000-message measurement window, latencies recorded into an HDR histogram, p99 reported with a 95 % bootstrap confidence interval. Assertion passes if the upper bound of the CI is ≤ 5 ms; if the runner reports it cannot guarantee isolation (e.g., shared CI without the dedicated label), the test SKIPS with a loud message rather than asserting (preventing silent flake).
+4. **Tenant-isolation authorization gate** (`packages/shared/auth`). Adversarial cases: tenant A's share-token used to subscribe to tenant B's call → 403; expired token → 403; revoked token → 403 within 1 s of revoke (asserted **without** any verifier-side cache; if cache is added later, this test gains an invalidation case in the same PR); token bound to call X used on call Y → 403; no token, no session → 403; session present but `call_id` not in tenant → 403. Plus a fuzz round (random payloads must never return 2xx).
+5. **Multi-call tunnel watchdog (with leader election)** (`apps/ingest`). Red cases: single-process — 2 consecutive failed probes flips region to degraded; warning line appended to every IN_CALL transcript in that region; `calls.ingest_degraded` flips true for every IN_CALL call in the region; recovery appends exactly one recovered line and clears `ingest_degraded`; flapping (fail-pass-fail) does not spam. **Distributed** — 3 ingest replicas race for the advisory lock; only one runs the watchdog; on leader-kill the next replica takes over within ≤ lease + probe interval; warning/recovery lines are emitted exactly once per outage across the cluster.
+6. **Magic-link security** (`apps/app-api`). Red cases: token replay after `/auth/callback` consumes it → 401; token used after 15-min TTL elapses (including "clicked at 14:59, consumed at 15:01") → 401; timing-safe comparison on `/auth/callback` (statistical timing test); two concurrent outstanding links for one email — the older is invalidated server-side at issue time, only the newest verifies; per-email rate limit (5/hr) and per-IP rate limit (20/hr) trip independently; tampered KID → 401; signature mismatch → 401.
+7. **Webhook authenticity (ingest)** (`apps/ingest`). Adversarial cases: external POST with valid-looking `?bot=<known>&t=<guessed>` but no/invalid Recall signature → 401; valid Recall signature but `?t=` mismatched against `calls.ingest_secret_hash` → 401; valid signature + valid `?t=` but `bot_id` belongs to a tenant the request claims a different `call_id` for → 403 (tenancy gate); replay of a valid webhook body — accepted at most once (Recall delivers at-least-once; we are idempotent via `(bot_id, recall_event_id)`); fuzz of malformed payloads must never reach the normalizer with a partially-valid state.
+8. **Bot lifecycle → call status & pickup latency** (`apps/ingest`). Red cases: a silent call (no transcript events for 60 s after `in_call_recording`) still reaches `IN_CALL` solely on Recall lifecycle; **pickup-latency SLO: from Recall delivering `in_call_recording` (synthesized by the in-repo Recall fake) to the per-call page WS emitting the new status, p95 ≤ 1 s** over a 200-call sample; `in_call_not_recording` transitions the call to `COULD_NOT_RECORD` and the bot-worker emits a `leave` but **does NOT post the recording disclosure**; `BOT_REMOVED` while previously `IN_CALL` ends the call cleanly with the right audit entry; `fatal` before `JOINING` produces `COULD_NOT_JOIN` with the Recall reason string surfaced.
+9. **Worker registration / discovery** (`apps/bot-worker` + `apps/app-api`). Red cases: app-api can resolve a worker by `call_id` only for calls in its tenant (RLS-filtered); a stale `workers` row whose process is dead returns a connection error that surfaces as a clean 503 to the dashboard (not a hang); per-worker secret mismatch → 401; calls into another tenant's worker via a leaked secret → 403 (tenancy gate runs before the inter-service auth).
+10. **Share-scope limits** (`apps/ws-hub`, `apps/app-api`). Red cases: 201st concurrent connection on one share token → 429 with `Retry-After`; 21st client→server command in 60 s on one share connection → 429; 1001st establishment in 60 min on one token → 429; revoke kills all open share connections within 1 s; `read`-scope connections on the same call are unaffected by share-scope limits hitting.
 
-Sprint capacity for v1: **4 engineers + 1 designer for 2 weeks**.
+### 6.3 Manual test plan (mirrors §3 stories)
+A scripted run-through per story, executed by the team on a staging tenant, recorded as the v0.3 acceptance gate. Story 6 (in-call disclosure) is verified by joining a real test Zoom/Meet and confirming the bot's display name and the on-join chat post on `in_call_recording`, and (separately) by forcing an `in_call_not_recording` scenario (e.g., a meeting where recording is host-blocked) to confirm NO recording chat post fires and the call lands at `COULD_NOT_RECORD`.
 
-- **Veteran real-time meeting SaaS product engineer (1).** Lead. Owns architecture, Recall.ai integration, tenant isolation, multi-call tunnel.
-- **Veteran full-stack Bun/TypeScript engineer (1).** Owns API/edge, WS hub, calendar poller. Hono + Postgres comfortable.
-- **Veteran frontend engineer — Next.js / live-data UIs (1).** Owns dashboard and the live read-along page (the differentiating UX).
-- **Veteran SRE with tunnel & webhook expertise (1).** Owns the shared cloudflared infra, observability, on-call runbook. Has been paged at 3 AM for ngrok before.
-- **Veteran product designer — UX for live-data displays (1).** Owns reading rhythm, share-link affordances, consent disclosure copy.
+## 7. Team (veteran experts to hire)
 
-v2 adds: 1 ML/AI engineer, 1 backend engineer for storage + billing.
+- **Veteran real-time meeting infrastructure engineer (1)** — Recall.ai integration, bot lifecycle, transcript ingest, regional cloudflared named tunnels, watchdog (incl. leader election). *Lead engineer for the call path.*
+- **Veteran backend / API engineer (1)** — app-api, Postgres schema + RLS, token service, capability model, audit log, worker registration.
+- **Veteran security engineer (0.5 in v1, 1.0 in v2)** — tenancy gate threat model, magic-link flow review, webhook authenticity (Recall signature + ingest_secret), capability-token design, AI-agent channel design review for v2.
+- **Veteran full-stack / Next.js engineer (1)** — marketing site, dashboard, per-call page, WS client, share-link page, degraded-banner UX.
+- **Veteran SRE / platform engineer (1)** — Postgres + secret manager + one-region-then-multi-region deploy, cloudflared named-tunnel ops, advisory-lock leader election, on-call playbook, observability dashboards.
+- **Veteran product designer (0.5)** — exactly the dashboard + per-call page + share modal; deliberately tiny scope to keep v1 small.
 
-## 9. Implementation plan (sprints, with parallelization)
+Total v1: 1 + 1 + 0.5 + 1 + 1 + 0.5 = **5.0 FTE**. In v2 the security role goes to 1.0 (+0.5) and the product designer rolls off (−0.5), netting flat at 5.0 FTE for the v2 sprint.
 
-**Two one-week sprints to v1 public beta.** Track names map to roles in §8: Lead, Backend, Frontend, SRE, Design.
+## 8. Implementation plan (sprints, parallelization, ordering)
 
-### Sprint 1 — "bot in the call, transcript on the page" (week 1)
+v1 target: **one week**, three sprints of ~2 days each. Sprints overlap heavily — work is parallelized by track, not gated end-to-end. The v1 launch gate is a single healthy production region; deploying a second region in Sprint 3 proves the multi-region seam but is NOT a launch gate (§4.7).
 
-Parallel tracks; order within a track matters.
+### Sprint 1 (Days 1–2) — "the seams"
+Parallel tracks:
+- **Backend (API engineer)** — Postgres schema + migrations (users, tenants, calls (with `ingest_degraded`), transcripts, tokens, audit_log, workers, regions) with RLS. App-api skeleton: `/auth/magic-link`, `/auth/callback`, `/calls` (create + read). **TDD** token generator/verifier and read-vs-share distinction (§6.2 #2). **TDD** tenancy gate (§6.2 #4). **TDD** magic-link security (§6.2 #6).
+- **Call-path (meeting infra engineer)** — `packages/shared/transcript` normalizer extracted from CLI, **TDD** (§6.2 #1). Bot-orchestrator skeleton; reuse `src/recall.ts` client; integrate with shared Recall key from secret manager; ingest_secret generation. Stand up first regional cloudflared named tunnel.
+- **SRE** — Provision Postgres (managed), secret manager (Recall key + Recall webhook secret + email provider key + KID secret + region webhook secrets), one region's cloudflared named tunnel, CI matrix update including the dedicated benchmark runner used by §6.2 #3.
+- **Frontend (full-stack)** — Marketing landing at `samograph.dev`. Magic-link request + callback pages. Dashboard skeleton.
+- **Security (fractional)** — Threat model for the tenancy gate; review token shape and KID rotation plan before code lands; review webhook authenticity design (Recall signature + ingest_secret).
 
-- **Lead (critical path):**
-  1. Monorepo (Bun workspaces): `apps/web`, `apps/worker`, `packages/shared`.
-  2. Port `formatTranscriptLine`, `probeTunnelHealth`, tunnel watchdog into `packages/shared`.
-  3. Stand up shared cloudflared tunnel + `bot-worker` skeleton that can `createBot` against a real Meet link.
-- **Backend:**
-  1. Migrations: `users`, `oauth_accounts`, `calls`, `transcript_lines`, `share_tokens`, `dictionaries`. RLS policies on `calls` + `transcript_lines`.
-  2. Magic-link auth (Resend or Postmark).
-  3. Google OAuth — minimum scopes `openid email profile` + `calendar.events.readonly`.
-  4. WS hub + pub/sub on `call_id`.
-  5. REST: `POST /api/calls/:id/leave`, `POST /api/calls/:id/rotate-token`, `GET /api/me`.
-- **Frontend:**
-  1. `/login` (magic-link + Google).
-  2. `/app` dashboard (upcoming events, past calls, dictionary, leave button).
-  3. `/c/<token>` live page (WS connection, append-final, replace-partial, viewer-count badge, consent banner).
-- **SRE:**
-  1. Worker VPS + cloudflared named tunnel per region (`us`, `eu`).
-  2. Postgres on Neon (prod + ephemeral branch per PR).
-  3. Logging (Axiom or self-hosted Vector), uptime checks against `/health`.
-  4. Budget alerts on Recall.ai usage.
-- **Design:**
-  1. Live read-along visual rhythm (word-by-word reveal, speaker-color rotation, ARIA-live).
-  2. Consent disclosure copy + in-chat message template.
-  3. Empty/error states for the dashboard.
+*Sprint exit:* a signed-in user can create a `Call` row from a URL; tokens round-trip; tenancy gate has full adversarial test coverage; magic-link security tests pass; one regional tunnel passes the `/health` round-trip.
 
-**Sync points:**
-- Day 2 EOD — Lead + Backend: auth flow reaches the worker session.
-- Day 4 EOD — Lead + Frontend: live WS messages render on `/c/<token>` end-to-end.
-- Day 5 EOD — Sprint 1 demo: a manually-scheduled real call shows up on the live page.
+### Sprint 2 (Days 3–5) — "the live transcript"
+Parallel tracks:
+- **Call-path** — Ingest service receives Recall webhooks, **verifies Recall signature + ingest_secret** (§5.3), runs normalizer, writes to `transcripts`, publishes to fan-out hub. **TDD** webhook authenticity (§6.2 #7). **TDD** bot lifecycle → call status & pickup latency (§6.2 #8). Multi-call tunnel watchdog with Postgres advisory-lock leader election and `calls.ingest_degraded` overlay, **TDD** (§6.2 #5). Bot-worker command/act API + worker registration, **TDD** (§6.2 #9). In-call disclosure chat post on `in_call_recording` only; `in_call_not_recording` → `COULD_NOT_RECORD` + clean leave (§5.9).
+- **Backend** — WS hub (`/calls/:id/stream`) with bounded queues + backpressure + gap frames + `?since_seq` replay from Postgres + **publisher-latency SLO assertion under k stalled subscribers with documented methodology**, **TDD** (§6.2 #3). Share-link mint/revoke endpoints + explicit numeric share limits + `share` scope wiring (distinct from `read`), **TDD** (§6.2 #10). Audit-log writes for bot create/leave, share mint/revoke.
+- **Frontend** — Per-call page: live WS, status states driven by Recall lifecycle (JOINING / IN_CALL / ENDED / COULD_NOT_JOIN / COULD_NOT_RECORD / BOT_REMOVED), degraded banner driven by `ingest_degraded` overlay AND warning lines, share modal, Story-4 "Try again" → dashboard with URL pre-filled.
+- **SRE** — Activation-funnel dashboard wired to log counters; on-call playbook draft for `INGEST_DEGRADED` overlay, `COULD_NOT_JOIN`, `COULD_NOT_RECORD`; advisory-lock leader-election runbook.
 
-### Sprint 2 — "auto-join + share + ship" (week 2)
+*Sprint exit:* end-to-end happy path works against a real Recall bot on a real Zoom/Meet call; silent-call test reaches `IN_CALL`; share link works, revokes within 1 s, enforces its caps; a forced tunnel outage in staging produces the warning line and clears it on recovery; bot disclosure visible in real call only when actually recording.
 
-- **Lead:**
-  1. Calendar poller (1-minute cron) → enqueues join jobs.
-  2. Rate limiter wired into the poller.
-  3. Multi-call tunnel-health watchdog: warnings fan out to *every* active call's WS.
-- **Backend:**
-  1. Google Calendar push notifications as a fallback to polling for sub-minute latency.
-  2. Opt-out: per-event toggle + `[private]`/`[notranscribe]` keyword matcher.
-  3. Custom dictionary endpoint + Recall keyterm passthrough.
-  4. Export endpoints: `.txt` and `.md`.
-- **Frontend:**
-  1. Calendar opt-out toggles on the dashboard.
-  2. Dictionary editor.
-  3. Share-link UI (copy, rotate, revoke).
-  4. Mobile-web layout for `/c/<token>`.
-- **SRE:**
-  1. Per-call observability dashboard (lines/min, viewers, tunnel health).
-  2. Postgres backup + restore drill.
-  3. Public status page.
-- **Design:**
-  1. Final polish on live page (reading rhythm, accessibility).
-  2. 3-step onboarding tour.
-  3. Marketing landing page positioning around live read-along + persistence (not AI).
+### Sprint 3 (Days 6–7) — "harden + ship"
+Parallel tracks:
+- **All** — Manual test pass of §3 stories on staging (including Story 6 disclosure both for the recording and the non-recording cases).
+- **Call-path + SRE** — Deploy a second region behind the same regional-tunnel pattern (proves the multi-region seam; not a launch gate). Region selection policy (§4.7) wired up and exercised in staging only.
+- **Backend + Security** — Rate-limit magic-link (5/hr/email, 20/hr/IP, independent), rate-limit bot creation per tenant, rate-limit WS connections per call (distinct caps for `read` vs `share`, with numeric values per §5.7). Final review of tenancy gate, token verifier, webhook authenticity, RLS policies. Magic-link deliverability check against Gmail + at least one corporate mail (SPF/DKIM/DMARC live).
+- **Frontend** — Past-calls list, transcript download, terminal failure UX (incl. `COULD_NOT_RECORD` copy), empty/loading states. Final marketing copy.
 
-**Sync points:**
-- Day 8 — end-to-end dogfood: team uses it for stand-up; bugs filed.
-- Day 9 — opt-out + share-link UX freeze.
-- Day 10 — ship public beta on `samograph.dev` (or `app.samograph.dev`).
+*Sprint exit:* the v1 acceptance test (§3 stories + W1 activation metric instrumented + pickup-latency SLO observed in staging) passes; deploy to prod behind a public URL with the primary region serving traffic and the second region warm.
 
-## 10. Open questions & risks
+### Phase 2 (next, not this week)
+A single follow-on sprint adds: agent gateway (HTTP + WS + MCP), `act:*` scopes in the token verifier, per-token rate limits, agent-channel audit-log entries on every act call, dashboard "Connect AI agent" affordance with scope-picker + one-click revoke. Because the bot-worker command/act API, the worker-registration discovery model, and the capability-token model already exist, this should be days, not weeks.
 
-| # | Question / risk | Why it matters | Plan |
-|---|---|---|---|
-| Q1 | Recall.ai per-minute cost at projected v1 volume | Could blow budget at scale. | Lead pricing call week 1; hard-cap free tier (§5.4) until known. |
-| Q2 | Shared Recall token tenant isolation | A bug could leak A's transcript to B. | RLS at DB + bot_id-scoped writes (§5.3); third-party pen-test before public launch. |
-| Q3 | Minimum viable Google OAuth scopes | Larger scopes block users (brand-verification queues). | `calendar.events.readonly` only; defer write scopes to v2. |
-| Q4 | Shareable-link security | A leaked link exposes the whole call's transcript. | 131-bit token, revoke button, per-call rotation; v2: optional passphrase / SSO gate. |
-| Q5 | Consent/recording disclosure across jurisdictions | EU/CA two-party consent. | Bot name says "recording", in-chat disclosure (U6); TOS shifts duty to host. v2: pre-admit consent flow. |
-| Q6 | Tunnel as SPOF | Regional cloudflared down = ALL active calls lose webhooks. | Two cloudflared replicas per region (active/active under one name); watchdog warns into every live transcript. |
-| Q7 | Transcript storage cost trajectory | 1 hr Meet ≈ 8k words ≈ 50 KB plain text — cheap, but check growth. | Plain `text` column in Postgres v1; move to compressed cold storage at >100 GB. |
-| Q8 | Video persistence beyond Recall's 7 days | Deferred to v2; v1 thesis is transcript-only. | Covered by v2 spec (R2 + synced viewer). |
-| Q9 | One Recall account for all bots vs. per-user | Per-user costs more, risks account limits. | v1: one Recall *bot per call* under one shared account; name carries identity. v2: per-workspace named bots. |
-| Q10 | Recall.ai pricing/API change mid-build | Architectural risk. | Bot worker is the only consumer of Recall — keep that adapter swappable. |
-| Q11 | Magic-link UX on corporate mail systems | Some strip one-time links. | Promote Google sign-in as default; magic-link as fallback. |
-| Q12 | Live page WS scaling | 100 viewers × 100 calls = 10k connections/region. | Bun WS handles this on one node; sticky-by-`call_id` once we exceed 1 worker. |
+## 9. Success metric
 
-## 11. Embedded Changelog
+**v1 (single metric):** W1 activation = fraction of new signups who, within their first week, (a) paste a meeting link, (b) get the bot admitted into a real call (Recall lifecycle reaches `in_call_recording`, not first transcript line), (c) and watch ≥30 s of live transcript stream on the per-call page. **Target ≥ 0.5.** Instrumented from the activation funnel dashboard (§5.11). The pickup-latency SLO (event received → status visible p95 ≤ 1 s) is monitored as a secondary health metric (alerts only; not the optimization target).
 
-- **v0.2 (2026-06-19)** — First authored draft (replaces v0.1 scaffold). All five interview questions decided: primary user = distributed PMs/EMs on calls with hard-to-understand voices; core JTBD = live read-along + durable transcript with zero setup; platforms = Meet + Zoom day one (Teams in v2); auth = magic-link + Google OAuth; success metric = W2 live-transcript-open ratio ≥ 0.6; explicit v1 out-of-scope = AI, video persistence, post-call email, multi-language UI, branded bots, billing, MS Teams, native mobile. Added architecture diagram, 8 user stories with manual-test recipes, TDD list, 5-person team, 2-sprint plan, 12 open questions/risks. Anti-framing made explicit and binding: NOT a CLI for end users, NOT a plugin, NOT an AI product in v1.
-- **v0.1** — Initial scaffold. Persona, idea, 5 interview questions stubbed ("decide for me").
+**v2 (later, do not optimize in v1):** number of active calls with at least one AI-agent connection through the bidirectional channel.
+
+## 10. Open questions / risks
+
+1. **Shared Recall API key — tenant isolation.** Mitigation: the key never leaves bot-orchestrator + ingest; every request flows through the tenancy gate; audit log captures every Recall-mediated action; pen-test the gate before v2 launches the agent channel.
+2. **AI-agent channel security (v2).** Capability-scoped, short-TTL, revocable tokens; rate-limited; full audit; never expose Recall key. Requires explicit security review before v2 ships.
+3. **Act-channel abuse (v2).** An agent posting in someone's meeting / grabbing frames must be authorized, logged, and revocable. Per-token rate limits + per-tenant daily caps.
+4. **Consent / recording disclosure across two-party-consent jurisdictions.** Addressed at three layers: (a) host-side dashboard disclosure; (b) bot display name `samograph (recording)` visible to all participants; (c) bot posts a single in-call chat disclosure on `in_call_recording` only (NOT on `in_call_not_recording`, where the claim would be factually wrong — §5.9). Legal sign-off still needed before broad launch; not blocking the build-week.
+5. **Recall.ai cost guardrails and free-tier limits.** Per-tenant active-call cap + per-tenant minutes/day cap in v1, conservative defaults, surfaced as a friendly error rather than a silent failure.
+6. **Tunnel as single point of failure.** One regional named tunnel per region; watchdog with loud warnings; leader-elected so warnings are not multiplied by ingest replica count; multi-region seam built and validated in Sprint 3 (single region remains sufficient for ship).
+7. **Magic-link deliverability on corporate mail.** SPF/DKIM/DMARC from day one; warm IP via the transactional provider; explicit "didn't get it?" affordance with re-send + alternate-email entry. Tracked as a launch blocker.
+8. **Regional named-tunnel ops.** cloudflared named tunnels require credentials + DNS — captured in the SRE on-call playbook.
+9. **MCP endpoint shape for v2.** Spec'd in v2's design doc; v1 only needs the bot-worker command/act API to be MCP-compatible in payload shape (verbs are 1:1 with CLI).
+10. **WS reconnect storms.** Bounded queues + `?since_seq` replay mean reconnect is cheap; per-IP connection cap on ws-hub as a safety belt; per-share-token establishment rate (1000/hr) caps fan-out abuse.
+11. **Worker process crash mid-call.** v1 surfaces a 503 to the dashboard on owner-action; transcript ingest is independent of bot-worker and keeps flowing. Auto-restart + workers-table reconciliation deferred to v1.1 unless it bites during build-week.
+12. **Benchmark-runner availability for §6.2 #3.** The publisher-latency assertion only runs on a CI runner with single-tenant isolation; on shared runners the test skips with a loud message. Risk: if the dedicated runner is unavailable for an extended period, this SLO can drift silently. Mitigation: SRE tracks the runner as a first-class CI dependency.
+
+## 11. Changelog (embedded; mirrors changelog.md)
+
+- **v0.3 (2026-06-23)** — Addressed Reviewer B v0.2 findings. **Removed the stale `<!-- architecture:begin -->` placeholder in §3** (this time actually). **Resolved the `read` scope contradiction**: `read` is now explicitly session-derived and NOT persisted in `tokens`; only `share` (and v2 `act:*`) live in `tokens` (§4.2, §5.6, §5.7, §5.10, §6.2 #2). **Fixed the §4.2 cross-reference** to point at §5.7 (capability tokens) instead of §5.6 (tenancy gate). **Fixed §5.9** to post the recording disclosure ONLY on `in_call_recording`; `in_call_not_recording` now drives a terminal `COULD_NOT_RECORD` status and the bot leaves cleanly without a misleading disclosure post. **Modeled `INGEST_DEGRADED` as a boolean overlay column** (`calls.ingest_degraded`) rather than a status-enum value, so an `IN_CALL` call can be degraded simultaneously (§5.2, §5.10, §4.5, §4.6). **Reconciled multi-region timing**: Sprint 3 deploys a second region inside the v1 build-week as a seam-proof, but a single healthy region remains sufficient for ship — multi-region is not a launch gate (§4.7, §8). **Extended WS-fan-out SLO** to k ∈ {1, 4, 16, 32} concurrently stalled subscribers, with explicit benchmark methodology (dedicated isolated runner, HDR histogram, 95 % bootstrap CI, skip rather than flake on shared runners) — §5.5, §6.2 #3. **Added numeric caps for the `share` scope** (200 concurrent connections per token, 20 client→server commands/min/conn, 1000 establishments/hour/token) and matching tests (§5.7, §6.2 #10). **Added explicit pickup-latency SLO** (event received → status visible p95 ≤ 1 s) and a test for it (§3 Story 1, §5.2, §6.2 #8, §5.11). **Corrected team total** to 5.0 FTE (matching the role sum) with security stepping up by 0.5 in v2 as designer rolls off (§7). **Clarified Story 4 "Try again"** to mean "return to dashboard with URL pre-filled; user must explicitly re-submit" (no implicit retry, no auto-created Call row) — §3 Story 4, §5.2.
+- **v0.2 (2026-06-23)** — Addressed Reviewer B v0.1 findings. Removed the stale `<!-- architecture:begin -->` placeholder in §3. Made the `read` vs `share` scope distinction concrete (session-bound vs anonymous-link; distinct rate limits, revocation paths, audit attribution). Introduced the `IngestSecret` abstraction and §5.3 webhook authenticity flow (Recall signature + constant-time secret match) — separates the long-lived per-call ingest secret from user-visible `CapabilityToken`s. Added bot-worker service discovery via a `workers` table + per-instance secret (mTLS in prod). Moved `JOINING → IN_CALL` onto Recall bot-lifecycle events so silent calls progress. Pinned numeric defaults (probe interval 20 s; magic-link 5/hr/email + 20/hr/IP independent; queue 256 msgs OR 512 KB; KID 90-day rotation with 30-day overlap). Added explicit publisher-latency SLO (p99 ≤ 5 ms with stalled subscriber) to §5.5 + §6.2 #3. Added watchdog leader election via Postgres advisory lock (§4.6) and distributed-replica test coverage. Added §6.2 #6 magic-link security tests, §6.2 #7 webhook authenticity tests, §6.2 #8 bot-lifecycle status tests, §6.2 #9 worker discovery tests. Committed CI smoke test to in-repo Recall fake + nightly real-Recall job. Committed to no verifier-side token cache in v1. Added §5.9 in-call disclosure (bot name + chat post on join) to address two-party-consent at the participant level. Added §4.7 region selection policy. Qualified Story 1 SLOs.
+- **v0.1 (2026-06-23)** — Initial draft. Two-phase scope (v1 zero-setup hosted samograph; v2 secure bidirectional AI-agent channel). Architecture with shared Recall key + regional named cloudflared tunnels + tenancy gate + capability tokens + audit log; v2 seams (bot-worker command/act API, capability-scoped tokens) wired in v1. TDD list for transcript normalizer, capability tokens, WS backpressure, tenancy gate, multi-call tunnel watchdog. 4.5-FTE team, three-sprint one-week plan. W1 activation ≥ 0.5 as the single v1 metric.
