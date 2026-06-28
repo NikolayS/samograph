@@ -94,6 +94,11 @@
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   td .qid { font-weight: 700; color: var(--risk); }
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    border-radius: 0 10px 10px 0; padding: 12px 16px; margin-top: 14px; font-size: 0.9rem;
+  }
+  .callout b { color: var(--accent); }
   .diagram {
     background: #fbfcfe; border: 1px solid var(--line); border-radius: 12px;
     padding: 14px; margin-top: 12px; overflow-x: auto;
@@ -104,6 +109,7 @@
     font-size: 0.95rem;
   }
   .metric b { color: var(--accent); }
+  code.mono { background: #f0f2f7; border-radius: 5px; padding: 1px 5px; font-size: 0.86em; }
   footer { text-align: center; color: var(--muted); font-size: 0.82rem; margin-top: 30px; }
   footer a { color: var(--accent); }
   @media (max-width: 560px) {
@@ -119,7 +125,7 @@
   <header class="hero">
     <h1>samograph.dev — Product Brief</h1>
     <p class="tagline">Zero-setup hosted samograph: paste a meeting link, get a live shareable transcript — then hand your AI agent a secure link to listen and act.</p>
-    <p class="meta">SPEC v0.3 · 2026-06-23 · authored with <a href="https://github.com/NikolayS/samospec" style="color:#fff;text-decoration:underline;">samospec</a> · reviewed via 2 Claude review rounds (round 1: 15 findings applied; round 2: 12 findings applied) · human-skimmable summary of the authoritative <code>SPEC.md</code></p>
+    <p class="meta">SPEC v0.4 · 2026-06-24 · post-publish stakeholder-feedback round · authored with <a href="https://github.com/NikolayS/samospec" style="color:#fff;text-decoration:underline;">samospec</a> · 2 prior Claude review rounds applied · human-skimmable summary of the authoritative <code>SPEC.md</code></p>
   </header>
 
   <div class="legend">
@@ -142,22 +148,22 @@
   </section>
 
   <section class="card">
-    <h2><span class="num">02</span>Two-phase scope</h2>
+    <h2><span class="num">02</span>Scope phases</h2>
     <div class="grid">
       <div class="persona">
         <div class="role">v1 — MVP (this week)</div>
         <h4>Zero-setup live transcript</h4>
-        <p class="muted">Marketing + app at <code>samograph.dev</code>. Email magic-link auth only. One primary action: paste a Zoom / Meet URL → bot joins via a shared server-side Recall key → per-call page streams the transcript live over WebSocket, line-by-line (<code>[timestamp] Speaker: utterance</code>) → shareable read-only via a signed link → persisted to Postgres in real time (durable past Recall's ~7-day video TTL).</p>
+        <p class="muted">Marketing + app at <code>samograph.dev</code>. Email magic-link auth only. One primary action: paste a Zoom / Meet URL → bot joins via a shared server-side Recall key → per-call page streams the transcript live over WebSocket (<code>[timestamp] Speaker: utterance</code>) → shareable read-only via a signed link → persisted to Postgres in real time and <strong>stored indefinitely</strong>. Plus: transcription <strong>dictionary + language</strong> settings (Deepgram), and GDPR <strong>data deletion</strong> (per-call + account, incl. the Recall recording).</p>
       </div>
       <div class="persona">
         <div class="role">v2 — Phase 2 (pre-wired)</div>
-        <h4>Secure AI-agent channel</h4>
-        <p class="muted">For an active call, the owner mints a per-call, capability-scoped, short-TTL, revocable token to paste into an external AI tool. <strong>LISTEN</strong> = subscribe to live transcript + bounded backfill. <strong>ACT</strong> = remote <code>chat</code>/<code>frame</code>/<code>frames</code>/<code>presence</code>/<code>leave</code> (1:1 with CLI verbs). Exposed as HTTP+WS API and an MCP server endpoint. Hard tenant isolation, full audit log, rate limits, one-click revoke.</p>
+        <h4>AI channel · billing · isolation</h4>
+        <p class="muted">Secure AI-agent channel for an active call: owner mints a per-call, capability-scoped, short-TTL, revocable token. <strong>LISTEN</strong> = live transcript + backfill. <strong>ACT</strong> = remote <code>chat</code>/<code>frame</code>/<code>frames</code>/<code>presence</code>/<code>leave</code>. HTTP+WS API + MCP endpoint, hard isolation, full audit, rate limits, one-click revoke. v2 also adds <strong>Stripe per-seat billing</strong>, <strong>video storage</strong> (R2/B2), <strong>expanded settings</strong>, and <strong>VM-grade tenant isolation</strong>.</p>
       </div>
       <div class="persona">
         <div class="role">v3+ — explicitly deferred</div>
-        <h4>Not in v1's design</h4>
-        <p class="muted">Billing / plans / seats; Google Calendar auto-join; branded bot identities; post-call transcript email; multi-language UI; long-term video storage + synced transcript+video viewer; MS Teams.</p>
+        <h4>Not in v1/v2's design</h4>
+        <p class="muted">Branded/consistent bot identities; post-call transcript email; multi-language UI; synced transcript+video viewer (click-a-word-to-seek); MS Teams + Webex; native integrations (Slack/Notion/CRM/Zapier); public REST API; EU data residency; <strong>self-hosted Firecracker on Hetzner bare-metal</strong> as a cost optimization over managed microVMs.</p>
       </div>
     </div>
     <h3>v1 ships the seams for v2</h3>
@@ -166,20 +172,20 @@
 
   <section class="card">
     <h2><span class="num">03</span>Architecture at a glance</h2>
-    <p class="muted">Browser / per-call page → app-api (magic-link auth, create call, mint share / agent tokens) → bot-orchestrator (holds the ONE shared Recall key) + token-service → Recall.ai → one persistent regional cloudflared <strong>named</strong> tunnel (not per-call ngrok) → ingest (webhook routed by <code>bot_id</code>, signature + ingest_secret verified, normalize, persist) → ws-hub fan-out → per-call page. A bot-worker exposes the chat/frame/presence/leave act API; Postgres is single multi-tenant with RLS.</p>
+    <p class="muted">Browser / per-call page → app-api (magic-link auth, create call, mint share / agent tokens) → bot-orchestrator (holds the ONE shared Recall key) + token-service → Recall.ai → one persistent regional cloudflared <strong>named</strong> tunnel (not per-call ngrok) → ingest (webhook routed by <code>bot_id</code>, signature + ingest_secret verified, normalize, persist) → ws-hub fan-out → per-call page. A bot-worker exposes the chat/frame/presence/leave act API; Postgres is single multi-tenant with RLS. Transcription runs on <strong>Deepgram</strong> (via Recall).</p>
     <div class="diagram">
       <div class="mermaid">
 flowchart TD
     PAGE["Browser / per-call page (Next.js)<br/>live transcript · share · status · degraded banner"] --> API["app-api (Bun/Hono)<br/>magic-link · /calls · /share · /agent-token (v2)"]
     API --> ORCH["bot-orchestrator<br/>holds ONE shared Recall key"]
     API --> TOK["token-service<br/>capability tokens (share now, act:* in v2)<br/>per-call ingest_secret"]
-    ORCH -->|createBot + webhook_url<br/>?bot=id&amp;t=ingest_secret| RECALL["Recall.ai (Zoom / Google Meet)"]
+    ORCH -->|createBot + webhook_url<br/>?bot=id&amp;t=ingest_secret| RECALL["Recall.ai (Zoom / Google Meet)<br/>transcription via Deepgram"]
     RECALL -->|signed webhooks + WSS frames| TUN["Regional cloudflared NAMED tunnel<br/>(one per region, persistent)"]
     TUN --> ING["ingest (Bun/Hono)<br/>verify Recall sig + ingest_secret<br/>tenancy gate · normalize · lifecycle<br/>per-region watchdog (leader-elected)"]
     ING --> DB[("Postgres — single multi-tenant DB, RLS<br/>users · calls · transcripts (append-only)<br/>tokens · audit_log · workers · regions")]
     ING -->|pub/sub per call_id| HUB["ws-hub<br/>/calls/:id/stream · bounded queues + backpressure<br/>auth: session | share token | agent token (v2)"]
     HUB -->|WSS| PAGE
-    API -->|owner actions| WORKER["bot-worker (process-per-call)<br/>chat / frame / frames / presence / leave<br/>registers host:port+secret in workers table"]
+    API -->|owner actions| WORKER["bot-worker (process-per-call)<br/>chat / frame / frames / presence / leave<br/>v1 hardened container, v2 managed Firecracker microVM<br/>registers host:port+secret in workers table"]
     WORKER -->|act via Recall| RECALL
     AGW["agent-gateway (v2)<br/>HTTP + WS + MCP"]:::v2 -.->|act:* via token-service| WORKER
     classDef v2 fill:#fdf0d9,stroke:#b45309,color:#7a3a06,stroke-dasharray:5 4;
@@ -201,22 +207,22 @@ sequenceDiagram
     participant AG as AI agent (v2)
     U->>API: enter email, click magic link
     API-->>U: signed session, dashboard
-    U->>API: paste Zoom / Meet URL → "Add to call"
+    U->>API: paste Zoom / Meet URL plus "Add to call"
     API->>R: createBot (shared Recall key + webhook_url)
     R-->>API: ack (status JOINING, SLO le 5s)
     R->>ING: in_call_recording lifecycle event
     ING->>HUB: status IN_CALL (pickup p95 le 1s)
-    R->>ING: transcript.data webhooks
-    ING->>HUB: normalized lines + persist to Postgres
+    R->>ING: transcript.data webhooks (Deepgram)
+    ING->>HUB: normalized lines + persist to Postgres (indefinite)
     HUB-->>U: live transcript streams over WS
-    U->>API: "Share" → signed read-only link
+    U->>API: "Share" plus signed read-only link
     Note over U,HUB: recipient opens link, reads live, no sign-in
     rect rgb(253,240,217)
     Note over U,AG: v2 overlay — secure AI-agent channel
-    U->>API: "Connect AI agent" → mint scoped token (listen / act:*)
+    U->>API: "Connect AI agent" plus mint scoped token (listen / act:*)
     AG->>HUB: LISTEN — subscribe to live transcript
     AG->>API: ACT — chat / frame / presence / leave (audited, rate-limited)
-    U->>API: one-click revoke → token dies le 1s
+    U->>API: one-click revoke plus token dies le 1s
     end
       </div>
     </div>
@@ -231,7 +237,7 @@ sequenceDiagram
     <ul class="stories">
       <li><span class="tag">S1</span>Zero-setup live transcript (primary JTBD): paste URL → per-call page opens ≤2 s, status <code>JOINING</code> ≤5 s of submit, <code>IN_CALL</code> on Recall <code>in_call_recording</code>; lines stream live; reopening the tab resumes without loss.</li>
       <li><span class="tag">S2</span>Share the live transcript read-only via a signed link — recipient reads live without signing in; revoke takes effect ≤1 s; share caps: ≤200 concurrent conns, ≤20 cmds/min/conn, ≤1000 establishments/hour/token.</li>
-      <li><span class="tag">S3</span>Durable transcript after Recall's ~7-day video TTL — full final transcript with timestamps + speakers, downloadable as plain text identical to the CLI format.</li>
+      <li><span class="tag">S3</span>Durable transcript after Recall's ~7-day video TTL — full final transcript with timestamps + speakers, downloadable as plain text identical to the CLI format. (Transcripts are stored indefinitely from day one.)</li>
       <li><span class="tag">S4</span>Bot fails to join → terminal <code>COULD_NOT_JOIN</code> with the Recall reason in plain English; "Try again" returns to the dashboard with the URL pre-filled (no implicit retry, one user action = one Call row).</li>
       <li><span class="tag">S5</span>Mid-call tunnel/ingest outage is loud, never silent — banner + a <code>SAMOGRAPH-WARNING: tunnel unreachable</code> line appended to the stream; recovery clears both. Driven by a separate <code>ingest_degraded</code> overlay (a call can be <code>IN_CALL</code> + degraded at once).</li>
       <li><span class="tag">S6</span>In-call recording disclosure — bot name <code>samograph (recording)</code> + a single chat post on <code>in_call_recording</code>. If Recall reports <code>in_call_not_recording</code>, no disclosure is posted; the call goes terminal <code>COULD_NOT_RECORD</code> and the bot leaves cleanly.</li>
@@ -251,13 +257,84 @@ sequenceDiagram
       <li><strong>Persisted vs derived scopes.</strong> <code>read</code> is derived from the owner's session (no <code>tokens</code> row); only <code>share</code> (v1) and <code>act:*</code> (v2) are persisted capability tokens — HMAC-SHA256, KID-rotated (90 d / 30 d overlap), <code>jti</code>-unique, constant-time verified, no verifier cache in v1.</li>
       <li><strong>WS fan-out + backpressure.</strong> Per-<code>call_id</code> channel, bounded queue (256 msgs OR 512 KB, drop-oldest + gap frame); a slow client never blocks others; publisher p99 ≤ 5 ms holds for k ≤ 32 stalled subscribers.</li>
       <li><strong>Loud, leader-elected watchdog.</strong> Per-region probe every 20 s; a Postgres advisory lock makes warnings fire exactly once per outage across ingest replicas.</li>
-      <li><strong>Postgres RLS everywhere.</strong> Every <code>tenant_id</code>-bearing table filtered by <code>current_setting('app.tenant_id')</code>, set only by the tenancy gate.</li>
+      <li><strong>Postgres RLS everywhere.</strong> Every <code>tenant_id</code>-bearing table filtered by <code>tenant_id</code>, set only by the tenancy gate (via transaction-local <code>set_config</code>).</li>
+      <li><strong>Typed errors, never a silent hang.</strong> Every failure is a stable <code>SAMO-…</code> code with plain-English copy and defined client behavior (§5.16); call-path failures map to a terminal <code>calls.status</code>.</li>
     </ul>
+    <div class="callout">
+      <b>Engineering detail — RLS InitPlan fix (§5.10).</b> Policies use <code class="mono">tenant_id = (SELECT current_setting('app.tenant_id'))::uuid</code>. The scalar sub-<code>SELECT</code> wrapper makes Postgres cache the predicate as a <b>once-per-statement InitPlan</b> instead of re-evaluating <code>current_setting()</code> per row (which would also defeat indexes) — mandatory on every policy, catastrophic on large transcript scans otherwise.
+    </div>
     <p class="muted" style="font-size:0.86rem;">The subtle pieces are TDD-built: transcript normalizer, capability token verifier, WS backpressure, tenancy gate, magic-link security, webhook authenticity, bot-lifecycle/pickup-latency, worker discovery, share-scope limits (§6.2).</p>
   </section>
 
   <section class="card">
-    <h2><span class="num">07</span>Open questions &amp; risks</h2>
+    <h2><span class="num">07</span>Tenant isolation roadmap</h2>
+    <p class="muted">Isolation has two layers; the spec is explicit about which one each phase buys (§4.8). This directly answers the "we want separate VMs / microVMs" concern as a <strong>phased</strong> roadmap, not a v1 gap pretending to be a VM.</p>
+    <ul>
+      <li><strong>v1 — data isolation (shipped).</strong> Single multi-tenant Postgres with <strong>Row-Level Security</strong>. Strong for <em>data</em>; says nothing about <em>compute</em>.</li>
+      <li><strong>v1 — compute isolation (weaker, honest).</strong> Per-call bot-workers run as <strong>hardened containers</strong> (seccomp + user namespaces + AppArmor/SELinux, read-only rootfs, no host mounts). A container shares the host kernel — <strong>NOT a security boundary equal to a VM</strong>. Adequate in v1 because workers run <em>our</em> code, not tenant-supplied code.</li>
+      <li><strong>v2 — VM-grade isolation.</strong> Move the bot-worker tier to <strong>managed Firecracker (Fly.io Machines)</strong> — rent the microVM boundary (networking solved, EU regions, scale-to-zero, ~$2/mo for an always-on 256 MB machine) rather than build a Firecracker fleet. <strong>gVisor</strong> is the fallback (no KVM needed, ~10–30% I/O overhead) if the worker tier must stay on Hetzner Cloud. Stateless services (app-api, ingest, ws-hub) stay on Hetzner Cloud.</li>
+      <li><strong>v3 — cost optimization.</strong> Revisit <strong>self-hosted Firecracker on Hetzner bare-metal</strong> once volume justifies the ops (cheaper per unit, hardest ops).</li>
+    </ul>
+    <div class="callout">
+      <b>Constraint that shapes the path.</b> <strong>Hetzner Cloud (CX/CPX/CCX) has no nested virtualization</strong> — <code class="mono">/dev/kvm</code> is unavailable in the guest, so Firecracker / Cloud Hypervisor / Kata cannot run on Hetzner Cloud VMs. Only Hetzner dedicated / bare-metal exposes KVM. That is why the v2 microVM boundary uses a managed provider (or bare-metal in v3), not Hetzner Cloud.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">08</span>Settings, retention &amp; deletion</h2>
+    <h3>Settings (§5.12) — Deepgram-backed, deliberately tiny in v1</h3>
+    <p class="muted">Per-tenant defaults with per-call overrides. Transcription runs on <strong>Deepgram</strong>, so dictionary + language map directly onto Deepgram features.</p>
+    <table>
+      <thead><tr><th>Group</th><th>Setting</th><th>Phase</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Look</strong></td><td>Bot name / avatar</td><td>v1 fixed → v2 custom</td><td>v1 = fixed <code>samograph (recording)</code>; v2 custom name/image (must still signal recording).</td></tr>
+        <tr><td><strong>Look</strong></td><td>Presence: dynamic vs static</td><td>v1 dynamic → v2 toggle</td><td>v1 ships the dynamic presence camera (<code>listening/thinking/speaking/acting/idle</code>). <strong>Dynamic presence is our differentiator</strong> — Circleback has no equivalent.</td></tr>
+        <tr><td><strong>Sound</strong></td><td>Chat-chime sound</td><td>v1 (selectable)</td><td>Choose among the shipped <strong>chime library</strong> (~10 sounds, CLI PR #31).</td></tr>
+        <tr><td><strong>Transcription</strong></td><td>Dictionary / keyterms</td><td>v1</td><td><strong>PostgresFM</strong> preset ships + user-defined terms, passed through as <strong>Deepgram</strong> keyterm prompting.</td></tr>
+        <tr><td><strong>Transcription</strong></td><td>Language</td><td>v1</td><td>A specific language <em>or</em> multilingual auto-detect among <strong>Deepgram</strong>-supported languages. Code-switching is a tracked differentiator.</td></tr>
+        <tr><td><strong>Calendar</strong></td><td>Auto-join events</td><td>v2</td><td>Connect Google / Microsoft calendar with join rules. Re-introduces calendar (excluded from v1).</td></tr>
+        <tr><td><strong>Privacy / Data</strong></td><td>Retention + export/delete</td><td>v1 / v2</td><td>Disclosure non-suppressible in v1; export <code>.txt</code>/<code>.md</code> + per-call/account delete in v1; video retention controls in v2.</td></tr>
+      </tbody>
+    </table>
+    <h3>Retention (§5.13)</h3>
+    <ul>
+      <li><strong>Transcripts: indefinite from v1</strong> — the durable product record (~50 KB / meeting-hour; cheap in Postgres well past 100 GB).</li>
+      <li><strong>Video: now a v2 feature</strong> — v1 stores no video (relies on Recall's ~7-day window). v2 egresses recordings to <strong>R2 / B2</strong> with <strong>configurable N-month retention (default 6 months)</strong> + daily auto-purge; video dominates storage cost (~0.5–1 GB/hr), so retention is bounded and Team-plan-gated.</li>
+    </ul>
+    <h3>Data deletion (§5.14 — GDPR baseline, shipped v1)</h3>
+    <p class="muted"><strong>Per-call:</strong> removes <code>transcripts</code> + any stored video, revokes its <code>tokens</code>, and calls the <strong>Recall API to delete the Recall-side recording</strong>; keeps an audit tombstone. <strong>Account / all tenant data:</strong> purges everything, revokes sessions, deletes Recall recordings, honors a <strong>≤30-day erasure SLA</strong> (active calls force-left first). Export-before-delete is offered in the flow.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">09</span>Billing (v2) &amp; error codes</h2>
+    <h3>Billing &amp; plans (§5.15 — v2, Stripe)</h3>
+    <p class="muted">v1 is <strong>free</strong> behind cost guardrails. v2 introduces <strong>Stripe per-seat subscriptions matching Circleback's model</strong> (per-seat, unlimited meetings under fair-use; monthly + annual; trial; no permanent free tier).</p>
+    <table>
+      <thead><tr><th>Plan</th><th>~Price / seat/mo (annual / monthly)</th><th>Includes</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Individual</strong></td><td>~$20 / ~$25</td><td>Live transcript, share links, dictionary + languages, exports, the v2 AI-agent channel</td></tr>
+        <tr><td><strong>Team</strong></td><td>~$25 / ~$30</td><td>+ shared meeting library, retention controls + video storage, access controls, usage dashboard, central billing</td></tr>
+        <tr><td><strong>Enterprise</strong></td><td>custom</td><td>+ SSO, advanced security, BAA, EU residency</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <b>Margin guardrail.</b> Recall bills <b>per-minute</b> but per-seat pricing is <b>flat</b>, so heavy users can be unprofitable. Enforce <b>fair-use minute caps per seat/month</b> (friendly soft limit, not a mid-call cutoff), monitor per-tenant margin, and keep the v1 cost guardrails as the floor. This is the central billing risk (R-billing).
+    </div>
+    <h3>Error-code reference (§5.16)</h3>
+    <p class="muted">Every failure is typed and stable (safe to switch on). API errors return <code class="mono">{ code, message, retryable }</code>; a few examples (full table in the spec):</p>
+    <table>
+      <thead><tr><th>Code</th><th>Status</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>SAMO-CALL-JOIN</code></td><td><code>COULD_NOT_JOIN</code></td><td>Recall <code>fatal</code> before join → "Try again" with URL pre-filled</td></tr>
+        <tr><td><code>SAMO-AUTHZ-001</code></td><td>403</td><td>Tenancy gate: cross-tenant <code>call_id</code> / no session</td></tr>
+        <tr><td><code>SAMO-RATE-001</code></td><td>429</td><td>Share/agent connection or command cap hit (§5.7)</td></tr>
+        <tr><td class="muted" colspan="3" style="font-size:0.85rem;">…plus auth, token, ingest-degraded, worker, cost-guardrail, and v2 billing codes.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">10</span>Open questions &amp; risks</h2>
     <table>
       <thead><tr><th>#</th><th>Risk</th><th>Plan</th></tr></thead>
       <tbody>
@@ -267,14 +344,19 @@ sequenceDiagram
         <tr><td class="qid">R4</td><td>Recall.ai cost guardrails &amp; free-tier limits</td><td>Per-tenant active-call cap + minutes/day cap with conservative defaults, surfaced as a friendly error rather than silent failure.</td></tr>
         <tr><td class="qid">R5</td><td>Tunnel as single point of failure</td><td>One regional named tunnel + leader-elected loud watchdog; multi-region seam built &amp; validated in Sprint 3 (single region still sufficient to ship).</td></tr>
         <tr><td class="qid">R6</td><td>Magic-link deliverability on corporate mail</td><td>SPF/DKIM/DMARC from day one; warmed transactional-provider IP; "didn't get it?" resend + alternate-email affordance. Tracked as a launch blocker.</td></tr>
+        <tr><td class="qid">R7</td><td>Billing margin — per-minute cost vs flat per-seat price (v2)</td><td>Fair-use minute caps per seat/month (soft limit), per-tenant margin monitoring, v1 cost guardrails retained as the floor (§5.15).</td></tr>
+        <tr><td class="qid">R8</td><td>Compute isolation is container-grade, not VM-grade, in v1</td><td>Hardened containers (shared kernel) adequate while workers run only our code; v2 moves the tier to managed Firecracker (Fly.io), gVisor as the no-KVM fallback. Hetzner Cloud has no nested virtualization (§4.8).</td></tr>
+        <tr><td class="qid">R9</td><td>Cloudflare as a dependency</td><td>Tunnel is free with no request cap, but no SLA below Business and two 2025 data-plane outages. Per-region named tunnels, fail-over to a second tunnel/<code>--webhook-base</code>, any Worker/Queues/R2 buffering kept off the critical live path (§4.9).</td></tr>
+        <tr><td class="qid">R10</td><td>GDPR / right-to-erasure completeness</td><td>Deletion calls the Recall delete API and cascades to object storage, with a ≤30-day erasure SLA + audit tombstone (§5.14).</td></tr>
+        <tr><td class="qid">R11</td><td>Recall key-rotation correctness</td><td>Scheduled 90-day rotation via dual-key overlap + drain-before-revoke (bounded by max call length), automated job + runbook, forced-rotation path for incidents (§4.10).</td></tr>
       </tbody>
     </table>
-    <p class="muted" style="font-size:0.85rem;">Abridged — the full risk list (R1–R12, incl. WS reconnect storms, worker crash mid-call, benchmark-runner availability) lives in <code>SPEC.md §10</code>.</p>
+    <p class="muted" style="font-size:0.85rem;">Abridged — the full risk list (R1–R17, incl. WS reconnect storms, worker crash mid-call, benchmark-runner availability) lives in <code>SPEC.md §10</code>.</p>
   </section>
 
   <footer>
     Authoritative spec: <a href="./SPEC.md">SPEC.md</a> · Human view: this page<br>
-    Authored with <a href="https://github.com/NikolayS/samospec">samospec</a> · SPEC v0.3 · 2 Claude review rounds applied
+    Authored with <a href="https://github.com/NikolayS/samospec">samospec</a> · SPEC v0.4 · post-publish stakeholder-feedback round · 2 prior Claude review rounds applied
   </footer>
 
 </div>

@@ -1,4 +1,4 @@
-# samograph.dev — SPEC v0.3
+# samograph.dev — SPEC v0.4
 
 ## 1. Goal & why it's needed
 
@@ -17,9 +17,11 @@
 - Bot joins immediately via shared server-side Recall API key.
 - Per-call page streams transcript live over WebSocket, line-by-line, no reload, no polling. Each line: `[timestamp] Speaker: utterance`.
 - Per-call page is shareable read-only via a signed link.
-- Transcript persists to Postgres in real time, durable beyond Recall's ~7-day video retention.
+- Transcript persists to Postgres in real time and is **stored indefinitely** from day one (the durable record). Recall keeps video only ~7 days; **video storage is a v2 feature** (§5.13).
 - Server-operated, multi-tenant equivalent of `samograph join`: one shared Recall API key (in secret manager), one persistent cloudflared **named** tunnel per region, webhook ingest routed by `bot_id`, WS fan-out hub.
 - In-call recording disclosure (bot name + chat post on `in_call_recording`) so two-party-consent jurisdictions are addressed at the participant level, not just the dashboard (§10 #4).
+- **Transcript-quality settings** (cheap Recall/Deepgram passthroughs, per-tenant defaults, no UI bloat to the core flow): **custom dictionary / keyterms** — a **PostgresFM** preset ships and users add their own terms — and **language** (a specific language or multilingual auto-detect, among Deepgram-supported languages). Transcription runs on **Deepgram** (via Recall). See §5.12.
+- **Data deletion** (GDPR baseline, not deferred): the owner can delete a single call (its transcript + metadata, and the Recall recording via the Recall API) and can delete their account / all tenant data. See §5.14.
 - **Multi-region seam proved in build-week:** a second region is deployed in Sprint 3 to validate the regional-tunnel pattern, but a single region is sufficient for ship; multi-region is not a launch gate (§4.7, §8).
 
 ### v2 — Phase 2 (next, deliberately deferred but architecturally pre-wired)
@@ -28,9 +30,13 @@
 - **ACT scope:** remote equivalents of `chat`, `frame`, `frames`, `presence`, `leave`. (1:1 with existing CLI verbs; the bot worker already supports them.)
 - Exposed as HTTP + WebSocket API and an MCP server endpoint.
 - Hard tenant isolation: an agent NEVER sees the Recall token, other calls, or other tenants. Full audit log of every act-channel call. Rate limits on the act channel. One-click revoke.
+- **Billing & plans (Stripe):** per-seat subscriptions modeled on Circleback's pricing (Individual / Team / Enterprise; monthly + annual; trial). See §5.15.
+- **Video storage:** egress Recall recordings to object storage (R2/B2) with **configurable N-month retention** (default 6 months); transcripts remain indefinite (since v1). See §5.13.
+- **Expanded settings:** custom bot look (name + avatar; static vs dynamic presence), chat-chime **sound** selection, **calendar auto-join** (Google/Microsoft, with join rules), and retention controls. See §5.12.
+- **Stronger tenant isolation:** move the per-call bot-worker tier to a **VM-grade boundary** (managed Firecracker microVMs) rather than shared-kernel containers. See §4.8.
 
-### v3+ — explicitly deferred (do not design into v1)
-Billing/plans/seats; Google Calendar auto-join; branded/consistent bot identities; post-call transcript email; multi-language UI; long-term video storage + synced transcript+video viewer; MS Teams.
+### v3+ — explicitly deferred (do not design into v1/v2)
+Branded/consistent bot identities; post-call transcript email; multi-language product UI; synced transcript+video viewer (click-a-word-to-seek); MS Teams + Webex; native integrations (Slack/Notion/CRM/Zapier); public REST API for tenants; EU data residency option; self-hosted Firecracker fleet on Hetzner bare-metal as a cost optimization over managed microVMs (§4.8).
 
 ## 3. User stories (manual-test backbone)
 
@@ -204,7 +210,33 @@ Ingest scales horizontally. To preserve "exactly one warning line per outage" ac
 ### 4.7 Region selection policy
 v1 ships to production behind a single region (`us-east`); a second region is deployed in Sprint 3 to prove the multi-region seam (§8) — both decisions live inside the v1 build week. **Multi-region is not a launch gate**: a single healthy region is sufficient for the v1 ship. When ≥ 2 regions are live, `calls.region` is set at orchestrator time by: (a) user-pinned override if present, else (b) lowest-latency healthy region for the orchestrator host (round-robin within ties). A region marked `degraded` fails **closed** for new calls (orchestrator skips it) and the chosen alternative is logged. Already-IN_CALL calls in a degraded region are not migrated (Recall does not support cross-region bot migration); they continue to surface the warning until recovery.
 
-## 5. Implementation details
+### 4.8 Tenant compute isolation roadmap (data isolation now, VM-grade isolation later)
+Isolation has two layers and we are explicit about which one each phase buys:
+
+- **Data isolation (v1, shipped):** a single multi-tenant Postgres with **Row-Level Security** (§5.10). This is a strong boundary for *data* but says nothing about *compute*.
+- **Compute isolation (v1, weaker):** the per-call `bot-worker` processes run as **hardened containers** (seccomp + user namespaces + AppArmor/SELinux, read-only rootfs, no host mounts). A container shares the host kernel — it is **NOT a security boundary equal to a VM** and we do not pretend otherwise. It is adequate for v1 because the workers run *our* code, not tenant-supplied code.
+
+The concern (correctly raised) is that as we grow — and especially once the v2 AI-agent channel lets external agents drive a worker — we want **VM-grade isolation per tenant/per call**. Findings that shape the path (researched 2026-06, re-verify before committing):
+
+- **Hetzner Cloud (CX/CPX/CCX) has no nested virtualization** — `/dev/kvm` is unavailable inside the guest, so **Firecracker / Cloud Hypervisor / Kata cannot run on Hetzner Cloud VMs**. Only **Hetzner dedicated / bare-metal** exposes KVM.
+- **Firecracker** boots ≤125 ms with ~5 MiB overhead and runs long-lived processes fine, but **networking is DIY** (TAP + host NAT/DNAT + per-VM IPAM) and **snapshots do not preserve connections** — the bot must already treat reconnect-to-Recall as first-class (it does).
+- **gVisor** needs no KVM (runs on Hetzner Cloud), is **stronger than a container but weaker than a VM**, at ~10–30% I/O overhead — a pragmatic middle tier.
+- **Managed Firecracker (Fly.io Machines)** gives the same microVM boundary with networking solved, EU regions (fra/ams), scale-to-zero, ~**$2/mo** for an always-on 256 MB machine. AWS Fargate is the same boundary at ~$9/mo min; Lambda is disqualified (15-min cap kills long WebSockets).
+
+**Recommended path:** v1 = RLS + hardened containers. **v2 moves the bot-worker tier to a VM-grade boundary**, starting with **managed Firecracker (Fly.io Machines)** — rent the isolation rather than build a Firecracker fleet (DIY networking/snapshot/jailer lifecycle is months of infra). Keep the stateless services (app-api, ingest, ws-hub) on Hetzner Cloud; gVisor is the fallback if we must keep the worker tier on Hetzner Cloud. **v3** revisits **self-hosted Firecracker on Hetzner bare-metal** purely as a cost optimization once volume justifies the ops. The key trade-off: Hetzner-bare-metal Firecracker is far cheaper per unit but loads the team with the hardest ops; managed microVMs cost a few dollars per always-on bot and hand us the boundary with networking solved.
+
+### 4.9 Cloudflare reliability & dependency posture
+We use a self-hosted **cloudflared named tunnel** for webhook ingest (§4.3). Posture decisions (researched 2026-06):
+
+- **Tunnel is the right ingest choice.** It is **free on any plan**, has **no ngrok-style monthly request cap** (the CLI's `ERR_NGROK_727` was ngrok-free's 20k-requests/month quota), and **named** tunnels on an owned domain are the production path (quick `trycloudflare.com` tunnels are dev-only: 200-concurrent cap, no SLA). Caveat: **no contractual uptime SLA below the Business plan** (~$200–250/mo).
+- **Cloudflare compute is the wrong shape for the bot-workers.** They hold a long-lived **outbound** WebSocket to Recall for the whole meeting plus arbitrary outbound networking — exactly where Durable Objects bill GB-s for the entire call (outbound WS does not hibernate) and Containers restrict outbound to ports 80/443 with ephemeral disk and no run-duration/SLA guarantee. **Bot-workers stay on Hetzner/Fly, not Cloudflare.**
+- **Do not make Cloudflare a hard single dependency for live delivery.** Cloudflare had two notable data-plane outages in the research window (Jun 2025 Workers KV ~2h28m; Nov 2025 ~6h global 5xx). Mitigations: a per-region named tunnel (already), the ability to fail over to a second tunnel/`--webhook-base` (the CLI already supports `--tunnel cloudflared`/`--webhook-base`), and treating any Worker+Queues+R2 durable-buffer pattern as **optional hardening**, never on the critical live path.
+
+### 4.10 Secrets & scheduled key rotation
+All long-lived secrets live in a secret manager; the **shared Recall API key exists only in bot-orchestrator + ingest** (§4.4). Rotation is scheduled, not ad-hoc:
+
+- **Recall API key — scheduled rotation (e.g., every 90 days) + on-demand (incident).** Mechanics: provision a new Recall key, run a **dual-key overlap window** — new bots are created with the new key while bots already created under the old key keep using it — then **drain** (wait until no active call references the old key, bounded by max call length + a margin), then revoke the old key. Fully automated via a scheduled job with a runbook; a forced (incident) rotation skips the schedule and shortens the drain to "leave + rejoin active bots."
+- **App secrets** rotate on the cadences already pinned elsewhere: magic-link/token **KID every 90 days with a 30-day overlap** (§5.1, §5.7), per-region **webhook secrets** and per-worker **secrets** rotated on the same 90-day schedule. All rotations are logged to `audit_log`.
 
 ### 5.1 Auth (magic link)
 - `POST /auth/magic-link {email}` → server creates a one-time, single-use, 15-minute token, signs it (HMAC + KID), sends an email via a transactional provider (Postmark or Resend).
@@ -325,12 +357,76 @@ workers        (call_id PK, host, port, worker_secret_hash,
 regions        (id, tunnel_hostname, status, last_probe_ts,
                 leader_id, leader_lease_expires_at)
 ```
-RLS policy: every table that has `tenant_id` (directly or via `call_id`) is filtered by `tenant_id = current_setting('app.tenant_id')`. The tenancy gate is the only thing that sets that setting. `workers` is RLS-filtered by joining `calls.tenant_id`. `calls.status` is a single enum (`PENDING | JOINING | IN_CALL | ENDED | COULD_NOT_JOIN | COULD_NOT_RECORD | BOT_REMOVED`); `calls.ingest_degraded` is an INDEPENDENT boolean overlay (§5.2), reset to false on any terminal status transition.
+RLS policy: every table that has `tenant_id` (directly or via `call_id`) is filtered by `tenant_id = (SELECT current_setting('app.tenant_id'))::uuid`. **The `current_setting(...)` MUST be wrapped in a scalar sub-`SELECT`.** Without the wrapper, Postgres treats `current_setting(...)` as a volatile function call and re-evaluates it **per row** (and can defeat index usage), which is catastrophic on large transcript scans; wrapped in `(SELECT …)` the planner caches it as a **once-per-statement InitPlan**. This is the well-documented Postgres/Supabase RLS performance pattern and is mandatory on every policy here. The tenancy gate is the only thing that sets `app.tenant_id` (via `set_config('app.tenant_id', $1, true)` — transaction-local). `workers` is RLS-filtered by joining `calls.tenant_id` (the same `(SELECT …)` wrapper applies inside the join predicate). `calls.status` is a single enum (`PENDING | JOINING | IN_CALL | ENDED | COULD_NOT_JOIN | COULD_NOT_RECORD | BOT_REMOVED`); `calls.ingest_degraded` is an INDEPENDENT boolean overlay (§5.2), reset to false on any terminal status transition.
 
 ### 5.11 Observability (v1, minimum bar)
 - Structured logs (JSON) with `call_id`, `tenant_id`, `region`.
 - Counters: `bot_join_total{result}`, `transcript_lines_total{region}`, `ws_dropped_total{call_id}`, `tunnel_probe_failed_total{region}`, `webhook_rejected_total{reason}`, `pickup_latency_ms{p50,p95,p99}` (event-received → status-visible).
 - A single "activation funnel" dashboard: signup → magic-link clicked → call created → first transcript line → 30s of stream. This IS the v1 success metric (§9).
+
+### 5.12 Settings
+Per-tenant settings with a per-call override where noted. Transcription runs on **Deepgram** (selected as Recall's transcription provider), so dictionary and language map directly onto Deepgram features. Each row is tagged with the phase it ships in; v1 keeps to cheap passthroughs so the core flow stays "deliberately tiny."
+
+| Group | Setting | Phase | Mechanism / notes |
+|---|---|---|---|
+| **Look** | Bot display name | v1 fixed → v2 custom | v1 = fixed `samograph (recording)`. v2 = custom name via Recall, but it MUST still signal recording (consent, §5.9). |
+| **Look** | Presence: dynamic vs static | v1 dynamic (default) → v2 toggle | v1 ships the dynamic presence camera (`listening/thinking/speaking/acting/idle`) from the CLI. v2 adds a static-image toggle. Dynamic presence is a **differentiator** (Circleback has no equivalent). |
+| **Look** | Avatar / picture | v2 | Custom bot image via Recall. |
+| **Sound** | Chat-chime sound | v1 (selectable) | Choose among the shipped **sound library** (~10 chimes, CLI PR #31). Per-tenant default + per-call override; played when the bot posts chat (disclosure in v1, agent chat in v2). |
+| **Transcription** | Dictionary / keyterms | v1 | Predefined presets (**PostgresFM** ships) **plus** user-defined terms; passed through as **Deepgram keyterm prompting** via Recall. Per-tenant + per-call override. |
+| **Transcription** | Language | v1 | A specific language **or** multilingual auto-detect, among **Deepgram-supported** languages (Nova multilingual). Per-tenant default + per-call override. Code-switching / mixed-language transcript is a tracked **differentiator** (Circleback is single-dominant-language). |
+| **Calendar** | Auto-join calendar events | v2 | Connect Google / Microsoft calendar; auto-join rules: only meetings I organize / internal-domain / external / decline-not-accepted / per-event opt-out. Re-introduces calendar (deliberately excluded from v1). |
+| **Privacy** | Recording-disclosure toggle | v1 fixed → v2 configurable | v1 = non-suppressible (§5.9). v2 = per-jurisdiction tuning. |
+| **Privacy** | Video retention (N months) | v2 | Configurable; transcript retention is fixed = indefinite (§5.13). Team-plan-gated. |
+| **Data** | Export / delete | v1 | Export `.txt`/`.md` (v1); delete a call or the whole account (§5.14). PDF export = v2. |
+
+Deferred to v3 (noted so settings UI leaves room): bot-free capture, native integrations (Slack/Notion/CRM/Zapier), public REST API, EU data residency. "Worth checking Circleback" review folded in — the items above plus those v3 deferrals are the union of Circleback's settings and our differentiators.
+
+### 5.13 Data retention
+- **Transcripts: indefinite from v1.** They are the durable product record and persist until the tenant deletes them (§5.14). ~50 KB per meeting-hour of plain text — cheap; a `text`/compressed column in Postgres is fine well past 100 GB.
+- **Video: not stored in v1.** v1 relies on Recall's ~7-day window and persists nothing. **v2 egresses** the recording (mixed MP4 and/or `video_separate_png` frames) to S3-compatible object storage — **Cloudflare R2** (~$0.015/GB-mo, zero egress) or **Backblaze B2** — with **configurable per-tenant retention (default 6 months)** and a daily auto-purge job. A 1-hour 720p meeting is ~0.5–1 GB, so video dominates storage cost and is the reason retention is bounded and configurable (and Team-plan-gated).
+- Deletion of a call or account purges both transcript and any stored video and asks Recall to delete its copy (§5.14).
+
+### 5.14 Data deletion (GDPR baseline — v1)
+- **Delete a single call:** removes its `transcripts` rows and any stored video, revokes its `tokens`, and calls the **Recall API to delete the Recall recording**. A tombstone (`call_id, deleted_at, deleted_by`) is retained for audit integrity; the deletion itself is an `audit_log` entry. Deletes run under the same RLS tenant scope (§5.10) — you can only delete your own.
+- **Delete account / all tenant data:** purges all of the tenant's `calls`, `transcripts`, `tokens`, `workers`, audit detail, and stored video; revokes all sessions; deletes the Recall recordings; emails a confirmation. Honors a **GDPR erasure SLA (≤ 30 days)**, with active calls force-left first.
+- **Export-before-delete** is offered in the flow. v2 adds retention-policy auto-purge and granular export formats.
+
+### 5.15 Billing & plans (v2 — Stripe)
+v1 is **free** behind the rate/cost guardrails (§10 #5). v2 introduces paid plans via **Stripe**, on a **per-seat recurring-subscription** model **matching Circleback's structure** (per-seat, unlimited meetings under fair-use; monthly + annual with ~2 months off annual; trial; no permanent free tier). Proposed tiers (numbers to confirm against current Recall unit cost):
+
+| Plan | Price (annual / monthly per seat) | Includes |
+|---|---|---|
+| **Individual** | ~$20 / ~$25 | Live transcript, share links, dictionary + languages, exports, the v2 AI-agent channel |
+| **Team** | ~$25 / ~$30 | + shared meeting library, retention controls + video storage, access controls, usage dashboard, centralized billing |
+| **Enterprise** | custom | + SSO, advanced security controls, BAA, EU residency |
+
+**Stripe mechanics:** two catalog Products (Individual, Team), each with two recurring Prices (monthly + yearly), `usage_type = licensed` billed by `quantity = seats`, `trial_period_days` (e.g., 14). Stripe **Customer Portal** for self-serve plan/seat/card changes. Webhooks (`checkout.session.completed`, `customer.subscription.updated|deleted`, `invoice.payment_failed`) drive a `tenants.subscription_status` (`trialing | active | past_due | canceled`) that gates access. Enterprise is a manual/custom quote outside the self-serve catalog.
+
+**Margin guardrail (important):** Recall bills **per-minute** but per-seat pricing is **flat**, so heavy users can be unprofitable. Enforce **fair-use minute caps per seat/month** (friendly soft limit, not a hard cutoff mid-call), monitor **margin per tenant**, and keep the v1 cost guardrails (§10 #5) as the floor. This is the central billing risk (§10 #13).
+
+### 5.16 Error handling & error-code reference
+**Principle:** every failure is typed, surfaced to the user in plain English, and never a silent hang. API errors return `{ "code": "SAMO-…", "message": "<human>", "retryable": bool }` with the HTTP status below; call-path failures map to a terminal `calls.status` (§5.2). Codes are stable (safe to switch on) and logged with `call_id`/`tenant_id`.
+
+| Code | HTTP / call status | Meaning | User-facing message | Client behavior |
+|---|---|---|---|---|
+| `SAMO-AUTH-001` | 401 | Magic link invalid / tampered KID / bad signature | "This sign-in link isn't valid." | Request a new link |
+| `SAMO-AUTH-002` | 401 | Magic link expired (>15 min) | "This sign-in link has expired." | Request a new link |
+| `SAMO-AUTH-003` | 401 | Magic link already used (replay) | "This link was already used." | Request a new link |
+| `SAMO-AUTH-004` | 429 | Magic-link rate limit (5/hr email or 20/hr IP) | "Too many sign-in attempts — try again shortly." | Back off, honor `Retry-After` |
+| `SAMO-AUTHZ-001` | 403 | Tenancy gate: cross-tenant `call_id` / no session | "You don't have access to this call." | Stop; do not retry |
+| `SAMO-TOKEN-001` | 403 | Token scope mismatch (e.g. `read` asked for `act:*`) | "This link can't perform that action." | Stop |
+| `SAMO-TOKEN-002` | 410 | Token revoked or expired | "This share/agent link is no longer active." | Stop; owner must re-issue |
+| `SAMO-RATE-001` | 429 | Share/agent connection or command cap hit (§5.7) | "Too many connections/commands on this link." | Back off, honor `Retry-After` |
+| `SAMO-CALL-JOIN` | status `COULD_NOT_JOIN` | Recall `fatal` before join (bad URL, denied entry) | "Couldn't join — <Recall reason>." | "Try again" → dashboard, URL pre-filled (Story 4) |
+| `SAMO-CALL-NOREC` | status `COULD_NOT_RECORD` | Recall `in_call_not_recording` | "Couldn't start recording — check meeting permissions." | No disclosure post; bot leaves (§5.9) |
+| `SAMO-CALL-REMOVED` | status `BOT_REMOVED` | Host removed the bot | "The bot was removed from the call." | Terminal |
+| `SAMO-INGEST-DEGRADED` | overlay (not a status) | Tunnel/ingest outage mid-call | banner + `SAMOGRAPH-WARNING: tunnel unreachable …` line | Auto-recovers; lines during outage are lost |
+| `SAMO-WEBHOOK-401` | 401 (server↔Recall) | Bad Recall signature or `ingest_secret` mismatch | (internal; never user-facing) | Dropped, logged once |
+| `SAMO-WORKER-503` | 503 | Bot-worker unreachable (crash/stale row) | "That action is temporarily unavailable." | Retry once; transcript keeps flowing |
+| `SAMO-RECALL-COST` | 429 | Per-tenant active-call / minutes guardrail hit (§10 #5) | "You've reached your usage limit for now." | Surface limit; no silent failure |
+| `SAMO-BILLING-PASTDUE` | 402 (v2) | `invoice.payment_failed` → `past_due` | "Payment failed — update your card to keep using samograph." | Stripe Customer Portal link |
+| `SAMO-BILLING-SEATS` | 403 (v2) | Seat limit exceeded | "You've used all your seats." | Add seats in billing |
 
 ## 6. Tests plan
 
@@ -408,7 +504,7 @@ A single follow-on sprint adds: agent gateway (HTTP + WS + MCP), `act:*` scopes 
 
 ## 10. Open questions / risks
 
-1. **Shared Recall API key — tenant isolation.** Mitigation: the key never leaves bot-orchestrator + ingest; every request flows through the tenancy gate; audit log captures every Recall-mediated action; pen-test the gate before v2 launches the agent channel.
+1. **Shared Recall API key — tenant isolation.** Mitigation: the key never leaves bot-orchestrator + ingest; every request flows through the tenancy gate; audit log captures every Recall-mediated action; pen-test the gate before v2 launches the agent channel. Compute-isolation roadmap (hardened containers now → VM-grade microVMs in v2) is §4.8; scheduled key rotation is §4.10.
 2. **AI-agent channel security (v2).** Capability-scoped, short-TTL, revocable tokens; rate-limited; full audit; never expose Recall key. Requires explicit security review before v2 ships.
 3. **Act-channel abuse (v2).** An agent posting in someone's meeting / grabbing frames must be authorized, logged, and revocable. Per-token rate limits + per-tenant daily caps.
 4. **Consent / recording disclosure across two-party-consent jurisdictions.** Addressed at three layers: (a) host-side dashboard disclosure; (b) bot display name `samograph (recording)` visible to all participants; (c) bot posts a single in-call chat disclosure on `in_call_recording` only (NOT on `in_call_not_recording`, where the claim would be factually wrong — §5.9). Legal sign-off still needed before broad launch; not blocking the build-week.
@@ -420,9 +516,15 @@ A single follow-on sprint adds: agent gateway (HTTP + WS + MCP), `act:*` scopes 
 10. **WS reconnect storms.** Bounded queues + `?since_seq` replay mean reconnect is cheap; per-IP connection cap on ws-hub as a safety belt; per-share-token establishment rate (1000/hr) caps fan-out abuse.
 11. **Worker process crash mid-call.** v1 surfaces a 503 to the dashboard on owner-action; transcript ingest is independent of bot-worker and keeps flowing. Auto-restart + workers-table reconciliation deferred to v1.1 unless it bites during build-week.
 12. **Benchmark-runner availability for §6.2 #3.** The publisher-latency assertion only runs on a CI runner with single-tenant isolation; on shared runners the test skips with a loud message. Risk: if the dedicated runner is unavailable for an extended period, this SLO can drift silently. Mitigation: SRE tracks the runner as a first-class CI dependency.
+13. **Billing margin — per-minute cost vs flat per-seat price (v2).** Recall bills per-minute but plans are flat per-seat, so heavy users can be loss-making. Mitigation: fair-use minute caps per seat/month (friendly soft limit), per-tenant margin monitoring, retain the v1 cost guardrails as a floor (§5.15, §10 #5).
+14. **Compute isolation is container-grade, not VM-grade, in v1.** Bot-workers run hardened containers (shared kernel), adequate while they run only our code but below a VM boundary — a concern once the v2 agent channel lets external agents drive a worker. Note **Hetzner Cloud has no nested virtualization**, so Firecracker needs Hetzner bare-metal or a managed provider. Mitigation: v2 moves the worker tier to managed Firecracker (Fly.io), gVisor as the no-KVM fallback (§4.8).
+15. **Cloudflare as a dependency.** Tunnel is free with no request cap (a real win over ngrok) but has **no SLA below the Business plan**, and Cloudflare had two notable data-plane outages in the research window (Jun & Nov 2025). Mitigation: per-region named tunnels, fail-over to a second tunnel/`--webhook-base`, keep any Worker/Queues/R2 buffering off the critical live path (§4.9).
+16. **GDPR / right-to-erasure completeness.** Deleting our copy is not enough — the **Recall-side recording** must also be deleted, and any v2-stored video purged. Mitigation: deletion calls the Recall delete API and cascades to object storage, with a ≤30-day erasure SLA and an audit tombstone (§5.14).
+17. **Recall key-rotation correctness.** A botched rotation could break webhooks for in-flight calls. Mitigation: dual-key overlap + drain-before-revoke (bounded by max call length), automated job + runbook, forced-rotation path for incidents (§4.10).
 
 ## 11. Changelog (embedded; mirrors changelog.md)
 
+- **v0.4 (2026-06-24)** — Stakeholder feedback round (post-publish). **Tenant compute isolation roadmap (§4.8):** explicit that v1 = RLS (data) + hardened containers (compute, shared-kernel, NOT a VM boundary); v2 moves the bot-worker tier to VM-grade **managed Firecracker (Fly.io Machines)**, with gVisor as the no-KVM fallback and self-hosted Firecracker on **Hetzner bare-metal** as a v3 cost optimization — noting **Hetzner Cloud has no nested virtualization** (researched). **Cloudflare posture (§4.9):** Tunnel is the right (free, no-request-cap, named) ingest choice but has no SLA below Business and a 2025 data-plane-outage history; Cloudflare compute is the wrong shape for long-lived outbound-WS bot-workers (they stay on Hetzner/Fly). **Scheduled secret rotation (§4.10):** Recall API key rotates on a 90-day schedule via dual-key overlap + drain-before-revoke (+ forced incident path); app KIDs/webhook/worker secrets on the same cadence. **RLS InitPlan fix (§5.10):** policies now use `tenant_id = (SELECT current_setting('app.tenant_id'))::uuid` so the predicate is a once-per-statement InitPlan, not a per-row re-eval. **Settings (§5.12):** Look (name/avatar, dynamic vs static presence), Sound (chime library), Dictionary (PostgresFM preset + user keyterms via Deepgram), Language (specific or multilingual, Deepgram), calendar auto-join (v2), retention + privacy — tagged by phase; **Deepgram** named as the transcription engine. **Retention (§5.13):** transcripts indefinite from v1; **video storage = v2** (R2/B2, configurable N-month retention, default 6mo). **Data deletion (§5.14):** per-call + account erasure incl. Recall-side recording delete (GDPR, v1). **Billing (§5.15):** v2 Stripe per-seat subscriptions matching Circleback (Individual/Team/Enterprise, monthly+annual, trial), with a per-minute-cost-vs-flat-price margin guardrail. **Error-code reference (§5.16):** stable `SAMO-…` codes with HTTP/call-status, user-facing copy, and client behavior. Added risks #13–#17 (billing margin, container-vs-VM isolation, Cloudflare dependency, GDPR/Recall-side erasure, key-rotation correctness). Moved billing, calendar auto-join, and video storage from v3 into v2 (§2).
 - **v0.3 (2026-06-23)** — Addressed Reviewer B v0.2 findings. **Removed the stale `<!-- architecture:begin -->` placeholder in §3** (this time actually). **Resolved the `read` scope contradiction**: `read` is now explicitly session-derived and NOT persisted in `tokens`; only `share` (and v2 `act:*`) live in `tokens` (§4.2, §5.6, §5.7, §5.10, §6.2 #2). **Fixed the §4.2 cross-reference** to point at §5.7 (capability tokens) instead of §5.6 (tenancy gate). **Fixed §5.9** to post the recording disclosure ONLY on `in_call_recording`; `in_call_not_recording` now drives a terminal `COULD_NOT_RECORD` status and the bot leaves cleanly without a misleading disclosure post. **Modeled `INGEST_DEGRADED` as a boolean overlay column** (`calls.ingest_degraded`) rather than a status-enum value, so an `IN_CALL` call can be degraded simultaneously (§5.2, §5.10, §4.5, §4.6). **Reconciled multi-region timing**: Sprint 3 deploys a second region inside the v1 build-week as a seam-proof, but a single healthy region remains sufficient for ship — multi-region is not a launch gate (§4.7, §8). **Extended WS-fan-out SLO** to k ∈ {1, 4, 16, 32} concurrently stalled subscribers, with explicit benchmark methodology (dedicated isolated runner, HDR histogram, 95 % bootstrap CI, skip rather than flake on shared runners) — §5.5, §6.2 #3. **Added numeric caps for the `share` scope** (200 concurrent connections per token, 20 client→server commands/min/conn, 1000 establishments/hour/token) and matching tests (§5.7, §6.2 #10). **Added explicit pickup-latency SLO** (event received → status visible p95 ≤ 1 s) and a test for it (§3 Story 1, §5.2, §6.2 #8, §5.11). **Corrected team total** to 5.0 FTE (matching the role sum) with security stepping up by 0.5 in v2 as designer rolls off (§7). **Clarified Story 4 "Try again"** to mean "return to dashboard with URL pre-filled; user must explicitly re-submit" (no implicit retry, no auto-created Call row) — §3 Story 4, §5.2.
 - **v0.2 (2026-06-23)** — Addressed Reviewer B v0.1 findings. Removed the stale `<!-- architecture:begin -->` placeholder in §3. Made the `read` vs `share` scope distinction concrete (session-bound vs anonymous-link; distinct rate limits, revocation paths, audit attribution). Introduced the `IngestSecret` abstraction and §5.3 webhook authenticity flow (Recall signature + constant-time secret match) — separates the long-lived per-call ingest secret from user-visible `CapabilityToken`s. Added bot-worker service discovery via a `workers` table + per-instance secret (mTLS in prod). Moved `JOINING → IN_CALL` onto Recall bot-lifecycle events so silent calls progress. Pinned numeric defaults (probe interval 20 s; magic-link 5/hr/email + 20/hr/IP independent; queue 256 msgs OR 512 KB; KID 90-day rotation with 30-day overlap). Added explicit publisher-latency SLO (p99 ≤ 5 ms with stalled subscriber) to §5.5 + §6.2 #3. Added watchdog leader election via Postgres advisory lock (§4.6) and distributed-replica test coverage. Added §6.2 #6 magic-link security tests, §6.2 #7 webhook authenticity tests, §6.2 #8 bot-lifecycle status tests, §6.2 #9 worker discovery tests. Committed CI smoke test to in-repo Recall fake + nightly real-Recall job. Committed to no verifier-side token cache in v1. Added §5.9 in-call disclosure (bot name + chat post on join) to address two-party-consent at the participant level. Added §4.7 region selection policy. Qualified Story 1 SLOs.
 - **v0.1 (2026-06-23)** — Initial draft. Two-phase scope (v1 zero-setup hosted samograph; v2 secure bidirectional AI-agent channel). Architecture with shared Recall key + regional named cloudflared tunnels + tenancy gate + capability tokens + audit log; v2 seams (bot-worker command/act API, capability-scoped tokens) wired in v1. TDD list for transcript normalizer, capability tokens, WS backpressure, tenancy gate, multi-call tunnel watchdog. 4.5-FTE team, three-sprint one-week plan. W1 activation ≥ 0.5 as the single v1 metric.
