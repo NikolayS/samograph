@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Marketing site + Next.js app shell (SPEC §4.1). Pages are out of scope for the foundation issue."
+}

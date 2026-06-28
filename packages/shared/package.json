@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Code shared across samograph.dev apps (transcript normalizer, tokens, auth/tenancy gate). SPEC §4.1."
+}

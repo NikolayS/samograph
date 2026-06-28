@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/ws-hub",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Bun/Hono WS fan-out: /calls/:id/stream with bounded queues + backpressure (SPEC §4.1)."
+}

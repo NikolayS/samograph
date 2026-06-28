@@ -4,6 +4,15 @@
   "description": "Let AI agents join Zoom and Google Meet calls as active participants.",
   "type": "module",
   "license": "Apache-2.0",
+  "workspaces": [
+    "apps/web",
+    "apps/app-api",
+    "apps/ingest",
+    "apps/ws-hub",
+    "apps/bot-worker",
+    "packages/shared",
+    "packages/test-fakes/recall"
+  ],
   "bin": {
     "samograph": "dist/cli.js"
   },
