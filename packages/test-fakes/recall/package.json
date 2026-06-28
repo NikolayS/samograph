@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/test-fakes-recall",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Deterministic, seedable, network-free in-repo Recall fake — the PR-gate Recall (SPEC §6.1)."
+}
