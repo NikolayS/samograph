@@ -68,46 +68,13 @@ export function resolveNewTranscriptFile(
   return candidate;
 }
 
-interface WordEntry {
-  text?: string;
-  start_timestamp?: { absolute?: string };
-}
-
-interface TranscriptPayload {
-  event?: string;
-  data?: {
-    data?: {
-      participant?: { name?: string };
-      words?: WordEntry[];
-    };
-  };
-}
-
-export function sanitizeTranscriptField(value: string): string {
-  return value.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
-/**
- * Replicate the webhook transcript formatting logic.
- * Returns the `[ts] speaker: text` line, or null if the payload is not a
- * transcript.data event with words.
- */
-export function formatTranscriptLine(payload: unknown): string | null {
-  const p = (payload ?? {}) as TranscriptPayload;
-  if (p.event !== "transcript.data") {
-    return null;
-  }
-  const inner = p.data?.data ?? {};
-  const words = inner.words ?? [];
-  if (!words.length) {
-    return null;
-  }
-  const text = sanitizeTranscriptField(words.map((w) => w.text ?? "").join(" "));
-  const speaker = sanitizeTranscriptField(inner.participant?.name ?? "") || "?";
-  const absolute = words[0]?.start_timestamp?.absolute ?? "";
-  const ts = absolute.slice(0, 19).replace("T", " ");
-  return `[${ts}] ${speaker}: ${text}`;
-}
+// Transcript formatting lives once in the shared package so the CLI and the
+// hosted ingest service stay byte-identical (SPEC §5.4, #39). Re-exported here
+// under the CLI's historical name so existing callers are unchanged.
+export {
+  sanitizeTranscriptField,
+  normalizeTranscriptLine as formatTranscriptLine,
+} from "../packages/shared/transcript/index.ts";
 
 function transcriptPathFromState(): string {
   const state = loadState();
