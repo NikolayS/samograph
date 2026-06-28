@@ -4,5 +4,8 @@
   "private": true,
   "type": "module",
   "main": "index.ts",
-  "description": "Code shared across samograph.dev apps (transcript normalizer, tokens, auth/tenancy gate). SPEC §4.1."
+  "description": "Code shared across samograph.dev apps (transcript normalizer, tokens, auth/tenancy gate, Postgres schema + RLS). SPEC §4.1, §5.10.",
+  "scripts": {
+    "db:migrate": "bun run ./db/migrate.ts"
+  }
 }
