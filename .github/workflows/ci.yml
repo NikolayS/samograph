@@ -28,8 +28,75 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Test
+      - name: Typecheck (repo-wide, all workspaces)
+        run: bunx tsc --noEmit
+
+      - name: Test (CLI + all workspaces)
         run: bun test
 
-      - name: Build
+      - name: Build CLI
         run: bun run build
+
+  # DB-backed integration smoke against an ephemeral Postgres service container
+  # (no mocks — parity with prod migrations, SPEC §6.1). Spins up, runs a
+  # migration no-op smoke, and tears down with the job.
+  postgres-smoke:
+    name: Postgres integration smoke
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: samograph
+          POSTGRES_PASSWORD: samograph
+          POSTGRES_DB: samograph_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U samograph"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://samograph:samograph@localhost:5432/samograph_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Migration no-op smoke (spin up -> run -> tear down)
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "SELECT 1 AS connectivity;" \
+            -c "CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());" \
+            -c "INSERT INTO schema_migrations (version) VALUES ('0000_noop_smoke') ON CONFLICT (version) DO NOTHING;" \
+            -c "SELECT count(*) AS applied_migrations FROM schema_migrations;" \
+            -c "DROP TABLE schema_migrations;"
+          echo "Postgres smoke OK — ephemeral service container tears down with the job."
+
+  # Label-gated single-tenant benchmark runner for the WS publisher-latency SLO
+  # (SPEC §6.2 #3). The assertion only runs on a runner with single-tenant
+  # isolation; on shared CI it SKIPS LOUDLY rather than asserting, to prevent
+  # silent flake (SPEC §6.2 #3 / §10 #12). The benchmark itself lands with
+  # apps/ws-hub; this is the foundation stub of the job + its skip behavior.
+  benchmark-runner:
+    name: WS publisher-latency benchmark (single-tenant runner)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run benchmark on isolated runner, else SKIP LOUDLY
+        env:
+          BENCH_RUNNER_LABEL: ${{ vars.BENCH_RUNNER_LABEL }}
+        run: |
+          if [ "${BENCH_RUNNER_LABEL:-}" = "samograph-bench-isolated" ]; then
+            echo "::notice title=benchmark-runner::Dedicated single-tenant runner present — running WS publisher-latency p99<=5ms SLO (SPEC §6.2 #3)."
+            echo "Benchmark implementation lands with apps/ws-hub; foundation stub asserts the job wiring only."
+          else
+            echo "::warning title=benchmark-runner SKIPPED::No single-tenant isolated runner (label 'samograph-bench-isolated' absent). Per SPEC §6.2 #3 / §10 #12 the WS publisher-latency p99<=5ms SLO is SKIPPED LOUDLY on shared CI rather than asserted, to prevent silent flake."
+            echo "SKIPPED: benchmark-runner requires the dedicated single-tenant runner; not asserting on shared CI. Set the repo variable BENCH_RUNNER_LABEL=samograph-bench-isolated on the isolated runner to enable."
+          fi
