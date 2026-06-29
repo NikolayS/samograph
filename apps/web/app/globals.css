@@ -1,0 +1,38 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 2rem;
+  line-height: 1.5;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+main,
+section {
+  max-width: 32rem;
+  margin: 0 auto;
+}
+
+label {
+  display: block;
+  margin-top: 1rem;
+  font-weight: 600;
+}
+
+input {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+}
+
+button {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+}
+
+[role="alert"] {
+  color: #b00020;
+}
