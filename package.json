@@ -10,6 +10,7 @@
     "apps/ingest",
     "apps/ws-hub",
     "apps/bot-worker",
+    "apps/bot-orchestrator",
     "packages/shared",
     "packages/test-fakes/recall"
   ],
