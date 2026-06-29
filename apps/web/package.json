@@ -4,5 +4,23 @@
   "private": true,
   "type": "module",
   "main": "index.ts",
-  "description": "Marketing site + Next.js app shell (SPEC §4.1). Pages are out of scope for the foundation issue."
+  "description": "Marketing site + Next.js (App Router) app shell: landing, magic-link request/callback, dashboard shell (SPEC §4.1, §5.1).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20",
+    "@testing-library/dom": "^10",
+    "@testing-library/react": "^16",
+    "@types/react": "^19",
+    "@types/react-dom": "^19"
+  }
 }

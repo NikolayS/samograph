@@ -1,8 +1,9 @@
 /**
- * @samograph/web — marketing site + Next.js app shell (SPEC §4.1).
+ * @samograph/web — marketing site + Next.js (App Router) app shell (SPEC §4.1).
  *
- * Frontend pages (landing, magic-link request/callback, dashboard, per-call page)
- * are explicitly out of scope for the foundation issue; they land in the frontend
- * Sprint-1/2 issues. This is the empty workspace placeholder.
+ * The App Router lives under `app/` (landing, magic-link request/callback,
+ * dashboard shell); reusable view components are in `components/` and the
+ * pure, DOM-free logic + typed app-api client seam are in `lib/`. The per-call
+ * live transcript page lands in a later Sprint-2 issue.
  */
 export const SERVICE_NAME = "web";
