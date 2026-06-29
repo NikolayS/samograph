@@ -92,35 +92,70 @@ export const DENY: AuthorizeResult = Object.freeze({
   code: AUTHZ_ERROR_CODE,
 });
 
-// =============================================================================
-// PERMISSIVE STUB (RED) — authorizes on mere credential PRESENCE, skipping every
-// isolation check (call∈tenant, binding, expiry, revocation, persistence). It
-// exists ONLY to capture the RED adversarial failures; the GREEN commit replaces
-// this body with the real gate. DO NOT SHIP.
-// =============================================================================
+/**
+ * Authorize access to `req.callId`, set the tenant context for RLS, and return
+ * the grant — or {@link DENY}. The ONLY entry point to a call (SPEC §5.6).
+ *
+ * @param tx   The request's transaction (the RLS-bound `samograph_app` role).
+ *             On success the gate sets `app.tenant_id` on it so every subsequent
+ *             query in the same transaction is tenant-scoped.
+ * @param req  The inbound credentials + the `callId` being accessed.
+ * @param deps The keyring + the two privileged, pre-tenant lookups.
+ */
 export async function authorizeCall(
   tx: SQL,
   req: AuthorizeRequest,
   deps: AuthorizeDeps,
 ): Promise<AuthorizeResult> {
-  if (typeof req.sessionCookie === "string" && req.sessionCookie.length > 0) {
-    const session = await deps.lookupSession(req.sessionCookie);
-    if (session) {
-      await setTenant(tx, session.tenantId);
-      return { authorized: true, tenantId: session.tenantId, callId: req.callId, scopes: ["read"] };
+  try {
+    // A request must name the call it wants. A blank id can never be authorized.
+    if (!req || typeof req.callId !== "string" || req.callId.length === 0) {
+      return DENY;
     }
+    const now = deps.now ?? Math.floor(Date.now() / 1000);
+
+    // ── Session path → `read` (DERIVED, never persisted; §5.7). ──────────────
+    // A valid owner session grants `read` on ANY call in its OWN tenant. We set
+    // the session's tenant first, then let RLS answer "is this call mine?": the
+    // membership SELECT returns a row only when calls.tenant_id matches, so a
+    // cross-tenant (or unknown) call_id yields zero rows → no read here. No
+    // `tokens` row is read or written on this path.
+    if (typeof req.sessionCookie === "string" && req.sessionCookie.length > 0) {
+      const session = await deps.lookupSession(req.sessionCookie);
+      if (session) {
+        await setTenant(tx, session.tenantId);
+        const rows = (await tx`SELECT 1 AS ok FROM calls WHERE id = ${req.callId}`) as unknown as unknown[];
+        if (rows.length === 1) {
+          return { authorized: true, tenantId: session.tenantId, callId: req.callId, scopes: ["read"] };
+        }
+        // Session is valid but the call is not in its tenant: fall through. A
+        // co-presented token may still authorize; otherwise this ends in DENY.
+      }
+    }
+
+    // ── Token path → `share` (v1) / `act:*` (v2 stub); PERSISTED + revocable. ─
+    // Resolve the call's tenant via the privileged pre-tenant lookup, set it,
+    // then run the #52 verifier under that tenant (RLS scopes the `tokens` read
+    // to it — defence in depth). A correct gate also REQUIRES the token to be
+    // bound to the very call being accessed; the binding check is what stops a
+    // token minted for call X (or another tenant's call) from opening call Y.
+    const token = req.shareToken ?? req.agentToken;
+    if (typeof token === "string" && token.length > 0) {
+      const tenantId = await deps.lookupCallTenant(req.callId);
+      if (tenantId) {
+        await setTenant(tx, tenantId);
+        const res = await verifyToken(tx, token, deps.keyring, { now });
+        if (res.ok && res.callId === req.callId) {
+          return { authorized: true, tenantId, callId: req.callId, scopes: res.scopes as Scope[] };
+        }
+      }
+    }
+
+    return DENY;
+  } catch {
+    // Fail closed: any unexpected error — bad-uuid (SQLSTATE 22P02), DB outage,
+    // a verifier throw — is a DENIAL, never an authorization. No path reaches a
+    // call without an explicit, successful grant from this gate (§5.6).
+    return DENY;
   }
-  const token = req.shareToken ?? req.agentToken;
-  if (typeof token === "string" && token.length > 0) {
-    const tenantId =
-      (await deps.lookupCallTenant(req.callId)) ?? "00000000-0000-0000-0000-000000000000";
-    await setTenant(tx, tenantId);
-    return {
-      authorized: true,
-      tenantId,
-      callId: req.callId,
-      scopes: req.agentToken ? ["act:chat"] : ["share"],
-    };
-  }
-  return DENY;
 }
