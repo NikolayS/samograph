@@ -18,5 +18,5 @@
     "apps/**/*.ts",
     "packages/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "**/next-env.d.ts", "**/.next"]
 }
