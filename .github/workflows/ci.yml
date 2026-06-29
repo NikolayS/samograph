@@ -40,10 +40,11 @@ jobs:
   # DB-backed integration tests against an ephemeral Postgres service container
   # (no mocks — parity with prod migrations, SPEC §6.1). Applies the real
   # migrations and exercises RLS tenant isolation, the capability-token store
-  # (mint/verify/revoke against the real `tokens` table), and the tenancy gate
-  # (adversarial isolation + revoke-without-cache, §6.2 #4); tears down with the job.
+  # (mint/verify/revoke against the real `tokens` table), the bot-orchestrator,
+  # the magic-link Postgres user store, and the tenancy gate (adversarial
+  # isolation + revoke-without-cache, §6.2 #4); tears down with the job.
   postgres-smoke:
-    name: Postgres integration tests (migrations + RLS + tokens + auth gate)
+    name: Postgres integration tests (migrations + RLS + tokens + orchestrator + magic-link + auth gate)
     runs-on: ubuntu-latest
 
     services:
@@ -76,8 +77,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: DB integration tests (migrations + RLS + capability-token store + tenancy gate + orchestrator, no mocks)
-        run: bun test packages/shared/db packages/shared/tokens packages/shared/auth apps/bot-orchestrator
+      - name: DB integration tests (migrations + RLS + tokens + orchestrator + magic-link + tenancy gate, no mocks)
+        run: bun test packages/shared/db packages/shared/tokens apps/bot-orchestrator apps/app-api/auth/pg-user-store.test.ts packages/shared/auth
 
   # Label-gated single-tenant benchmark runner for the WS publisher-latency SLO
   # (SPEC §6.2 #3). The assertion only runs on a runner with single-tenant
