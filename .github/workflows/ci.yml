@@ -37,11 +37,11 @@ jobs:
       - name: Build CLI
         run: bun run build
 
-  # DB-backed integration smoke against an ephemeral Postgres service container
-  # (no mocks — parity with prod migrations, SPEC §6.1). Spins up, runs a
-  # migration no-op smoke, and tears down with the job.
+  # DB-backed integration tests against an ephemeral Postgres service container
+  # (no mocks — parity with prod migrations, SPEC §6.1). Applies the real
+  # migrations and exercises RLS tenant isolation; tears down with the job.
   postgres-smoke:
-    name: Postgres integration smoke
+    name: Postgres integration tests (migrations + RLS)
     runs-on: ubuntu-latest
 
     services:
@@ -66,15 +66,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Migration no-op smoke (spin up -> run -> tear down)
-        run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-            -c "SELECT 1 AS connectivity;" \
-            -c "CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());" \
-            -c "INSERT INTO schema_migrations (version) VALUES ('0000_noop_smoke') ON CONFLICT (version) DO NOTHING;" \
-            -c "SELECT count(*) AS applied_migrations FROM schema_migrations;" \
-            -c "DROP TABLE schema_migrations;"
-          echo "Postgres smoke OK — ephemeral service container tears down with the job."
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: DB integration tests (migrations apply + RLS isolation, no mocks)
+        run: bun test packages/shared/db
 
   # Label-gated single-tenant benchmark runner for the WS publisher-latency SLO
   # (SPEC §6.2 #3). The assertion only runs on a runner with single-tenant
