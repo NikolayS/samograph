@@ -2,6 +2,24 @@
 
 Use samograph to join a meeting, watch the live transcript, speak in meeting chat when asked, and capture the call view on demand.
 
+## API Key Setup
+
+samograph needs a Recall.ai API key. **Never inline the key in shell commands** — it will appear in shell logs and AI conversation transcripts.
+
+Store it once in the config file:
+
+```bash
+samograph config set recall-api-key <your-key>
+```
+
+samograph reads `~/.samograph/config.json` automatically on every invocation. The `RECALL_API_KEY` env var still takes precedence if set, but the config file means you never need to export it per session or pass it inline.
+
+To verify the key is stored:
+
+```bash
+samograph config get recall-api-key
+```
+
 ## Preferred Flow
 
 ```bash
