@@ -1,18 +1,28 @@
 "use client";
 
 import { useId, useRef, useState, type FormEvent } from "react";
-import { type AppApiClient, type Call } from "../lib/appApiClient.ts";
+import { AppApiError, type AppApiClient, type Call } from "../lib/appApiClient.ts";
 import { validateMeetingUrl } from "../lib/validateMeetingUrl.ts";
 
 export interface AddToCallFormProps {
   client: AppApiClient;
   /** Story-4 hook: pre-fill the paste input (e.g. after COULD_NOT_JOIN). */
   initialUrl?: string;
+  /** Called after a successful create so the dashboard can refresh its list. */
+  onCreated?: (call: Call) => void;
 }
 
 type Phase = "idle" | "creating" | "created" | "error";
 
-const REJECT_MESSAGE = "Enter a Zoom or Google Meet link.";
+/**
+ * Client-side reject copy, kept VERBATIM consistent with app-api's typed
+ * `SAMO-CALL-URL` message (apps/app-api/calls/errors.ts) so the user sees the
+ * same sentence whether the pre-flight check or the server rejects the URL.
+ */
+const REJECT_MESSAGE = "That doesn't look like a Zoom or Google Meet meeting link.";
+
+/** Last-resort copy when a create fails with no typed server message. */
+const GENERIC_ERROR = "Couldn't add samograph to that call. Try again.";
 
 /**
  * The dashboard shell's single primary action (SPEC §2, §3 Story 1): paste a
@@ -20,7 +30,7 @@ const REJECT_MESSAGE = "Enter a Zoom or Google Meet link.";
  * runs before the (future) `/calls` POST; on success the returned call's
  * `PENDING` status is rendered.
  */
-export function AddToCallForm({ client, initialUrl = "" }: AddToCallFormProps) {
+export function AddToCallForm({ client, initialUrl = "", onCreated }: AddToCallFormProps) {
   const inputId = useId();
   const urlRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -41,8 +51,11 @@ export function AddToCallForm({ client, initialUrl = "" }: AddToCallFormProps) {
       const created = await client.createCall({ meetingUrl: validation.url });
       setCall(created);
       setPhase("created");
-    } catch {
-      setError("Couldn't add samograph to that call. Try again.");
+      onCreated?.(created);
+    } catch (err) {
+      // Surface the server's typed `{code,message}` (e.g. SAMO-CALL-URL) instead
+      // of swallowing it behind a generic "Try again." (defect: typed errors).
+      setError(err instanceof AppApiError ? err.message : GENERIC_ERROR);
       setPhase("error");
     }
   }

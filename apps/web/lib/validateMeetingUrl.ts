@@ -25,6 +25,20 @@ function providerForHost(host: string): MeetingProvider | null {
   return null;
 }
 
+/**
+ * Best-effort provider for an already-validated meeting URL (e.g. a `meeting_url`
+ * read back from `GET /calls`). Returns `null` if the host is not recognized.
+ * Used by the app-api client to label `Call`s the server returns without a
+ * provider field; the URL was provider-validated server-side at creation.
+ */
+export function meetingProviderForUrl(url: string): MeetingProvider | null {
+  try {
+    return providerForHost(new URL(url.trim()).hostname.toLowerCase());
+  } catch {
+    return null;
+  }
+}
+
 export function validateMeetingUrl(input: string): MeetingUrlValidation {
   const trimmed = input.trim();
   if (trimmed === "") return { ok: false, reason: "empty" };

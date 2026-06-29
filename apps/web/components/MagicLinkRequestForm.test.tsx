@@ -45,7 +45,10 @@ describe("MagicLinkRequestForm", () => {
     submit(container);
 
     expect(await findByText("Check your email")).toBeDefined();
-    expect(client.requests).toEqual([
+    const magicLinkRequests = client.requests.filter(
+      (r) => r.path === "/auth/magic-link",
+    );
+    expect(magicLinkRequests).toEqual([
       {
         path: "/auth/magic-link",
         method: "POST",
@@ -55,5 +58,55 @@ describe("MagicLinkRequestForm", () => {
     expect(
       await findByText("We sent a sign-in link to dev@samograph.dev."),
     ).toBeDefined();
+  });
+
+  it("offers a resend affordance that re-POSTs the same email (SPEC §10 #7)", async () => {
+    const client = createFakeAppApiClient();
+    const { container, getByLabelText, findByText, getByText } = render(
+      <MagicLinkRequestForm client={client} />,
+    );
+    fireEvent.change(getByLabelText("Email"), {
+      target: { value: "dev@samograph.dev" },
+    });
+    submit(container);
+    await findByText("Check your email");
+    fireEvent.click(getByText("Resend link"));
+    await findByText("We sent a sign-in link to dev@samograph.dev.");
+    const sends = client.requests.filter((r) => r.path === "/auth/magic-link");
+    expect(sends).toHaveLength(2);
+    expect(sends.every((r) => r.body.email === "dev@samograph.dev")).toBe(true);
+  });
+
+  it("offers an alternate-email path back to the form (SPEC §10 #7)", async () => {
+    const client = createFakeAppApiClient();
+    const { container, getByLabelText, findByText, getByText } = render(
+      <MagicLinkRequestForm client={client} />,
+    );
+    fireEvent.change(getByLabelText("Email"), {
+      target: { value: "first@samograph.dev" },
+    });
+    submit(container);
+    await findByText("Check your email");
+    fireEvent.click(getByText("Use a different email"));
+    // Back on the form.
+    expect(getByLabelText("Email")).toBeDefined();
+    expect(getByText("Sign in to samograph")).toBeDefined();
+  });
+
+  it("DEV: surfaces the magic link inline when the __dev endpoint returns one", async () => {
+    const client = createFakeAppApiClient({
+      devMagicLink: "http://localhost:3000/auth/callback?token=dev-token",
+    });
+    const { container, getByLabelText, findByText } = render(
+      <MagicLinkRequestForm client={client} />,
+    );
+    fireEvent.change(getByLabelText("Email"), {
+      target: { value: "dev@samograph.dev" },
+    });
+    submit(container);
+    const link = (await findByText("open your sign-in link")) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe(
+      "http://localhost:3000/auth/callback?token=dev-token",
+    );
   });
 });

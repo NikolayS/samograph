@@ -12,7 +12,7 @@ function submit(container: HTMLElement) {
   fireEvent.submit(form);
 }
 
-const REJECT_MESSAGE = "Enter a Zoom or Google Meet link.";
+const REJECT_MESSAGE = "That doesn't look like a Zoom or Google Meet meeting link.";
 
 describe("AddToCallForm — the dashboard's single primary action", () => {
   it("renders the heading, paste input, and submit button", () => {
@@ -74,7 +74,7 @@ describe("AddToCallForm — the dashboard's single primary action", () => {
       {
         path: "/calls",
         method: "POST",
-        body: { meetingUrl: "https://meet.google.com/abc-defg-hij" },
+        body: { meeting_url: "https://meet.google.com/abc-defg-hij" },
       },
     ]);
   });
@@ -90,8 +90,44 @@ describe("AddToCallForm — the dashboard's single primary action", () => {
     submit(container);
     expect(await findByText("PENDING")).toBeDefined();
     expect(client.requests[0]?.body).toEqual({
-      meetingUrl: "https://zoom.us/j/123456789",
+      meeting_url: "https://zoom.us/j/123456789",
     });
+  });
+
+  it("surfaces the server's typed {code,message} on a server-side rejection", async () => {
+    // A URL that passes the client's loose pre-flight but the server rejects:
+    // the form must show the SERVER's message, not a generic "Try again."
+    const client = createFakeAppApiClient({
+      failCreateCallWith: {
+        code: "SAMO-CALL-URL",
+        message: "That doesn't look like a Zoom or Google Meet meeting link.",
+        status: 400,
+      },
+    });
+    const { container, getByLabelText, findByText } = render(
+      <AddToCallForm client={client} />,
+    );
+    fireEvent.change(getByLabelText("Meeting link"), {
+      target: { value: "https://meet.google.com/abc-defg-hij" },
+    });
+    submit(container);
+    expect(
+      await findByText("That doesn't look like a Zoom or Google Meet meeting link."),
+    ).toBeDefined();
+  });
+
+  it("calls onCreated with the PENDING call after a successful create", async () => {
+    const client = createFakeAppApiClient();
+    const created: string[] = [];
+    const { container, getByLabelText, findByText } = render(
+      <AddToCallForm client={client} onCreated={(c) => created.push(c.id)} />,
+    );
+    fireEvent.change(getByLabelText("Meeting link"), {
+      target: { value: "https://zoom.us/j/123456789" },
+    });
+    submit(container);
+    expect(await findByText("PENDING")).toBeDefined();
+    expect(created).toEqual(["call_1"]);
   });
 
   it("pre-fills the paste input from initialUrl (Story-4 hook)", () => {
