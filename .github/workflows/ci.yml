@@ -76,8 +76,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: DB integration tests (migrations + RLS + capability-token store, no mocks)
-        run: bun test packages/shared/db packages/shared/tokens
+      - name: DB integration tests (migrations + RLS + capability-token store + orchestrator, no mocks)
+        run: bun test packages/shared/db packages/shared/tokens apps/bot-orchestrator
 
   # Label-gated single-tenant benchmark runner for the WS publisher-latency SLO
   # (SPEC §6.2 #3). The assertion only runs on a runner with single-tenant

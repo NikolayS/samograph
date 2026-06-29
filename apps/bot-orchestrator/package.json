@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/bot-orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Bot-orchestrator: holds the shared Recall key, mints the per-call ingest_secret, creates the Recall bot, drives PENDING→JOINING (SPEC §4.1, §4.4, §5.2)."
+}

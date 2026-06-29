@@ -1,0 +1,225 @@
+/**
+ * Bot-orchestrator unit suite — no DB, no network (SPEC §6.1: the Recall fake is
+ * the only client). Exercises the §5.2 createBot path: mint a per-call
+ * `ingest_secret`, persist ONLY its SHA-256 hash, call createBot through a
+ * swappable `RecallClient` backed by `packages/test-fakes/recall`, and flip
+ * PENDING→JOINING. Exact-value assertions throughout.
+ */
+import { describe, it, expect } from "bun:test";
+import { createHash } from "node:crypto";
+import { createRecallFake, type RecallFake } from "../../packages/test-fakes/recall/index.ts";
+import {
+  BOT_NAME,
+  DEFAULT_REGION,
+  SERVICE_NAME,
+  buildWebhookUrl,
+  envSecretProvider,
+  generateIngestSecret,
+  ingestSecretHash,
+  inMemorySecretProvider,
+  orchestrateJoin,
+  pickRegion,
+  regionTunnelBase,
+  type CallStore,
+  type CreateBotRequest,
+  type RecallClient,
+} from "./index.ts";
+
+const CALL_ID = "11111111-1111-1111-1111-111111111111";
+const MEETING_URL = "https://meet.google.com/abc-defg-hij";
+
+/** A `RecallClient` backed by the deterministic Recall fake; captures the call. */
+function fakeRecall(
+  fake: RecallFake,
+  capture?: (c: { req: CreateBotRequest; webhookUrl: string }) => void,
+): RecallClient {
+  return {
+    async createBot(req: CreateBotRequest) {
+      const { id } = fake.createBot();
+      const webhookUrl = req.buildWebhookUrl(id);
+      capture?.({ req, webhookUrl });
+      return { id, webhookUrl };
+    },
+  };
+}
+
+interface RecordedCall {
+  method: "recordIngestSecret" | "markJoining";
+  args: string[];
+}
+
+/** In-memory `CallStore` that records every method + argument, in order. */
+function memStore(order: string[] = []) {
+  const recorded: RecordedCall[] = [];
+  const store: CallStore = {
+    async recordIngestSecret(callId, hash, region) {
+      order.push("recordIngestSecret");
+      recorded.push({ method: "recordIngestSecret", args: [callId, hash, region] });
+    },
+    async markJoining(callId, recallBotId) {
+      order.push("markJoining");
+      recorded.push({ method: "markJoining", args: [callId, recallBotId] });
+    },
+  };
+  return { store, recorded, order };
+}
+
+describe("bot-orchestrator service identity", () => {
+  it("names itself bot-orchestrator and defaults to the single v1 region us-east (§4.7)", () => {
+    expect(SERVICE_NAME).toBe("bot-orchestrator");
+    expect(DEFAULT_REGION).toBe("us-east");
+    expect(pickRegion()).toBe("us-east");
+  });
+});
+
+describe("ingest_secret minting (§4.2)", () => {
+  it("mints a high-entropy base64url secret (>=256 bits) that is unique per call", () => {
+    const secrets = new Set<string>();
+    for (let i = 0; i < 1000; i += 1) {
+      const s = generateIngestSecret();
+      // 32 random bytes → 43-char unpadded base64url string (256 bits of entropy).
+      expect(s).toMatch(/^[A-Za-z0-9_-]{43,}$/);
+      secrets.add(s);
+    }
+    // All 1000 distinct: no collisions, never a constant.
+    expect(secrets.size).toBe(1000);
+  });
+
+  it("hashes a secret with SHA-256 hex — known vector, and never equals the plaintext", () => {
+    // Exact, well-known SHA-256("test") vector pins the hash function precisely.
+    expect(ingestSecretHash("test")).toBe(
+      "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    );
+    const secret = generateIngestSecret();
+    const hash = ingestSecretHash(secret);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).not.toBe(secret);
+  });
+});
+
+describe("webhook URL shape (§5.2)", () => {
+  it("resolves the region tunnel base and embeds ?bot=<id>&t=<secret>", () => {
+    expect(regionTunnelBase("us-east")).toBe("https://us-east.tunnel.samograph.dev");
+    expect(buildWebhookUrl("https://us-east.tunnel.samograph.dev", "bot_abc", "sek")).toBe(
+      "https://us-east.tunnel.samograph.dev/webhook?bot=bot_abc&t=sek",
+    );
+  });
+});
+
+describe("orchestrateJoin — createBot path (§5.2, §5.3, §4.4)", () => {
+  it("mints secret, persists ONLY the hash, calls createBot, flips PENDING→JOINING", async () => {
+    const secret = "fixed-deterministic-ingest-secret-000000000";
+    const fake = createRecallFake({ seed: CALL_ID });
+    let captured: { req: CreateBotRequest; webhookUrl: string } | null = null;
+    const { store, recorded, order } = memStore();
+
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake, (c) => (captured = c)), store, generateSecret: () => secret },
+    );
+
+    const expectedHash = createHash("sha256").update(secret).digest("hex");
+
+    // Result reports the JOINING transition + the Recall-assigned bot id.
+    expect(result).toEqual({
+      callId: CALL_ID,
+      recallBotId: fake.botId,
+      region: "us-east",
+      status: "JOINING",
+      ingestSecretHash: expectedHash,
+    });
+
+    // Persistence is hash-only: the stored value is the SHA-256, never the plaintext.
+    expect(recorded[0]).toEqual({
+      method: "recordIngestSecret",
+      args: [CALL_ID, expectedHash, "us-east"],
+    });
+    expect(recorded[0].args[1]).not.toBe(secret);
+
+    // createBot was called with the canonical webhook_url embedding ?bot=<id>&t=<secret>.
+    expect(captured).not.toBeNull();
+    const cap = captured as unknown as { req: CreateBotRequest; webhookUrl: string };
+    expect(cap.req.meetingUrl).toBe(MEETING_URL);
+    expect(cap.req.botName).toBe(BOT_NAME);
+    expect(cap.webhookUrl).toBe(
+      `https://us-east.tunnel.samograph.dev/webhook?bot=${fake.botId}&t=${secret}`,
+    );
+    expect(cap.webhookUrl).toContain(`?bot=${fake.botId}&t=${secret}`);
+
+    // Ack → status flips to JOINING and records recall_bot_id (no workers row yet).
+    expect(recorded[1]).toEqual({
+      method: "markJoining",
+      args: [CALL_ID, fake.botId],
+    });
+
+    // §5.2 ordering: store hash, THEN createBot, THEN mark JOINING.
+    expect(order).toEqual(["recordIngestSecret", "markJoining"]);
+  });
+
+  it("never persists, returns, or logs the plaintext ingest_secret (§4.2)", async () => {
+    const secret = generateIngestSecret();
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store, recorded } = memStore();
+    const logs: string[] = [];
+
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      {
+        recall: fakeRecall(fake),
+        store,
+        generateSecret: () => secret,
+        logger: { info: (event, fields) => logs.push(`${event} ${JSON.stringify(fields ?? {})}`) },
+      },
+    );
+
+    // Never RETURNED: no result value carries the plaintext.
+    expect(Object.values(result)).not.toContain(secret);
+    // Never PERSISTED: no stored argument is the plaintext.
+    const persisted = recorded.flatMap((r) => r.args);
+    expect(persisted).not.toContain(secret);
+    expect(persisted).toContain(ingestSecretHash(secret)); // the hash IS persisted
+    // Never LOGGED: progress IS logged, but the secret never appears in it.
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.join("\n")).not.toContain(secret);
+  });
+
+  it("mints a UNIQUE ingest_secret per call (two calls → two distinct hashes)", async () => {
+    const fakeA = createRecallFake({ seed: "call-A" });
+    const fakeB = createRecallFake({ seed: "call-B" });
+    const a = memStore();
+    const b = memStore();
+
+    const resA = await orchestrateJoin(
+      { callId: "call-A", meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fakeA), store: a.store },
+    );
+    const resB = await orchestrateJoin(
+      { callId: "call-B", meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fakeB), store: b.store },
+    );
+
+    expect(resA.ingestSecretHash).not.toBe(resB.ingestSecretHash);
+    expect(resA.ingestSecretHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(resB.ingestSecretHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("shared Recall key boundary (§4.4)", () => {
+  it("inMemorySecretProvider returns the configured key", async () => {
+    expect(await inMemorySecretProvider("recall-key-xyz").recallApiKey()).toBe("recall-key-xyz");
+  });
+
+  it("envSecretProvider reads RECALL_API_KEY and throws cleanly when unset", async () => {
+    const prev = process.env.RECALL_API_KEY;
+    try {
+      process.env.RECALL_API_KEY = "env-recall-key";
+      expect(await envSecretProvider().recallApiKey()).toBe("env-recall-key");
+
+      delete process.env.RECALL_API_KEY;
+      await expect(envSecretProvider().recallApiKey()).rejects.toThrow(/RECALL_API_KEY/);
+    } finally {
+      if (prev === undefined) delete process.env.RECALL_API_KEY;
+      else process.env.RECALL_API_KEY = prev;
+    }
+  });
+});
