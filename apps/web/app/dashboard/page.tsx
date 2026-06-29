@@ -1,14 +1,16 @@
 "use client";
 
-import { AddToCallForm } from "../../components/AddToCallForm.tsx";
+import { useRouter } from "next/navigation";
+import { Dashboard } from "../../components/Dashboard.tsx";
 import { createHttpAppApiClient } from "../../lib/appApiClient.ts";
 
 const client = createHttpAppApiClient();
 
 export default function DashboardPage() {
+  const router = useRouter();
   return (
     <main>
-      <AddToCallForm client={client} />
+      <Dashboard client={client} redirect={(path) => router.replace(path)} />
     </main>
   );
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { StrictMode } from "react";
 import { render } from "@testing-library/react";
 import { MagicLinkCallback } from "./MagicLinkCallback.tsx";
 import { createFakeAppApiClient } from "../lib/fakeAppApiClient.ts";
@@ -56,6 +57,22 @@ describe("MagicLinkCallback", () => {
       expect(await findByText(message)).toBeDefined();
     });
   }
+
+  it("verifies a single-use token EXACTLY once under StrictMode double-invoke", async () => {
+    // React StrictMode (enabled in next.config) double-invokes effects in dev:
+    // setup → cleanup → setup on the same instance. Against a single-use magic
+    // link, a second verify races and intermittently 401s ("already used"). The
+    // callback must guard the double-invoke so verify fires once.
+    const client = createFakeAppApiClient();
+    const { findByText } = render(
+      <StrictMode>
+        <MagicLinkCallback token="one-shot-token" client={client} />
+      </StrictMode>,
+    );
+    expect(await findByText("You're signed in.")).toBeDefined();
+    const verifyCalls = client.requests.filter((r) => r.path === "/auth/callback");
+    expect(verifyCalls).toHaveLength(1);
+  });
 
   it("offers a 'Request a new link' affordance on failure", async () => {
     const client = createFakeAppApiClient({

@@ -19,3 +19,6 @@ bun.lock
 # Demo recordings (generated, not committed)
 demo/*.cast
 demo/*.gif
+
+# Local dev stack runtime (scripts/dev-local.sh) — logs + pids, never committed
+.dev-local/

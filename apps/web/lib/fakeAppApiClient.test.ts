@@ -51,7 +51,7 @@ describe("FakeAppApiClient — records request shape, no network", () => {
       {
         path: "/calls",
         method: "POST",
-        body: { meetingUrl: "https://meet.google.com/abc-defg-hij" },
+        body: { meeting_url: "https://meet.google.com/abc-defg-hij" },
       },
     ]);
   });
@@ -65,7 +65,7 @@ describe("FakeAppApiClient — records request shape, no network", () => {
     expect(second.provider).toBe("zoom");
   });
 
-  it("createCall throws a typed error for an invalid meeting URL", async () => {
+  it("createCall throws app-api's typed SAMO-CALL-URL for an invalid meeting URL", async () => {
     const client = createFakeAppApiClient();
     let thrown: unknown;
     try {
@@ -74,6 +74,41 @@ describe("FakeAppApiClient — records request shape, no network", () => {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(AppApiError);
-    expect((thrown as AppApiError).code).toBe("SAMO-CALL-JOIN");
+    expect((thrown as AppApiError).code).toBe("SAMO-CALL-URL");
+    expect((thrown as AppApiError).message).toBe(
+      "That doesn't look like a Zoom or Google Meet meeting link.",
+    );
+  });
+
+  it("listCalls returns created calls newest-first and survives a 'reload'", async () => {
+    const client = createFakeAppApiClient();
+    await client.createCall({ meetingUrl: "https://meet.google.com/abc-defg-hij" });
+    await client.createCall({ meetingUrl: "https://zoom.us/j/123456789" });
+    const listed = await client.listCalls();
+    expect(listed.map((c) => c.id)).toEqual(["call_2", "call_1"]);
+    // A fresh client seeded from the same rows (a "reload") still lists them.
+    const reloaded = createFakeAppApiClient({ seedCalls: listed });
+    expect((await reloaded.listCalls()).map((c) => c.id)).toEqual(["call_2", "call_1"]);
+  });
+
+  it("listCalls rejects with the configured typed error (auth-gate path)", async () => {
+    const client = createFakeAppApiClient({
+      failListCallsWith: { code: "SAMO-CALL-LIST", message: "no session", status: 401 },
+    });
+    let thrown: unknown;
+    try {
+      await client.listCalls();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(AppApiError);
+    expect((thrown as AppApiError).status).toBe(401);
+  });
+
+  it("lastDevMagicLink returns the configured dev link or null", async () => {
+    const withLink = createFakeAppApiClient({ devMagicLink: "http://x/auth/callback?token=t" });
+    expect(await withLink.lastDevMagicLink("a@b.dev")).toBe("http://x/auth/callback?token=t");
+    const without = createFakeAppApiClient();
+    expect(await without.lastDevMagicLink("a@b.dev")).toBeNull();
   });
 });

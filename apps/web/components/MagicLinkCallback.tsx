@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppApiError, type AppApiClient } from "../lib/appApiClient.ts";
 import { authErrorMessage } from "../lib/authErrors.ts";
 
@@ -27,22 +27,23 @@ export function MagicLinkCallback({ token, client }: MagicLinkCallbackProps) {
       : { phase: "error", message: authErrorMessage("SAMO-AUTH-001") },
   );
 
+  // The magic-link token is SINGLE-USE: a second verify of the same token 401s
+  // ("already used"). React StrictMode double-invokes effects in dev (setup →
+  // cleanup → setup on the same instance, so this ref persists), which would
+  // otherwise fire a second, racing verify. Guard so each token verifies once.
+  const verifiedTokenRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!token) return;
-    let active = true;
+    if (verifiedTokenRef.current === token) return;
+    verifiedTokenRef.current = token;
     client.verifyMagicLink(token).then(
-      () => {
-        if (active) setState({ phase: "success" });
-      },
+      () => setState({ phase: "success" }),
       (err: unknown) => {
-        if (!active) return;
         const code = err instanceof AppApiError ? err.code : "";
         setState({ phase: "error", message: authErrorMessage(code) });
       },
     );
-    return () => {
-      active = false;
-    };
   }, [token, client]);
 
   if (state.phase === "verifying") {
