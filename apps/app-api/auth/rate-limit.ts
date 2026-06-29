@@ -20,16 +20,30 @@ export interface RateLimiter {
   hit(key: string, limit: number, windowMs: number, now: number): Promise<RateDecision>;
 }
 
-/** In-memory sliding-window limiter (per-key timestamp ring). */
+/** In-memory sliding-window limiter (per-key timestamp list). */
 export class InMemoryRateLimiter implements RateLimiter {
   private readonly hits = new Map<string, number[]>();
 
   async hit(
-    _key: string,
-    _limit: number,
-    _windowMs: number,
-    _now: number,
+    key: string,
+    limit: number,
+    windowMs: number,
+    now: number,
   ): Promise<RateDecision> {
-    throw new Error("not implemented: InMemoryRateLimiter.hit");
+    const cutoff = now - windowMs;
+    // Keep only the timestamps still inside the sliding window.
+    const live = (this.hits.get(key) ?? []).filter((ts) => ts > cutoff);
+
+    if (live.length >= limit) {
+      // Blocked. A blocked attempt does NOT consume a slot, so the counter is
+      // never inflated past `limit`; the window frees up when the oldest expires.
+      this.hits.set(key, live);
+      const retryAfterMs = live[0] + windowMs - now;
+      return { allowed: false, remaining: 0, retryAfterMs };
+    }
+
+    live.push(now);
+    this.hits.set(key, live);
+    return { allowed: true, remaining: limit - live.length, retryAfterMs: 0 };
   }
 }

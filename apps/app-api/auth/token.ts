@@ -8,12 +8,14 @@
  *     base64url(payloadJson) "." base64url(hmac)
  *
  * The payload carries `{kid, jti, email, iat, exp}`. Verification recomputes the
- * HMAC under the payload's KID and compares it CONSTANT-TIME, then checks `exp`
- * against the injected clock. Single-use / supersession is enforced separately
- * by the server-side store keyed on `jti` (see stores.ts); the token itself is
- * stateless.
+ * HMAC over the RECEIVED payload segment (no re-serialization → no
+ * canonicalization gap) under the payload's KID and compares it CONSTANT-TIME,
+ * then checks `exp` against the injected clock. Single-use / supersession is
+ * enforced separately by the server-side store keyed on `jti` (see stores.ts);
+ * the token itself is stateless.
  */
 import type { AuthErrorCode } from "./types.ts";
+import { base64url, fromBase64url, constantTimeEqual } from "./crypto.ts";
 import type { SigningKeyring } from "./keyring.ts";
 
 /** Time-to-live for a magic link: 15 minutes (SPEC §5.1). */
@@ -40,11 +42,42 @@ export type VerifyResult =
   | { ok: false; code: AuthErrorCode };
 
 /** Mint a signed magic-link token (signed with the keyring's current KID). */
-export function issueMagicLinkToken(_opts: IssueOptions): {
+export function issueMagicLinkToken(opts: IssueOptions): {
   token: string;
   claims: MagicLinkClaims;
 } {
-  throw new Error("not implemented: issueMagicLinkToken");
+  const ttl = opts.ttlMs ?? MAGIC_LINK_TTL_MS;
+  const claims: MagicLinkClaims = {
+    kid: opts.keyring.currentKid,
+    jti: opts.jti,
+    email: opts.email,
+    iat: opts.now,
+    exp: opts.now + ttl,
+  };
+  const payloadB64 = base64url(JSON.stringify(claims));
+  const sig = opts.keyring.sign(payloadB64, claims.kid);
+  return { token: `${payloadB64}.${base64url(sig)}`, claims };
+}
+
+function parseClaims(payloadB64: string): MagicLinkClaims | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fromBase64url(payloadB64).toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const c = parsed as Record<string, unknown>;
+  if (
+    typeof c.kid !== "string" ||
+    typeof c.jti !== "string" ||
+    typeof c.email !== "string" ||
+    typeof c.iat !== "number" ||
+    typeof c.exp !== "number"
+  ) {
+    return null;
+  }
+  return { kid: c.kid, jti: c.jti, email: c.email, iat: c.iat, exp: c.exp };
 }
 
 /**
@@ -54,8 +87,25 @@ export function issueMagicLinkToken(_opts: IssueOptions): {
  * NOT decided here (that needs the store).
  */
 export function verifyMagicLinkToken(
-  _token: string,
-  _opts: { keyring: SigningKeyring; now: number },
+  token: string,
+  opts: { keyring: SigningKeyring; now: number },
 ): VerifyResult {
-  throw new Error("not implemented: verifyMagicLinkToken");
+  const parts = token.split(".");
+  if (parts.length !== 2) return { ok: false, code: "SAMO-AUTH-001" };
+  const [payloadB64, sigB64] = parts;
+
+  const claims = parseClaims(payloadB64);
+  if (!claims) return { ok: false, code: "SAMO-AUTH-001" };
+
+  // Unknown / tampered KID — reject before touching any secret.
+  if (!opts.keyring.accepts(claims.kid)) return { ok: false, code: "SAMO-AUTH-001" };
+
+  const expected = opts.keyring.sign(payloadB64, claims.kid);
+  const actual = fromBase64url(sigB64);
+  if (!constantTimeEqual(expected, actual)) return { ok: false, code: "SAMO-AUTH-001" };
+
+  // Signature is valid → the signed `exp` is trustworthy. exp is exclusive.
+  if (opts.now >= claims.exp) return { ok: false, code: "SAMO-AUTH-002" };
+
+  return { ok: true, claims };
 }

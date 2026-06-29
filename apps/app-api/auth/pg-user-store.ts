@@ -11,12 +11,33 @@
  */
 import type { SQL } from "bun";
 import type { AuthUser } from "./types.ts";
-import type { UserStore } from "./stores.ts";
+import { normalizeEmail, type UserStore } from "./stores.ts";
 
 export class PostgresUserStore implements UserStore {
   constructor(private readonly sql: SQL) {}
 
-  async createOrLoadUser(_email: string): Promise<AuthUser> {
-    throw new Error("not implemented: PostgresUserStore.createOrLoadUser");
+  async createOrLoadUser(email: string): Promise<AuthUser> {
+    const norm = normalizeEmail(email);
+    let userId!: string;
+    let tenantId!: string;
+
+    await this.sql.begin(async (tx) => {
+      // Idempotent upsert: the no-op DO UPDATE makes RETURNING fire whether the
+      // row was just inserted or already existed.
+      const users = await tx`
+        INSERT INTO users (email) VALUES (${norm})
+        ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+        RETURNING id`;
+      userId = users[0].id as string;
+
+      // 1:1 tenant per user (owner_user_id is UNIQUE).
+      await tx`
+        INSERT INTO tenants (owner_user_id) VALUES (${userId})
+        ON CONFLICT (owner_user_id) DO NOTHING`;
+      const tenants = await tx`SELECT id FROM tenants WHERE owner_user_id = ${userId}`;
+      tenantId = tenants[0].id as string;
+    });
+
+    return { id: userId, email: norm, tenantId };
   }
 }

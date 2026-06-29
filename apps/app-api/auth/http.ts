@@ -10,15 +10,70 @@
  * it) for the per-IP rate limit.
  */
 import type { AuthService } from "./service.ts";
+import { AUTH_ERRORS } from "./errors.ts";
 
 /** Extract the caller IP for rate limiting (X-Forwarded-For first hop). */
-export function clientIp(_req: Request): string {
-  throw new Error("not implemented: clientIp");
+export function clientIp(req: Request): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) {
+    const first = xff.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  const direct = req.headers.get("cf-connecting-ip");
+  if (direct) return direct.trim();
+  return "unknown";
 }
 
 /** Build the Request→Response handler for /auth/magic-link and /auth/callback. */
 export function createAuthHandler(
-  _service: AuthService,
+  service: AuthService,
 ): (req: Request) => Promise<Response> {
-  throw new Error("not implemented: createAuthHandler");
+  return async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+
+    if (req.method === "POST" && url.pathname === "/auth/magic-link") {
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        body = null;
+      }
+      const email = (body as { email?: unknown } | null)?.email;
+      if (typeof email !== "string" || email.trim().length === 0) {
+        return Response.json({ error: "email is required" }, { status: 400 });
+      }
+
+      const result = await service.requestMagicLink({ email, ip: clientIp(req) });
+      if (result.ok) {
+        // Always 200 regardless of whether the account exists (no enumeration).
+        return Response.json({ ok: true }, { status: 200 });
+      }
+      const info = AUTH_ERRORS[result.code];
+      return new Response(
+        JSON.stringify({ code: info.code, message: info.message, retryable: info.retryable }),
+        {
+          status: info.httpStatus,
+          headers: {
+            "content-type": "application/json",
+            "retry-after": String(result.retryAfterSec),
+          },
+        },
+      );
+    }
+
+    if (req.method === "GET" && url.pathname === "/auth/callback") {
+      const token = url.searchParams.get("token");
+      // Missing token and any verification failure both return 401 with NO body
+      // (no leak of which check failed — SPEC §5.1).
+      if (!token) return new Response(null, { status: 401 });
+      const result = await service.callback(token);
+      if (!result.ok) return new Response(null, { status: result.status });
+      return new Response(null, {
+        status: 200,
+        headers: { "set-cookie": result.setCookie! },
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  };
 }

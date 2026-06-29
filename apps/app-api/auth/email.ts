@@ -22,12 +22,15 @@ export interface EmailSender {
 export class InMemoryEmailSender implements EmailSender {
   readonly sent: MagicLinkEmail[] = [];
 
-  async sendMagicLink(_email: MagicLinkEmail): Promise<void> {
-    throw new Error("not implemented: sendMagicLink");
+  async sendMagicLink(email: MagicLinkEmail): Promise<void> {
+    this.sent.push(email);
   }
 
   /** Most recently "sent" link for an address, or undefined. */
-  lastFor(_to: string): MagicLinkEmail | undefined {
-    throw new Error("not implemented: lastFor");
+  lastFor(to: string): MagicLinkEmail | undefined {
+    for (let i = this.sent.length - 1; i >= 0; i--) {
+      if (this.sent[i].to === to) return this.sent[i];
+    }
+    return undefined;
   }
 }
