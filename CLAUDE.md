@@ -115,13 +115,30 @@ samograph leave
 
 Every pull request must pass our review gate before it is merged. The gate is
 [Tanya301/samorev](https://github.com/Tanya301/samorev) — a CLI-first code-review
-tool. **Do not merge a PR unless both of the following are satisfied:**
+tool. **Do not merge a PR unless all of the following are satisfied:**
 
 1. **CI is green** — all CI/test checks pass (locally: `bun test` and
    `bunx tsc --noEmit` clean).
 2. **samorev review passed and is posted as a PR comment** — run the gate and
    post its result to the PR. A merge is blocked if either check is missing,
    failing, or was forgotten.
+3. **The samorev PASS is on the exact commit you are merging — re-review after ANY
+   post-review commit.** A samorev review is bound to the head SHA it ran against.
+   If *any* commit lands after that PASS — a fix, an amend, a rebase, a
+   conflict-resolution `Merge origin/main`, or any other push — **the prior review
+   is VOID.** You MUST re-run samorev on the new HEAD and get a fresh PASS comment
+   **before** merging. **Never merge when the PR's head SHA is newer than the latest
+   samorev PASS comment.** Pre-merge check, every single time:
+
+   ```bash
+   gh pr view <n> --json headRefOid --jq .headRefOid   # the SHA you are about to merge
+   # must equal the commit the latest samorev PASS comment ran against, AND CI must be green on it
+   ```
+
+   This closes the real gap where a reviewed PR is changed and then merged
+   unreviewed (e.g. a `ci.yml` conflict-merge pushed after PASS — exactly what
+   slipped through on PRs #53/#54/#55). CI being green on the new head is **not**
+   a substitute for re-running samorev — code analysis must see the merged code.
 
 ```bash
 # Deterministic gate (CI status + draft state) — posts a PASS/FAIL comment:
@@ -168,9 +185,9 @@ Every PR walks this loop in order *(merged from rpg's "no exceptions" sequence +
    ```
    For real code analysis run the `/review-mr` slash command (or spawn the samorev Security + Bug-Hunter agents — both **blocking**) and post the combined verdict. **BLOCKING findings must be fixed and re-reviewed; NON-BLOCKING / POTENTIAL / INFO count as a PASS.** Ignore SOC2 findings (this project does not need them). *(rpg severity model + pgque "ignore SOC2".)*
 3. **Actual testing where it makes sense, evidence posted.** Walk the change as a new user / exercise it live (not just unit output) and paste commands + output (+ screenshots for UI) as a PR comment. *(pgque step 3; rpg "built-from-branch" evidence.)*
-4. **Approve → squash-merge → delete the branch.** `gh pr merge <n> --squash`. If steps 1–3 are not all clean, return a concrete fix list and **LOOP from step 1** on the next push. *(rpg squash; pgque loop + delete-branch.)*
+4. **Re-confirm the review is on the current head, then approve → squash-merge → delete the branch.** Before `gh pr merge <n> --squash`, verify the PR's head SHA equals the commit the latest samorev PASS ran against (Merge Gate condition 3) — **any commit pushed after the review, including a conflict-resolution merge, voids it and forces a re-run of step 2 on the new HEAD.** If steps 1–3 are not all clean (or a new commit landed), return a concrete fix list and **LOOP from step 1** on the next push. *(rpg squash; pgque loop + delete-branch.)*
 
-**No merge without review.** A merge is blocked if CI is missing/red, the samorev comment is missing, or live-test evidence is missing where it was warranted. *(pg_ash: "Never merge without explicit approval from the project owner.")* Human owner approval is required for merge.
+**No merge without a review of the merged commit.** A merge is blocked if CI is missing/red, the samorev comment is missing, **the samorev PASS is older than the head commit** (Merge Gate condition 3), or live-test evidence is missing where it was warranted. *(pg_ash: "Never merge without explicit approval from the project owner.")* Human owner approval is required for merge.
 
 ### Labels & issues
 - **Track labels:** `foundation`, `backend`, `call-path`, `frontend`, `security`, `sre`. **Process labels:** `engineer` (owned by an engineer agent), `reviewer` (awaiting samorev review), `tdd`, `spec`, `tests`, `sprint-v1.0`. Standard GitHub set (`bug`, `enhancement`, `documentation`, `security`) retained. *(pgque label model + rpg sprint-label model — we track sprints via labels, not GitHub milestones.)*
