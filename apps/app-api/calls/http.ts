@@ -13,14 +13,19 @@
  * filtering — enforces isolation even if the route logic has a bug. A superuser
  * connection would BYPASS RLS and defeat the gate.
  */
+import { createHash } from "node:crypto";
 import type { SQL } from "bun";
 import type { Keyring } from "../../../packages/shared/tokens/signing.ts";
+import { mintShareToken, revokeToken } from "../../../packages/shared/tokens/store.ts";
 import { setTenant } from "../../../packages/shared/db/client.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../../packages/shared/auth/index.ts";
 import { verifySession, SESSION_COOKIE_NAME } from "../auth/session.ts";
 import type { OrchestratorJob } from "../../bot-orchestrator/index.ts";
 import { validateMeetingUrl } from "./validate.ts";
 import { errorResponse, CALL_URL_INVALID } from "./errors.ts";
+
+/** Default TTL for a minted share token's `expires_at` (§5.7): 30 days. */
+const DEFAULT_SHARE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** Injected collaborators for the `/calls` handler. */
 export interface CallsHandlerDeps {
@@ -30,8 +35,14 @@ export interface CallsHandlerDeps {
   sessionSecret: string;
   /** The bot-orchestrator seam: enqueue a join job for the new call (§5.2). */
   enqueue: (job: OrchestratorJob) => void | Promise<void>;
-  /** Token-verification keyring for the gate's share/agent path (out of scope here). */
+  /**
+   * Capability-token keyring: the gate's share/agent verify path AND the signer
+   * for share tokens minted by `POST /calls/:id/share` (`keyring.current` signs).
+   * A real keyring is required for the share routes.
+   */
   keyring?: Keyring;
+  /** TTL (seconds) for a minted share token's `expires_at`; defaults to 30 days. */
+  shareTtlSeconds?: number;
   /** Epoch-ms clock; defaults to the wall clock. */
   now?: () => number;
 }
@@ -71,6 +82,23 @@ function readCookie(req: Request, name: string): string | null {
   return null;
 }
 
+/**
+ * Does the request present a `share` capability credential (a `?token=` query or
+ * an `Authorization: Bearer …` header)? Owner-only routes use this to answer a
+ * share-credential attempt with 403 (it must never mint/revoke) while a truly
+ * anonymous request gets 401.
+ */
+function hasShareCredential(req: Request, url: URL): boolean {
+  if ((url.searchParams.get("token") ?? "").length > 0) return true;
+  const auth = req.headers.get("authorization");
+  return auth !== null && /^Bearer\s+.+/i.test(auth.trim());
+}
+
+/** sha256-hex over a value — the audit `payload_sha256` of a token id (never the secret). */
+function sha256hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 /** The single bodyless 401 for an authentication failure (§5.1). */
 function unauthenticated(): Response {
   return new Response(null, { status: 401 });
@@ -87,6 +115,8 @@ export function createCallsHandler(
 ): (req: Request) => Promise<Response> {
   const { sql, sessionSecret, enqueue } = deps;
   const keyring = deps.keyring ?? PLACEHOLDER_KEYRING;
+  const shareTtlSeconds = deps.shareTtlSeconds ?? DEFAULT_SHARE_TTL_SECONDS;
+  const nowSec = (): number | undefined => (deps.now ? Math.floor(deps.now() / 1000) : undefined);
 
   const gateDeps: AuthorizeDeps = {
     keyring,
@@ -160,6 +190,68 @@ export function createCallsHandler(
         return rows.map(serializeCall);
       });
       return Response.json({ calls }, { status: 200 });
+    }
+
+    // ── POST /calls/:id/share — owner mints a `share` capability token (§5.7) ──
+    // Owner-only: minting is authorized purely through the SESSION path of the gate
+    // (the share scope is NEVER allowed to mint). A request with a share credential
+    // but no session → 403; a fully anonymous request → 401.
+    const shareMatch = url.pathname.match(/^\/calls\/([^/]+)\/share$/);
+    if (req.method === "POST" && shareMatch) {
+      const callId = decodeURIComponent(shareMatch[1]);
+      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
+
+      const minted = await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        // Session path of the gate; a cross-tenant call_id falls through to DENY.
+        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        if (!authz.authorized || !authz.scopes.includes("read")) return null;
+        // Mint under the call's tenant (RLS-scoped insert) + audit (token id, not secret).
+        const m = await mintShareToken(tx as unknown as SQL, {
+          callId,
+          signingKey: keyring.current,
+          ttlSeconds: shareTtlSeconds,
+          now: nowSec(),
+        });
+        await tx`
+          INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
+          VALUES (${authz.tenantId}, ${callId}, ${`user:${claims.userId}`}, 'share.mint', ${sha256hex(m.jti)})`;
+        return m;
+      });
+      if (!minted) return denied();
+      return Response.json(
+        { token: minted.token, token_id: minted.jti, url: `/c/${minted.token}` },
+        { status: 201 },
+      );
+    }
+
+    // ── DELETE /calls/:id/share/:tokenId — owner revokes (idempotent; §5.7) ────
+    // The ≤ 1 s revoke SLO is satisfied by the no-cache verifier on the WS path —
+    // this route introduces NO caching; it only stamps `revoked_at`.
+    const revokeMatch = url.pathname.match(/^\/calls\/([^/]+)\/share\/([^/]+)$/);
+    if (req.method === "DELETE" && revokeMatch) {
+      const callId = decodeURIComponent(revokeMatch[1]);
+      const tokenId = decodeURIComponent(revokeMatch[2]);
+      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
+
+      const outcome = await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        if (!authz.authorized || !authz.scopes.includes("read")) return { authorized: false as const };
+        // RLS scopes the revoke to the owner's tenant: a cross-tenant jti is invisible
+        // → 0 rows → false (no-op). Audit ONLY a successful flip → idempotent.
+        const did = await revokeToken(tx as unknown as SQL, tokenId, { now: nowSec() });
+        if (did) {
+          await tx`
+            INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
+            VALUES (${authz.tenantId}, ${callId}, ${`user:${claims.userId}`}, 'share.revoke', ${sha256hex(tokenId)})`;
+        }
+        return { authorized: true as const };
+      });
+      if (!outcome.authorized) return denied();
+      return new Response(null, { status: 204 });
     }
 
     // ── GET /calls/:id — read one call, authorized by the tenancy gate (§5.6) ─
