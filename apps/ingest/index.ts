@@ -43,6 +43,31 @@ export {
   type TranscriptPipelineDeps,
 } from "./transcriptPipeline.ts";
 
+// The §5.2 bot-lifecycle: validated bot.status_change → calls.status transition
+// (silent-call → IN_CALL), the §5.9 in-call recording disclosure (post once on
+// in_call_recording only; leave on in_call_not_recording), per-call status
+// control frames, audit entries, and the §6.2 #8 pickup-latency SLO (#79).
+// `createBotLifecycle(...).dispatch` is the typed seam the webhook front door
+// subscribes to alongside the transcript pipeline (compose with `composeDispatch`).
+export {
+  createBotLifecycle,
+  composeDispatch,
+  inMemoryBotWorker,
+  inMemoryBotLifecycleMetrics,
+  mapLifecycleCode,
+  pickupLatencyPercentiles,
+  DISCLOSURE_TEXT,
+  SAMO_CALL_JOIN,
+  SAMO_CALL_NOREC,
+  SAMO_CALL_REMOVED,
+  type BotLifecycle,
+  type BotLifecycleDeps,
+  type BotLifecycleMetrics,
+  type BotWorkerPort,
+  type LifecycleTransition,
+  type PickupLatencyPercentiles,
+} from "./botLifecycle.ts";
+
 export const SERVICE_NAME = "ingest";
 
 export function handler(request: Request): Response {
