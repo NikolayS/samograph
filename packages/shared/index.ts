@@ -13,6 +13,20 @@ export {
   sanitizeTranscriptField,
 } from "./transcript/index.ts";
 
+// Per-call transcript pub/sub fan-out port (#78, SPEC §5.5 / §5.11): the seam
+// ingest/watchdog/lifecycle publish onto and ws-hub consumes, with an in-memory
+// fake + a Postgres LISTEN/NOTIFY impl keyed per call_id.
+export {
+  InMemoryTranscriptPublisher,
+  PgListenNotifyPublisher,
+  createInMemoryTranscriptPublisher,
+  transcriptChannel,
+  type TranscriptControlFrame,
+  type TranscriptFrame,
+  type TranscriptLineFrame,
+  type TranscriptPublisher,
+} from "./transcript/publisher.ts";
+
 // Capability token generator/verifier (#40, SPEC §5.7 / §6.2 #2). Pure signer
 // + the persisted-token store (HMAC-SHA256, KID rotation, jti-unique replay
 // prevention, constant-time verify; `share`/`act:*` persisted, `read` never).

@@ -78,8 +78,16 @@ export interface ValidatedEvent {
   payload: { event: string; data: unknown };
 }
 
-/** The typed seam the pipeline (#78) and lifecycle (#79) issues subscribe to. */
-export type Dispatch = (event: ValidatedEvent) => Promise<void> | void;
+/**
+ * The typed seam the pipeline (#78) and lifecycle (#79) issues subscribe to.
+ *
+ * `tx` is the open dedup transaction (tenant context already set): a subscriber
+ * does its persistence on it so its writes commit ATOMICALLY with the dedup row
+ * — a throw rolls both back and Recall legitimately re-delivers, while a commit
+ * is exactly-once. Threading `tx` is what makes "dispatch runs inside the tx"
+ * actually deliverable for DB-writing subscribers like #78.
+ */
+export type Dispatch = (tx: SQL, event: ValidatedEvent) => Promise<void> | void;
 
 export interface WebhookHandlerDeps {
   /** Single per-region webhook secret (mirrors bot-orchestrator's envSecretProvider). */
@@ -225,7 +233,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
         ON CONFLICT (bot_id, recall_event_id) DO NOTHING
         RETURNING 1 AS ok`) as unknown as unknown[];
       if (inserted.length > 0) {
-        await deps.dispatch(validated);
+        await deps.dispatch(tx, validated);
       }
     });
 
