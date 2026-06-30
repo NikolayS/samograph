@@ -61,6 +61,32 @@ samograph presence idle
 
 Presence is in-memory runtime state for lightweight in-call signaling, not persistent memory. Transcript lines appear on the camera page automatically as "heard" activity without changing the state you set. Bare state toggles (no message) switch the state with its default message and do not add a Comments entry; only explicit messages appear in the Comments lane.
 
+### Realtime Avatar (`--presence-bg avatar`)
+
+Instead of a static/animated background, the bot camera can show a realtime, lip-synced talking head (from a persona photo, via Anam). Join with the avatar by setting a persona and `ANAM_API_KEY` in the env:
+
+```bash
+export ANAM_API_KEY=...   # read server-side at session-mint time; never reaches the page
+samograph join "https://meet.google.com/..." --presence-bg avatar --anam-persona <PERSONA_ID>
+```
+
+Setting `--anam-persona` (or `SAMOGRAPH_ANAM_PERSONA_ID`) defaults `--presence-bg` to `avatar`, so the explicit `--presence-bg avatar` is optional once a persona is set.
+
+**`samograph presence speaking "text"` is what makes the avatar actually speak that text aloud**, in the persona's voice — this is the key operational link. The other states (`listening|thinking|acting|idle`) change the on-camera state but produce no speech. It is fully agent-driven: the agent decides every word, and Anam's own LLM brain is off, so the avatar only says what you send.
+
+```bash
+samograph presence speaking "Caught up on the migration thread — shadow replay first sounds right"
+```
+
+Override the voice at mint time (without re-publishing the persona) with `--anam-voice <VOICE_ID>` (or `SAMOGRAPH_ANAM_VOICE_ID`).
+
+Operational gotchas:
+
+- **Start `samograph watch` immediately after joining**, same as the normal flow — without it the agent does not react to what is said and the bot feels deaf.
+- On Anam's free tier the session is time-limited and may drop mid-call (the camera goes to a static-avatar/black fallback); re-join to restore it. The free tier is also single-concurrency — one live avatar at a time, so close any other Anam session first.
+- If the avatar fails to start it falls back to the static `robot` image, so the camera is never blank.
+- For restricted-egress environments where join's local tunnel/preflight checks false-negative, `SAMOGRAPH_SKIP_TUNNEL_CHECK=1` skips them (use only with a tunnel verified reachable out-of-band).
+
 ## Live Google Doc Notes
 
 Use `notes` when asked to keep a shared doc updated during the call:
