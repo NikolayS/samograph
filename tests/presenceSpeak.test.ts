@@ -69,4 +69,11 @@ describe("presence page avatar mode", () => {
     expect(html).toContain(".talk(");
     expect(html).toContain("showRobotFullFrame");
   });
+
+  it("polls faster in avatar mode (snappier spoken reactions) than other modes", () => {
+    expect(html).toContain('backgroundMode === "avatar"');
+    expect(html).toContain("? 300 : 2000");
+    // other modes keep the conservative cadence
+    expect(html).toContain("? 1000 : 5000");
+  });
 });

@@ -881,8 +881,14 @@ export function presencePageHtml(): string {
       } catch {}
     }
     function nextPollDelay() {
-      // 1 s while the snapshot changed within the last 30 s, else 5 s.
-      return Date.now() - lastActivityAt < 30000 ? 1000 : 5000;
+      const active = Date.now() - lastActivityAt < 30000;
+      // Avatar mode drives realtime SPEECH off this poll (the speak cue is only
+      // picked up on a poll), so it polls faster while active for snappier
+      // reactions — its tunnel carries low-rate JSON and is used with a
+      // no-request-limit tunnel. Other modes keep the conservative 1 s / 5 s
+      // cadence to preserve tunnel request quota.
+      if (backgroundMode === "avatar") return active ? 300 : 2000;
+      return active ? 1000 : 5000;
     }
     async function pollLoop() {
       await refresh();
