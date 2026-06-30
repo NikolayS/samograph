@@ -1,0 +1,97 @@
+{
+  "__comment": "samograph.dev observability dashboard (SPEC §5.11). Config-as-code: import into Grafana against a Prometheus datasource that scrapes the app `/metrics` endpoint (packages/shared/observe). The funnel panel and the W1-activation stat read the metrics the activation-funnel aggregator exports; the lower row reads the §5.11 counters. Hosted provisioning (datasource, Grafana instance) is intentionally out of scope (#87).",
+  "title": "samograph.dev — Activation funnel & observability",
+  "uid": "samograph-activation-funnel",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["samograph", "activation", "sre", "spec-5.11", "spec-9"],
+  "time": { "from": "now-7d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "region",
+        "type": "query",
+        "query": "label_values(transcript_lines_total, region)",
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "W1 activation (target ≥ 0.5)",
+      "type": "stat",
+      "description": "THE single v1 success metric (§9): signups who paste a link, get the bot admitted (in_call_recording), and watch ≥ 30 s of stream.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "refId": "A", "expr": "samograph_activation_w1", "legendFormat": "W1 activation" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Activation funnel (cumulative by stage)",
+      "type": "bargauge",
+      "description": "signup → magic-link clicked → call created → first transcript line → 30 s of stream (§5.11).",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 0 },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "samograph_funnel_stage",
+          "legendFormat": "{{stage}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Signups vs activated",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "samograph_funnel_total", "legendFormat": "signups" },
+        { "refId": "B", "expr": "samograph_funnel_activated", "legendFormat": "activated" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Pickup latency p50/p95/p99 (event → status visible, §5.2)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        { "refId": "A", "expr": "pickup_latency_ms{quantile=\"0.5\"}", "legendFormat": "p50" },
+        { "refId": "B", "expr": "pickup_latency_ms{quantile=\"0.95\"}", "legendFormat": "p95" },
+        { "refId": "C", "expr": "pickup_latency_ms{quantile=\"0.99\"}", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Call-path counters (§5.11)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (result) (rate(bot_join_total[5m]))", "legendFormat": "bot_join {{result}}" },
+        { "refId": "B", "expr": "sum by (region) (rate(transcript_lines_total[5m]))", "legendFormat": "transcript_lines {{region}}" },
+        { "refId": "C", "expr": "sum by (call_id) (rate(ws_dropped_total[5m]))", "legendFormat": "ws_dropped {{call_id}}" },
+        { "refId": "D", "expr": "sum by (region) (rate(tunnel_probe_failed_total[5m]))", "legendFormat": "tunnel_probe_failed {{region}}" },
+        { "refId": "E", "expr": "sum by (reason) (rate(webhook_rejected_total[5m]))", "legendFormat": "webhook_rejected {{reason}}" }
+      ]
+    }
+  ]
+}
