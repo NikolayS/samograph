@@ -98,9 +98,7 @@ describe("ShareModal — owner share-link control (SPEC §4.1, §5.7, Story 2)",
     const { findByText, findByRole } = render(
       <ShareModal shareClient={client} callId="call_1" onClose={() => {}} />,
     );
-    await act(async () => {
-      fireEvent.click(await findByText("Create share link"));
-    });
+    fireEvent.click(await findByText("Create share link"));
     expect(await findByRole("alert")).toBeDefined();
   });
 

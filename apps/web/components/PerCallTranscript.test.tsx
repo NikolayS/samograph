@@ -150,7 +150,7 @@ describe("PerCallTranscript — live read-along (SPEC §2, §5.2, §5.4, §5.5, 
   });
 
   it("renders NO owner controls when the controls slot is omitted", () => {
-    const client = createFakeTranscriptStreamClient({ callDetail: detail({ status: "IN_CALL" }) });
+    const client = createFakeTranscriptStreamClient({ callDetail: detail() });
     const { container } = render(
       <PerCallTranscript
         streamClient={client}

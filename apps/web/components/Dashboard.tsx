@@ -8,6 +8,8 @@ export interface DashboardProps {
   client: AppApiClient;
   /** Navigate away (injected so the component is testable without next router). */
   redirect: (path: string) => void;
+  /** Story-4 pre-fill: seed the paste input (e.g. after a COULD_NOT_JOIN "Try again"). */
+  initialUrl?: string;
 }
 
 type Status = "loading" | "ready" | "redirecting";
@@ -21,7 +23,7 @@ type Status = "loading" | "ready" | "redirecting";
  * the sign-in page instead of rendering an empty, broken dashboard. The API
  * already enforces 401, so this is UX, not a security boundary.
  */
-export function Dashboard({ client, redirect }: DashboardProps) {
+export function Dashboard({ client, redirect, initialUrl }: DashboardProps) {
   const [status, setStatus] = useState<Status>("loading");
   const [calls, setCalls] = useState<Call[]>([]);
 
@@ -64,7 +66,7 @@ export function Dashboard({ client, redirect }: DashboardProps) {
 
   return (
     <>
-      <AddToCallForm client={client} onCreated={() => void load()} />
+      <AddToCallForm client={client} initialUrl={initialUrl} onCreated={() => void load()} />
       <section aria-label="Your calls">
         <h2>Your calls</h2>
         {calls.length === 0 ? (
