@@ -121,7 +121,10 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     expect(await res.text()).toBe("");
     expect(h.dispatched).toHaveLength(0);
     expect(h.metrics.rejected).toEqual({ ingest_secret_mismatch: 1 });
-    expect(h.warns).toEqual([{ code: "SAMO-WEBHOOK-401", fields: { reason: "ingest_secret_mismatch" } }]);
+    // Exactly one WARN with the §5.16 code + reason (debug context fields allowed).
+    expect(h.warns).toHaveLength(1);
+    expect(h.warns[0].code).toBe("SAMO-WEBHOOK-401");
+    expect(h.warns[0].fields.reason).toBe("ingest_secret_mismatch");
   });
 
   it("missing ?t= → 401 ingest_secret_mismatch (fail closed on empty secret)", async () => {
@@ -151,7 +154,10 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     expect(await res.text()).toBe("");
     expect(h.dispatched).toHaveLength(0);
     expect(h.metrics.rejected).toEqual({ cross_tenant: 1 });
-    expect(h.warns).toEqual([{ code: "SAMO-AUTHZ-001", fields: { reason: "cross_tenant" } }]);
+    // Exactly one WARN; the tenancy-gate denial is SAMO-AUTHZ-001 / 403 (§5.16).
+    expect(h.warns).toHaveLength(1);
+    expect(h.warns[0].code).toBe("SAMO-AUTHZ-001");
+    expect(h.warns[0].fields.reason).toBe("cross_tenant");
   });
 
   it("authenticated-but-malformed body (no recall_event_id / not JSON) → 401, never dispatch (#6)", async () => {

@@ -43,3 +43,12 @@ export {
   type MintedToken,
   type MintOptions,
 } from "./tokens/store.ts";
+
+// The pinned Recall webhook signing contract (#77, SPEC §5.3 step 1 / §6.2 #7).
+// ONE source of truth shared by the signer (the in-repo Recall fake) and the
+// verifier (the ingest POST /webhook front door).
+export {
+  RECALL_SIGNATURE_HEADER,
+  recallSignature,
+  verifyRecallSignature,
+} from "./recall/signature.ts";

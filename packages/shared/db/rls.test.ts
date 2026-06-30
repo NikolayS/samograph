@@ -15,8 +15,17 @@ const HAVE_DB = !!process.env.DATABASE_URL;
 const d = HAVE_DB ? describe : describe.skip;
 
 // The tenant-scoped tables that MUST carry an RLS policy (§5.10). `users` and
-// `regions` are not tenant-scoped and are intentionally excluded.
-const TENANT_SCOPED = ["audit_log", "calls", "tenants", "tokens", "transcripts", "workers"];
+// `regions` are not tenant-scoped and are intentionally excluded. `webhook_events`
+// is tenant-scoped via its call's tenant (recall_bot_id join, 0003 / §5.3).
+const TENANT_SCOPED = [
+  "audit_log",
+  "calls",
+  "tenants",
+  "tokens",
+  "transcripts",
+  "webhook_events",
+  "workers",
+];
 
 // The MANDATORY InitPlan wrapper: `(SELECT current_setting('app.tenant_id'))`.
 // Postgres deparses it as `( SELECT current_setting('app.tenant_id'::text) ...)`.
