@@ -18,7 +18,20 @@ export interface PresenceSnapshot {
   updated_at: string;
   activities: PresenceActivity[];
   chime: PresenceChime | null;
+  speak: PresenceSpeak | null;
 }
+
+// A transient speech cue for the realtime avatar (bg=avatar mode). The camera
+// page makes the avatar say `text` once per distinct `at` timestamp, so the
+// same line sitting in the snapshot never re-speaks. Independent of `message`
+// (the on-screen status string), which is capped shorter for the dashboard.
+export interface PresenceSpeak {
+  text: string;
+  at: string;
+}
+
+// Speech lines can run longer than the 160-char on-screen status message.
+export const SPEAK_MAX_CHARS = 400;
 
 // A transient audio cue. The camera page plays a short sound once per distinct
 // `at` timestamp (e.g. when the bot posts a meeting-chat message), so the same
@@ -78,6 +91,7 @@ export function newPresenceSnapshot(
     updated_at: new Date().toISOString(),
     activities,
     chime: null,
+    speak: null,
   };
 }
 
@@ -88,6 +102,20 @@ export function withChime(snapshot: PresenceSnapshot): PresenceSnapshot {
     ...snapshot,
     updated_at: new Date().toISOString(),
     chime: { at: new Date().toISOString() },
+  };
+}
+
+// Stamp a transient speech line onto the snapshot for the realtime avatar to
+// speak. Like withChime, bumps updated_at so the poller picks it up promptly.
+// Empty/whitespace text is a no-op (returns the snapshot unchanged).
+export function withSpeak(snapshot: PresenceSnapshot, text: string): PresenceSnapshot {
+  const clean = sanitizePresenceText(text, SPEAK_MAX_CHARS);
+  if (!clean) return snapshot;
+  const at = new Date().toISOString();
+  return {
+    ...snapshot,
+    updated_at: at,
+    speak: { text: clean, at },
   };
 }
 

@@ -22,8 +22,10 @@ import {
   sanitizePresenceMessage,
   sanitizePresenceText,
   withChime,
+  withSpeak,
   type PresenceSnapshot,
 } from "./presence.ts";
+import type { AvatarProvider } from "./avatar.ts";
 
 export const WEBHOOK_MAX_BYTES = 1024 * 1024;
 
@@ -366,6 +368,12 @@ export interface ServeOptions {
   presenceToken?: string | null;
   presenceWriteToken?: string | null;
   currentCallId?: () => string | null;
+  // Realtime avatar (bg=avatar). The provider mints a short-lived browser
+  // session token from a server-side API key; the page never sees the key.
+  // Both unset => the avatar endpoint reports { enabled: false } and the page
+  // falls back to the static presence avatar.
+  avatarProvider?: AvatarProvider | null;
+  avatarPersonaId?: string | null;
 }
 
 export interface LatestVideoFrame {
@@ -529,6 +537,39 @@ export function serve(
           headers: { "Cache-Control": "no-store" },
         });
       }
+      if (req.method === "GET" && url.pathname === "/avatar/session") {
+        // Same header-token guard as /presence.json: the page already holds the
+        // read token and sends it as a header. The minted session token IS
+        // meant for the browser; the underlying API key never leaves the server.
+        if (!presenceJsonAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        const provider = opts.avatarProvider ?? null;
+        const personaId = opts.avatarPersonaId ?? "";
+        const noStore = { "Cache-Control": "no-store" };
+        if (!provider || !personaId) {
+          // Unconfigured => the page keeps the static presence avatar.
+          return Response.json({ enabled: false }, { headers: noStore });
+        }
+        try {
+          const session = await provider.mintSession(personaId);
+          return Response.json(
+            {
+              enabled: true,
+              personaId: session.personaId,
+              sessionToken: session.sessionToken,
+              expiresAt: session.expiresAt,
+            },
+            { headers: noStore },
+          );
+        } catch (err) {
+          // Never 500: a missing key or a provider outage must degrade to the
+          // static avatar, not break the camera page. (No secrets in the log.)
+          const reason = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`avatar session mint failed: ${reason}\n`);
+          return Response.json({ enabled: false }, { headers: noStore });
+        }
+      }
       if (req.method === "POST" && url.pathname === "/presence") {
         if (!presenceWriteAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
@@ -573,6 +614,12 @@ export function serve(
           message,
           presence.activities,
         );
+        // An explicit speaking message is what the realtime avatar says aloud.
+        // Bare toggles and other states leave speak null (no speech), so status
+        // strings like "Answering in chat" under thinking never get voiced.
+        if (state === "speaking" && hasMessage) {
+          presence = withSpeak(presence, message);
+        }
         return Response.json({ ok: true, presence });
       }
       if (req.method === "POST" && url.pathname === "/chime") {

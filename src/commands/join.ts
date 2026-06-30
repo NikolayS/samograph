@@ -346,6 +346,11 @@ export async function cmdJoin(
     }
     const publicBaseUrl = webhookUrl.replace(/\/+$/, "");
 
+    // Realtime-avatar persona id (not a secret): flag wins, else env. When set
+    // it both selects bg=avatar by default and is forwarded to _serve below.
+    const avatarPersonaId =
+      args.anam_persona || process.env.SAMOGRAPH_ANAM_PERSONA_ID || "";
+
     // start webhook server (spawns self with _serve subcommand). The public
     // base URL travels via argv (it is not a secret) so _serve can run the
     // mid-call tunnel watchdog; tokens travel via env only.
@@ -369,6 +374,10 @@ export async function cmdJoin(
           SAMOGRAPH_FRAME_TOKEN: frameToken,
           SAMOGRAPH_PRESENCE_TOKEN: presenceToken,
           SAMOGRAPH_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+          // Persona id for the realtime avatar (not a secret). ANAM_API_KEY is
+          // inherited from the parent env by spawnDetached, so the key stays out
+          // of argv and out of this explicit map.
+          ...(avatarPersonaId ? { SAMOGRAPH_ANAM_PERSONA_ID: avatarPersonaId } : {}),
         },
       },
     );
@@ -387,8 +396,11 @@ export async function cmdJoin(
 
     // null = join without the webpage presence camera (opted out via
     // --no-presence, or degraded after a failed preflight).
-    const presenceBgSuffix = args.presence_bg
-      ? `&bg=${encodeURIComponent(args.presence_bg)}`
+    // Explicit --presence-bg wins; otherwise default to the avatar look when a
+    // persona is configured, so `--anam-persona <id>` alone is enough.
+    const presenceBg = args.presence_bg ?? (avatarPersonaId ? "avatar" : null);
+    const presenceBgSuffix = presenceBg
+      ? `&bg=${encodeURIComponent(presenceBg)}`
       : "";
     let presencePageUrl: string | null = args.no_presence
       ? null
