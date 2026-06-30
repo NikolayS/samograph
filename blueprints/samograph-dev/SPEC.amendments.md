@@ -1,9 +1,18 @@
-# samograph.dev — SPEC Amendments (Sprint 1)
+# samograph.dev — SPEC Amendments
 
 This document records every **intentional** deviation from or extension to
-`blueprints/samograph-dev/SPEC.md` made during Sprint 1 ("the seams"). Each entry
-cites the section it amends, states precisely what differs from a literal reading
-of the spec, and explains why. These are reviewed decisions — not silent drift.
+`blueprints/samograph-dev/SPEC.md`, organized by sprint. Each entry cites the
+section it amends, states precisely what differs from a literal reading of the
+spec, and explains why. These are reviewed decisions — not silent drift.
+
+> Sections: **[Sprint 1 — "the seams"](#sprint-1--the-seams)** ·
+> **[Sprint 2 — "the live transcript"](#sprint-2--the-live-transcript)**.
+
+---
+
+## Sprint 1 — "the seams"
+
+This section records the Sprint-1 ("the seams") deviations.
 
 Genuine bugs/gaps are tracked as GitHub issues, not here. Items deferred to later
 sprints (ws-hub, ingest webhook/watchdog, bot-worker, share caps, billing) are
@@ -228,3 +237,179 @@ Implemented and stable: `SAMO-AUTH-001/002/003/004` (apps/app-api/auth),
 `SAMO-INGEST-DEGRADED`, `SAMO-WEBHOOK-401`, `SAMO-WORKER-503`, `SAMO-RECALL-COST`,
 `SAMO-BILLING-*`) belong to later-sprint surfaces and are intentionally not yet
 implemented.
+
+---
+
+## Sprint 2 — "the live transcript"
+
+This section records the **intentional** deviations from `SPEC.md` made during
+Sprint 2 ("the live transcript": webhook ingest → normalizer → WS fan-out → live
+read-along page, plus bot lifecycle/disclosure, the multi-call watchdog, share
+links, and observability). Same legend (**Extension** / **Clarification** /
+**Superset**), plus **Deviation (v1)** = a deliberate v1 simplification with a
+tracked follow-up issue for the full behavior. Genuine gaps are tracked as issues
+(see *Gaps* at the end), not recorded here as amendments.
+
+---
+
+### S2-1. §5.3 step 4 — webhook cross-tenant check is a 403 on `data.bot_id` vs the authenticated `?bot=` — *Clarification*
+
+**Amends:** §5.3 (validation order) / §6.2 #7.
+
+**What differs:** Steps 1–3 (Recall signature, known `recall_bot_id`, `ingest_secret`)
+fail **401** (`SAMO-WEBHOOK-401`); the tenancy gate fails **403** (`SAMO-AUTHZ-001`)
+— not §5.3's literal "all four → 401" (already flagged for #77). Additionally, a
+webhook carries **no client-supplied `call_id`**, so the spec's "claims a different
+call_id" is realized as: the body's self-claimed `data.bot_id` **must equal** the
+authenticated `?bot=` (→ `calls.recall_bot_id`). Same threat (spoofing another
+tenant's call), expressed on the only identity field the webhook carries.
+
+**Why:** §6.2 #7 / acceptance #4 and §5.16 (where `SAMO-AUTHZ-001` *is* the
+cross-tenant 403) require a 403 for cross-tenant; and the webhook's wire shape has
+no `call_id` to compare. `apps/ingest/webhook.ts`.
+
+---
+
+### S2-2. §5.4 — `transcripts.text` stores the **utterance only**; `ts`/`speaker` are split out losslessly — *Clarification*
+
+**Amends:** §5.4 (canonical line) / §5.10 (transcripts shape).
+
+**What differs:** The append-only `transcripts` row stores `text` = the utterance
+only, with `ts` and `speaker` split out of the canonical `[ts] speaker: text` line
+via `splitCanonicalLine` (the inverse of the normalizer). Re-rendering is
+byte-identical to the CLI even when the speaker contains `": "` or unicode
+(asserted across 10 adversarial inputs).
+
+**Why:** Matches the merged `TranscriptLine` shape consumed by web and the RLS
+seed, while preserving §5.4 byte-identity. `apps/ingest/transcriptPipeline.ts`.
+
+---
+
+### S2-3. §6.2 #8 — pickup latency is measured handler-entry → status-frame-published (virtual clock), not a live WS round-trip — *Clarification*
+
+**Amends:** §6.2 #8 (pickup-latency SLO).
+
+**What differs:** `pickup_latency_ms` is measured from `bot.status_change` handler
+entry to just after the status frame is published, under an **injected virtual
+clock** over a 200-call sample (p95 ≤ 1 s) — not a wall-clock browser round-trip.
+
+**Why:** "status-visible" is operationalized as "status frame published" (the last
+server-side step before fan-out); a virtual clock makes the SLO deterministic, not
+flaky. `apps/ingest/botLifecycle.ts::observePickupLatencyMs`.
+
+---
+
+### S2-4. §4.1 — v1 composes ingest + ws-hub in **one process** with an in-process after-commit bridge — *Deviation (v1)*
+
+**Amends:** §4.1 (separate ingest / ws-hub services).
+
+**What differs:** v1 runs ingest and ws-hub in a single process; transcript lines
+cross from ingest to the Hub via an in-process after-commit bridge rather than a
+cross-process Postgres `LISTEN`. The `PgListenNotifyPublisher` already emits the
+`{call_id, seq}` signal, so the future process split is a drop-in.
+
+**Why:** Bun's built-in SQL has no `LISTEN`/`NOTIFY` consumer API and a `postgres`
+dependency cannot be added under `--frozen-lockfile`. Auth + RLS are unchanged and
+verified through the composition. `apps/ws-hub/liveBridge.ts`, `server.ts`.
+
+---
+
+### S2-5. §5.5 — WS `idleTimeout` capped at 255 s; long silences recovered via `?since_seq` — *Deviation (v1)*
+
+**Amends:** §5.5 (live stream).
+
+**What differs:** Bun caps `Bun.serve` `idleTimeout` at 255 s, so a stream idle past
+that closes; the client reconnects with `?since_seq=<last-seen>` and the exact
+missing range replays (no data lost). No app-level keepalive ping yet.
+
+**Why:** Platform limit; losslessness is preserved by the existing replay path.
+Keepalive ping tracked as a follow-up. `apps/ws-hub/server.ts`.
+
+---
+
+### S2-6. §3 Story 5 / §5.5 — degraded **banner** is live via `ingest_degraded`; the inline `SAMOGRAPH-WARNING` **line** is not yet live-forwarded — *Deviation (v1)*
+
+**Amends:** §3 Story 5 / §5.5 (degraded surfacing).
+
+**What differs:** Transcript **lines** flow live, but **control frames** (status +
+the `SAMOGRAPH-WARNING` line) are not forwarded over the WS in the one-process
+bridge (the fan-in re-hydrates persisted lines by seq and drops `ctl` signals). The
+degraded **banner** still works (the watchdog flips `calls.ingest_degraded`, read
+from Postgres), and **§6.2 #5 is unbroken** (the watchdog still degrades + warns).
+The inline warning *line* doesn't appear in the live stream until reload.
+
+**Why:** Consequence of the one-process bridge (S2-4); the "loud, never silent"
+guarantee is preserved by the banner. Live control-frame forwarding tracked as
+**#106**.
+
+---
+
+### S2-7. §3 Story 2 / §5.7 — share viewers pass `callId={shareToken}`; the Hub resolves the call from the token — *Clarification*
+
+**Amends:** §3 Story 2 / §5.7 (share connections).
+
+**What differs:** `ShareCallView` passes the share token as the path `callId` to
+`PerCallTranscript`; for a share connection the path id is advisory and the ws-hub
+resolves the actual call from the token itself (the read-only route never exposes
+the real call id or any owner control).
+
+**Why:** A share viewer must not need (or learn) the owner's call id; the token is
+the capability. `apps/web/components/ShareCallView.tsx`.
+
+---
+
+### S2-8. §5.7 — share-cap key is `sha256(shareToken)`; default share-token TTL is 30 days — *Clarification*
+
+**Amends:** §5.7 (share caps + token lifetime).
+
+**What differs:** The per-token rate/concurrency caps (200 conns / 20 cmds-per-min /
+1000 establishments-per-hr) are keyed on `sha256(shareToken)` (a stable identity
+that never holds the raw secret), and the share token's default TTL is 30 days.
+
+**Why:** Avoids retaining the raw secret in the limiter and avoids widening the
+gate's return type; §5.7 pins **KID rotation**, not the share TTL, so 30 days is a
+chosen default, not a deviation from a pinned value. `apps/ws-hub/caps.ts`.
+
+---
+
+### S2-9. §5.5 / §5.7 — the ≤ 1 s revoke-close is driven by the per-connection recheck timer in the ws-hub **server**, not the stream core — *Clarification*
+
+**Amends:** §5.5 / §5.7 (revoke latency).
+
+**What differs:** `apps/ws-hub/stream.ts` exposes `recheck()` + `RECHECK_INTERVAL_MS`
+but is transport-agnostic; the periodic re-authorization that closes a revoked
+socket within ≤ 1 s is wired in the `Bun.serve` server (#104). The guarantee holds
+end-to-end (verified live), but it lives at the server layer by design.
+
+**Why:** Keeps the stream core transport-free and testable; the timer belongs to the
+running server. `apps/ws-hub/server.ts`.
+
+---
+
+### Gaps tracked as issues (NOT amendments)
+
+Per this document's rule, genuine gaps/follow-ups are GitHub issues, not amendments:
+
+- **#105** — real `apps/app-api` §4.1 Hono entrypoint (replace the Sprint-1
+  `dev-server.ts` stopgap).
+- **#106** — live-forward control frames (status + `SAMOGRAPH-WARNING` line) over WS
+  (see S2-6).
+- **#107** — `bot_join_total{result}` counter has no producer.
+- **#108** — wire `MetricsRegistry` into running servers + mount `/metrics` (no live
+  dashboard feed today).
+- **#109** — provision the `samograph-bench-isolated` CI runner so the §6.2 #3
+  p99 ≤ 5 ms SLO actually asserts (it currently skips loudly).
+- **#88** — *optional* real-Recall env flag (a real bot joins) — needs
+  `RECALL_API_KEY`; default stays the fake.
+
+---
+
+### Cross-reference: Sprint-2 SAMO-* codes now shipped
+
+Implemented and stable in Sprint 2: `SAMO-WEBHOOK-401` (ingest auth),
+`SAMO-AUTHZ-001` (cross-tenant 403, shared lib — also used by the webhook gate),
+`SAMO-WORKER-503` (dead/stale worker), `SAMO-RATE-001` (share caps, 429 +
+Retry-After), `SAMO-CALL-NOREC` / `COULD_NOT_RECORD` and `SAMO-CALL-REMOVED` /
+`BOT_REMOVED` (lifecycle), `SAMO-INGEST-DEGRADED` (watchdog overlay), and
+`SAMO-CALL-JOIN` (the `COULD_NOT_JOIN` reason, persisted via migration 0004). Still
+intentionally not implemented (v2 surfaces): `SAMO-RECALL-COST`, `SAMO-BILLING-*`.
