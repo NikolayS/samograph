@@ -85,6 +85,23 @@ export const TUNNEL_WATCHDOG_INTERVAL_MS = 60_000;
 // Two consecutive failed probes before warning: one failure can be a blip.
 const TUNNEL_WATCHDOG_FAILURE_THRESHOLD = 2;
 
+/**
+ * The exact `SAMOGRAPH-WARNING` outage line — the single source of truth for the
+ * text both the CLI watchdog and the server-side ingest watchdog (#81) emit, so
+ * the wording never drifts. `cause` is an `ERR_NGROK_*` code or `"health check
+ * failed"` (the fallback when a probe fails without one).
+ */
+export function tunnelUnreachableWarning(cause: string): string {
+  return (
+    `SAMOGRAPH-WARNING: tunnel unreachable (${cause}) - transcript may be ` +
+    "incomplete; rejoin with --tunnel cloudflared or --webhook-base"
+  );
+}
+
+/** The exact `SAMOGRAPH-WARNING` recovery line (shared with the ingest watchdog, #81). */
+export const TUNNEL_RECOVERED_WARNING =
+  "SAMOGRAPH-WARNING: tunnel recovered - live transcript delivery resumed";
+
 export interface TunnelWatchdogHandle {
   /** Run one probe + state transition (exposed for tests; the schedule calls it). */
   tick(): Promise<void>;
@@ -157,7 +174,7 @@ export function startTunnelWatchdog(
       consecutiveFailures = 0;
       if (inOutage) {
         inOutage = false;
-        emit("SAMOGRAPH-WARNING: tunnel recovered - live transcript delivery resumed");
+        emit(TUNNEL_RECOVERED_WARNING);
       }
       return;
     }
@@ -165,10 +182,7 @@ export function startTunnelWatchdog(
     if (consecutiveFailures >= TUNNEL_WATCHDOG_FAILURE_THRESHOLD && !inOutage) {
       inOutage = true;
       const cause = probe.ngrokErrorCode ?? "health check failed";
-      emit(
-        `SAMOGRAPH-WARNING: tunnel unreachable (${cause}) - transcript may be ` +
-          "incomplete; rejoin with --tunnel cloudflared or --webhook-base",
-      );
+      emit(tunnelUnreachableWarning(cause));
     }
   };
 

@@ -2,12 +2,13 @@
  * @samograph/ingest — Bun/Hono HTTP service (SPEC §4.1).
  *
  * The `POST /webhook` authenticity front door (Recall signature + ingest_secret
- * verify + idempotent dispatch, §5.3) ships in `./webhook.ts` and is re-exported
- * here. The normalizer, Postgres transcript persistence, fan-out publish, and
- * the leader-elected tunnel watchdog land in the remaining call-path Sprint-2
- * issues (#78 / #79). This module also keeps the Bun-native request handler
- * whose GET /health echoes the `samograph-health` marker so a regional
- * cloudflared named tunnel can pass the `/health` round-trip (§4.5, §8 exit).
+ * verify + idempotent dispatch, §5.3) ships in `./webhook.ts`, the §5.4
+ * transcript pipeline in `./transcriptPipeline.ts`, the §5.2 bot lifecycle in
+ * `./botLifecycle.ts`, and the leader-elected multi-call tunnel watchdog
+ * (§4.5/§4.6) in `./tunnelWatchdog.ts` — all re-exported here. This module also
+ * keeps the Bun-native request handler whose GET /health echoes the
+ * `samograph-health` marker so a regional cloudflared named tunnel can pass the
+ * `/health` round-trip (§4.5, §8 exit).
  */
 import { HEALTH_MARKER } from "../../src/server.ts";
 
@@ -67,6 +68,21 @@ export {
   type LifecycleTransition,
   type PickupLatencyPercentiles,
 } from "./botLifecycle.ts";
+
+// The §4.5/§4.6 leader-elected tunnel watchdog: per-region probe on exactly one
+// replica (advisory lock + 60 s lease), `ingest_degraded` fan-out + cluster-once
+// `SAMOGRAPH-WARNING` lines via the publisher, `tunnel_probe_failed_total{region}`
+// (§5.11), `SAMO-INGEST-DEGRADED` overlay (§5.16) (#81).
+export {
+  startRegionWatchdog,
+  inMemoryWatchdogMetrics,
+  SERVER_TUNNEL_PROBE_INTERVAL_MS,
+  LEADER_LEASE_MS,
+  TUNNEL_WATCHDOG_FAILURE_THRESHOLD,
+  type RegionWatchdogDeps,
+  type RegionWatchdogHandle,
+  type WatchdogMetrics,
+} from "./tunnelWatchdog.ts";
 
 export const SERVICE_NAME = "ingest";
 
