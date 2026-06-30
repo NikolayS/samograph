@@ -32,16 +32,71 @@ export interface StatusViewOptions {
 /** Default reason when Recall gives no specific `fatal` reason string. */
 export const COULD_NOT_JOIN_FALLBACK_REASON = "the meeting couldn't be reached";
 
+/** Static label/kind/message for the non-failure statuses. */
+const BASE: Record<
+  Exclude<CallStatus, "COULD_NOT_JOIN" | "COULD_NOT_RECORD" | "BOT_REMOVED">,
+  { label: string; kind: StatusKind; message: string }
+> = {
+  PENDING: { label: "Starting", kind: "pending", message: "Setting up samograph…" },
+  JOINING: { label: "Joining", kind: "joining", message: "samograph is joining the call…" },
+  IN_CALL: { label: "Live", kind: "live", message: "Live transcript is streaming." },
+  ENDED: { label: "Ended", kind: "ended", message: "This call has ended." },
+};
+
 export function statusView(
   status: CallStatus,
-  _opts: StatusViewOptions = {},
+  opts: StatusViewOptions = {},
 ): StatusView {
+  const isTerminal = isTerminalStatus(status);
+
+  if (status === "COULD_NOT_JOIN") {
+    // §5.16: "Couldn't join — <Recall reason>." Strip any trailing period from
+    // the reason so the template's own period is never doubled.
+    const reason = (opts.recallReason ?? COULD_NOT_JOIN_FALLBACK_REASON)
+      .trim()
+      .replace(/\.+$/, "");
+    return {
+      status,
+      label: "Couldn't join",
+      kind: "error",
+      message: `Couldn't join — ${reason}.`,
+      code: "SAMO-CALL-JOIN",
+      isTerminal,
+      showTryAgain: true,
+    };
+  }
+
+  if (status === "COULD_NOT_RECORD") {
+    return {
+      status,
+      label: "Couldn't record",
+      kind: "error",
+      message: "Couldn't start recording — check meeting permissions.",
+      code: "SAMO-CALL-NOREC",
+      isTerminal,
+      showTryAgain: false,
+    };
+  }
+
+  if (status === "BOT_REMOVED") {
+    return {
+      status,
+      label: "Bot removed",
+      kind: "error",
+      message: "The bot was removed from the call.",
+      code: "SAMO-CALL-REMOVED",
+      isTerminal,
+      showTryAgain: false,
+    };
+  }
+
+  const base = BASE[status];
   return {
     status,
-    label: "STUB",
-    kind: "pending",
-    message: "STUB",
-    isTerminal: isTerminalStatus(status),
+    label: base.label,
+    kind: base.kind,
+    message: base.message,
+    isTerminal,
     showTryAgain: false,
   };
 }

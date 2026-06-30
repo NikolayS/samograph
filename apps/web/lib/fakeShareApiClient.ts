@@ -46,25 +46,45 @@ export class FakeShareApiClient implements ShareApiClient {
 
   constructor(options: FakeShareApiClientOptions = {}) {
     this.options = options;
-    void this.active;
-    void this.counter;
-    void shareUrlForToken;
   }
 
-  async mintShare(_callId: string): Promise<ShareLink> {
-    throw new AppApiError("SAMO-STUB", "not implemented", false);
+  /** Mint the next deterministic token and make it the active share for `callId`. */
+  private issue(callId: string): ShareLink {
+    this.counter += 1;
+    const token = `shr_${this.counter}`;
+    const link: ShareLink = { token, url: shareUrlForToken(token), active: true };
+    this.active.set(callId, link);
+    return { ...link };
   }
 
-  async rotateShare(_callId: string): Promise<ShareLink> {
-    throw new AppApiError("SAMO-STUB", "not implemented", false);
+  private static fail(spec: FailSpec): never {
+    throw new AppApiError(spec.code, spec.message, spec.retryable ?? false, spec.status);
   }
 
-  async revokeShare(_callId: string): Promise<void> {
-    throw new AppApiError("SAMO-STUB", "not implemented", false);
+  async mintShare(callId: string): Promise<ShareLink> {
+    this.requests.push({ path: `/calls/${callId}/share`, method: "POST" });
+    if (this.options.failMintWith) FakeShareApiClient.fail(this.options.failMintWith);
+    return this.issue(callId);
   }
 
-  async getShare(_callId: string): Promise<ShareLink | null> {
-    throw new AppApiError("SAMO-STUB", "not implemented", false);
+  async rotateShare(callId: string): Promise<ShareLink> {
+    this.requests.push({ path: `/calls/${callId}/share/rotate`, method: "POST" });
+    if (this.options.failRotateWith) FakeShareApiClient.fail(this.options.failRotateWith);
+    // Rotation supersedes the old token: only the new one is active afterwards.
+    return this.issue(callId);
+  }
+
+  async revokeShare(callId: string): Promise<void> {
+    this.requests.push({ path: `/calls/${callId}/share`, method: "DELETE" });
+    if (this.options.failRevokeWith) FakeShareApiClient.fail(this.options.failRevokeWith);
+    this.active.delete(callId);
+  }
+
+  async getShare(callId: string): Promise<ShareLink | null> {
+    this.requests.push({ path: `/calls/${callId}/share`, method: "GET" });
+    if (this.options.failGetWith) FakeShareApiClient.fail(this.options.failGetWith);
+    const link = this.active.get(callId);
+    return link ? { ...link } : null;
   }
 }
 

@@ -18,6 +18,7 @@ import type {
   StreamHandle,
   TranscriptLine,
   TranscriptStreamClient,
+  TranscriptStreamEvent,
 } from "./transcriptStreamClient.ts";
 
 export interface RecordedConnect {
@@ -53,42 +54,102 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
   readonly requests: Array<{ path: string; method: "GET"; callId: string }> = [];
 
   private readonly options: FakeTranscriptStreamClientOptions;
+  /** Open subscribers; a handle's `close()` flips its entry's `open` to false. */
+  private readonly subscribers: Array<{
+    onEvent: StreamEventHandler;
+    open: boolean;
+  }> = [];
 
   constructor(options: FakeTranscriptStreamClientOptions = {}) {
     this.options = options;
   }
 
-  connect(_params: ConnectParams, _onEvent: StreamEventHandler): StreamHandle {
-    return { close() {} };
+  connect(params: ConnectParams, onEvent: StreamEventHandler): StreamHandle {
+    this.connects.push({
+      callId: params.callId,
+      auth: params.auth,
+      sinceSeq: params.sinceSeq,
+    });
+    // The exact query a real client would put on the WS URL (SPEC §5.5/§5.7):
+    // `since_seq` for replay, `token` only for share auth (never for session).
+    const query: Record<string, string> = {};
+    if (params.sinceSeq !== undefined) query.since_seq = String(params.sinceSeq);
+    if (params.auth.kind === "share") query.token = params.auth.token;
+    this.streamQueries.push(query);
+
+    const entry = { onEvent, open: true };
+    this.subscribers.push(entry);
+    return {
+      close() {
+        entry.open = false;
+      },
+    };
+  }
+
+  private deliver(event: TranscriptStreamEvent): void {
+    for (const sub of this.subscribers) {
+      if (sub.open) sub.onEvent(event);
+    }
   }
 
   /** Driver: push a transcript line frame to all open subscribers. */
-  emitLine(_line: {
+  emitLine(line: {
     seq: number;
     ts: string;
     speaker: string;
     text: string;
     final: boolean;
-  }): void {}
-
-  /** Driver: push a status frame. */
-  emitStatus(_status: CallStatus): void {}
-
-  /** Driver: push a degraded-overlay frame. */
-  emitDegraded(_degraded: boolean): void {}
-
-  /** Driver: push a gap control frame. */
-  emitGap(_sinceSeq: number, _untilSeq: number): void {}
-
-  /** Driver: push a closed frame (and stop further delivery to that conn). */
-  emitClose(_code?: number, _reason?: string): void {}
-
-  async fetchCallDetail(_ref: CallRef): Promise<CallDetail> {
-    throw new AppApiError("SAMO-STUB", "not implemented", false);
+  }): void {
+    this.deliver({ type: "line", ...line });
   }
 
-  async backfill(_ref: CallRef, _sinceSeq: number): Promise<TranscriptLine[]> {
-    throw new AppApiError("SAMO-STUB", "not implemented", false);
+  /** Driver: push a status frame. */
+  emitStatus(status: CallStatus): void {
+    this.deliver({ type: "status", status });
+  }
+
+  /** Driver: push a degraded-overlay frame. */
+  emitDegraded(degraded: boolean): void {
+    this.deliver({ type: "degraded", degraded });
+  }
+
+  /** Driver: push a gap control frame. */
+  emitGap(sinceSeq: number, untilSeq: number): void {
+    this.deliver({ type: "gap", sinceSeq, untilSeq });
+  }
+
+  /** Driver: push a closed frame. */
+  emitClose(code?: number, reason?: string): void {
+    this.deliver({ type: "closed", code, reason });
+  }
+
+  async fetchCallDetail(ref: CallRef): Promise<CallDetail> {
+    this.requests.push({
+      path: `/calls/${ref.callId}`,
+      method: "GET",
+      callId: ref.callId,
+    });
+    const fail = this.options.failFetchDetailWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
+    }
+    return (
+      this.options.callDetail ?? { id: ref.callId, status: "IN_CALL", degraded: false }
+    );
+  }
+
+  async backfill(ref: CallRef, sinceSeq: number): Promise<TranscriptLine[]> {
+    this.requests.push({
+      path: `/calls/${ref.callId}/transcript`,
+      method: "GET",
+      callId: ref.callId,
+    });
+    const fail = this.options.failBackfillWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
+    }
+    const lines = this.options.backfillLines ?? [];
+    return lines.filter((l) => l.seq > sinceSeq).map((l) => ({ ...l }));
   }
 }
 

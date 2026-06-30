@@ -83,14 +83,94 @@ export function initialTranscriptState(
 }
 
 /** Render a line in the canonical CLI format `[ts] Speaker: text` (SPEC §5.4). */
-export function formatRenderLine(_line: TranscriptLine): string {
-  return "STUB";
+export function formatRenderLine(line: TranscriptLine): string {
+  return `[${line.ts}] ${line.speaker}: ${line.text}`;
+}
+
+function lineFromEvent(event: {
+  seq: number;
+  ts: string;
+  speaker: string;
+  text: string;
+}): TranscriptLine {
+  return { seq: event.seq, ts: event.ts, speaker: event.speaker, text: event.text };
+}
+
+/**
+ * Insert a finalized line by `seq`, ascending. Re-applying an already-present
+ * `seq` is a no-op (idempotent under WS replay / backfill overlap, SPEC §5.5):
+ * the first occurrence wins and no duplicate row is created.
+ */
+function upsertLine(
+  lines: readonly TranscriptLine[],
+  line: TranscriptLine,
+): TranscriptLine[] {
+  if (lines.some((l) => l.seq === line.seq)) return lines as TranscriptLine[];
+  const next = [...lines, line];
+  next.sort((a, b) => a.seq - b.seq);
+  return next;
 }
 
 /** Pure reducer: `(state, event) -> state` (SPEC §5.5). */
 export function transcriptReducer(
   state: TranscriptViewState,
-  _event: TranscriptViewEvent,
+  event: TranscriptViewEvent,
 ): TranscriptViewState {
-  return state;
+  switch (event.type) {
+    case "open":
+      return { ...state, connected: true };
+
+    case "closed":
+      return { ...state, connected: false };
+
+    case "status": {
+      // A terminal transition resets the degraded overlay (SPEC §5.2, §5.10).
+      const degraded = isTerminalStatus(event.status) ? false : state.degraded;
+      return { ...state, status: event.status, degraded };
+    }
+
+    case "degraded":
+      // `ingest_degraded` overlay — independent of the warning-line driver.
+      return { ...state, degraded: event.degraded };
+
+    case "gap":
+      return {
+        ...state,
+        pendingBackfill: { sinceSeq: event.sinceSeq, untilSeq: event.untilSeq },
+      };
+
+    case "backfill": {
+      let lines = state.lines;
+      for (const l of event.lines) lines = upsertLine(lines, l);
+      return { ...state, lines, pendingBackfill: null };
+    }
+
+    case "line": {
+      const line = lineFromEvent(event);
+
+      // SAMOGRAPH-WARNING lines are system notes: appended inline in seq order
+      // AND a second, independent driver of the degraded overlay (Story 5).
+      // They never disturb the in-progress utterance partial.
+      if (event.speaker === SAMOGRAPH_WARNING_SPEAKER) {
+        let degraded = state.degraded;
+        if (event.text.includes("unreachable")) degraded = true;
+        else if (event.text.includes("recovered")) degraded = false;
+        return { ...state, lines: upsertLine(state.lines, line), degraded };
+      }
+
+      // A non-final line is the trailing partial — replace whatever was held.
+      if (!event.final) {
+        return { ...state, partial: line };
+      }
+
+      // A final line is appended (deduped); it clears only the partial it
+      // finalizes (same seq), so a replayed final can't clobber a newer partial.
+      const partial =
+        state.partial && state.partial.seq === line.seq ? null : state.partial;
+      return { ...state, lines: upsertLine(state.lines, line), partial };
+    }
+
+    default:
+      return state;
+  }
 }

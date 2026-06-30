@@ -19,11 +19,16 @@ export interface DegradedBannerProps {
  * Driven by the `ingest_degraded` overlay AND the inline `SAMOGRAPH-WARNING`
  * lines — both flip `degraded` in the reducer (dual-driver), the page just reads
  * the resulting boolean.
- *
- * STUB: renders nothing — implemented in the GREEN commit.
  */
-export function DegradedBanner(_props: DegradedBannerProps) {
-  return null;
+export function DegradedBanner({ degraded }: DegradedBannerProps) {
+  if (!degraded) return null;
+  // `role="status"` + an explicit assertive live region so the warning is
+  // announced immediately the moment ingest degrades mid-call (Story 5).
+  return (
+    <div role="status" aria-live="assertive" className="samograph-degraded-banner">
+      {DEGRADED_BANNER_COPY}
+    </div>
+  );
 }
 
 export interface WarningLineProps {
@@ -34,10 +39,11 @@ export interface WarningLineProps {
  * Renders an inline `SAMOGRAPH-WARNING` transcript line marked as a system note
  * (`role="note"`) so a screen reader / the eye never mistakes it for a meeting
  * utterance, while keeping it in `seq` order in the transcript flow.
- *
- * STUB: renders nothing — implemented in the GREEN commit.
  */
-export function WarningLine(_props: WarningLineProps) {
-  void formatRenderLine;
-  return null;
+export function WarningLine({ line }: WarningLineProps) {
+  return (
+    <p role="note" className="samograph-warning-line">
+      {formatRenderLine(line)}
+    </p>
+  );
 }

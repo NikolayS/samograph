@@ -37,6 +37,7 @@ describe("FakeShareApiClient — mint/rotate/revoke/get (SPEC §5.7, Story 2)", 
     expect(client.requests).toEqual([
       { path: "/calls/call_1/share", method: "POST" },
       { path: "/calls/call_1/share", method: "DELETE" },
+      { path: "/calls/call_1/share", method: "GET" },
     ]);
   });
 

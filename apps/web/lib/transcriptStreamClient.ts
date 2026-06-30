@@ -68,26 +68,101 @@ interface ApiErrorBody {
   retryable?: unknown;
 }
 
+async function throwTyped(res: Response, fallbackCode: string): Promise<never> {
+  let parsed: ApiErrorBody = {};
+  try {
+    parsed = (await res.json()) as ApiErrorBody;
+  } catch {
+    parsed = {};
+  }
+  const code = typeof parsed.code === "string" ? parsed.code : fallbackCode;
+  const message =
+    typeof parsed.message === "string" ? parsed.message : "Request failed.";
+  const retryable = parsed.retryable === true;
+  throw new AppApiError(code, message, retryable, res.status);
+}
+
+/** Append the auth/replay query a request needs (share token, `?since_seq`). */
+function queryFor(auth: StreamAuth, sinceSeq?: number): string {
+  const params = new URLSearchParams();
+  if (sinceSeq !== undefined) params.set("since_seq", String(sinceSeq));
+  if (auth.kind === "share") params.set("token", auth.token);
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
 /**
  * Real HTTP/WS client used by the Next.js per-call page. The ws-hub / REST
  * backend is the backend track; this is the thin seam that lights up once it
  * exists. Exercised in this issue only through the fake.
- *
- * STUB: REST bodies are placeholders — implemented in the GREEN commit.
  */
 export function createHttpTranscriptStreamClient(
-  _baseUrl = "",
-  _wsBaseUrl = "",
+  baseUrl = "",
+  wsBaseUrl = "",
 ): TranscriptStreamClient {
   return {
-    connect(_params, _onEvent) {
-      return { close() {} };
+    connect(params, onEvent) {
+      const url = `${wsBaseUrl}/calls/${encodeURIComponent(params.callId)}/stream${queryFor(
+        params.auth,
+        params.sinceSeq,
+      )}`;
+      const ws = new WebSocket(url);
+      ws.addEventListener("open", () => onEvent({ type: "open" }));
+      ws.addEventListener("message", (ev: MessageEvent) => {
+        try {
+          onEvent(JSON.parse(String(ev.data)) as TranscriptStreamEvent);
+        } catch {
+          // Drop unparseable frames rather than crash the stream.
+        }
+      });
+      ws.addEventListener("close", (ev: CloseEvent) =>
+        onEvent({ type: "closed", code: ev.code, reason: ev.reason }),
+      );
+      return {
+        close() {
+          ws.close();
+        },
+      };
     },
-    async fetchCallDetail(_ref) {
-      throw new AppApiError("SAMO-STUB", "not implemented", false);
+    async fetchCallDetail(ref) {
+      const res = await fetch(
+        `${baseUrl}/calls/${encodeURIComponent(ref.callId)}${queryFor(ref.auth)}`,
+        { credentials: "same-origin" },
+      );
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
+      const data = (await res.json()) as {
+        id?: unknown;
+        status?: unknown;
+        ingest_degraded?: unknown;
+      };
+      return {
+        id: typeof data.id === "string" ? data.id : ref.callId,
+        status: data.status as CallStatus,
+        degraded: data.ingest_degraded === true,
+      };
     },
-    async backfill(_ref, _sinceSeq) {
-      throw new AppApiError("SAMO-STUB", "not implemented", false);
+    async backfill(ref, sinceSeq) {
+      const res = await fetch(
+        `${baseUrl}/calls/${encodeURIComponent(ref.callId)}/transcript${queryFor(
+          ref.auth,
+          sinceSeq,
+        )}`,
+        { credentials: "same-origin" },
+      );
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
+      const data = (await res.json()) as {
+        lines?: Array<{ seq?: unknown; ts?: unknown; speaker?: unknown; text?: unknown }>;
+      };
+      const rows = Array.isArray(data.lines) ? data.lines : [];
+      return rows
+        .filter(
+          (r): r is { seq: number; ts: string; speaker: string; text: string } =>
+            typeof r.seq === "number" &&
+            typeof r.ts === "string" &&
+            typeof r.speaker === "string" &&
+            typeof r.text === "string",
+        )
+        .map((r) => ({ seq: r.seq, ts: r.ts, speaker: r.speaker, text: r.text }));
     },
   };
 }

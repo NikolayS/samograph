@@ -15,6 +15,9 @@
  */
 import { AppApiError } from "./appApiClient.ts";
 
+// Re-export so callers (and the wire test) get the typed error from one module.
+export { AppApiError };
+
 export interface ShareLink {
   /** The opaque share token (the `/c/<token>` path segment). */
   token: string;
@@ -46,19 +49,66 @@ export function shareUrlForToken(token: string): string {
   return `/c/${token}`;
 }
 
-export function createHttpShareApiClient(_baseUrl = ""): ShareApiClient {
+async function throwTyped(res: Response, fallbackCode: string): Promise<never> {
+  let parsed: ApiErrorBody = {};
+  try {
+    parsed = (await res.json()) as ApiErrorBody;
+  } catch {
+    parsed = {};
+  }
+  const code = typeof parsed.code === "string" ? parsed.code : fallbackCode;
+  const message =
+    typeof parsed.message === "string" ? parsed.message : "Request failed.";
+  const retryable = parsed.retryable === true;
+  throw new AppApiError(code, message, retryable, res.status);
+}
+
+/** Deserialize a `{ token, url }` server body into a typed, active `ShareLink`. */
+function toShareLink(data: { token?: unknown; url?: unknown }): ShareLink {
+  const token = typeof data.token === "string" ? data.token : "";
+  const url = typeof data.url === "string" ? data.url : shareUrlForToken(token);
+  return { token, url, active: true };
+}
+
+export function createHttpShareApiClient(baseUrl = ""): ShareApiClient {
+  const sharePath = (callId: string) =>
+    `${baseUrl}/calls/${encodeURIComponent(callId)}/share`;
+
   return {
-    async mintShare(_callId) {
-      throw new AppApiError("SAMO-STUB", "not implemented", false);
+    async mintShare(callId) {
+      const res = await fetch(sharePath(callId), {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
+      return toShareLink((await res.json()) as { token?: unknown; url?: unknown });
     },
-    async rotateShare(_callId) {
-      throw new AppApiError("SAMO-STUB", "not implemented", false);
+    async rotateShare(callId) {
+      const res = await fetch(`${sharePath(callId)}/rotate`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
+      return toShareLink((await res.json()) as { token?: unknown; url?: unknown });
     },
-    async revokeShare(_callId) {
-      throw new AppApiError("SAMO-STUB", "not implemented", false);
+    async revokeShare(callId) {
+      const res = await fetch(sharePath(callId), {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
     },
-    async getShare(_callId) {
-      throw new AppApiError("SAMO-STUB", "not implemented", false);
+    async getShare(callId) {
+      const res = await fetch(sharePath(callId), { credentials: "same-origin" });
+      // No active share for this call (revoked or never minted).
+      if (res.status === 404) return null;
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
+      const data = (await res.json()) as {
+        token?: unknown;
+        url?: unknown;
+        active?: unknown;
+      };
+      return { ...toShareLink(data), active: data.active !== false };
     },
   };
 }

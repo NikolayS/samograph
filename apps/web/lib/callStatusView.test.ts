@@ -1,12 +1,12 @@
 import { describe, it, expect } from "bun:test";
 import type { CallStatus } from "./appApiClient.ts";
-import { statusView } from "./callStatusView.ts";
+import { statusView, type StatusKind } from "./callStatusView.ts";
 
 describe("statusView — 7 statuses → label/kind/terminal (SPEC §5.2)", () => {
   const cases: Array<{
     status: CallStatus;
     label: string;
-    kind: string;
+    kind: StatusKind;
     message: string;
     isTerminal: boolean;
   }> = [
