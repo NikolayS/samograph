@@ -1,11 +1,24 @@
 /**
  * @samograph/ws-hub — Bun/Hono HTTP + WS service (SPEC §4.1).
  *
- * /calls/:id/stream live transcript fan-out with bounded per-connection queues,
- * backpressure, gap frames, and ?since_seq replay (§6.2 #3) lands in the backend
- * Sprint-2 issue. This foundation stub is a Bun-native request handler with a
- * /health endpoint so the workspace seam exists and is exercised by CI.
+ * The transport-agnostic fan-out CORE — per-`call_id` pub/sub, a bounded
+ * per-subscriber outbound queue (256 msgs / 512 KB), drop-oldest + a single
+ * gap frame (§5.5, §6.2 #3, §5.11) — lives in ./hub.ts and is re-exported
+ * below. Wiring it onto the `/calls/:id/stream` WS upgrade + authorizeCall +
+ * `?since_seq` replay is the WS-upgrade issue; this entrypoint still exposes a
+ * Bun-native request handler with a /health endpoint exercised by CI.
  */
+export {
+  Hub,
+  Subscriber,
+  frameBytes,
+  MAX_QUEUE_MESSAGES,
+  MAX_QUEUE_BYTES,
+  type DataFrame,
+  type GapFrame,
+  type OutboundFrame,
+} from "./hub.ts";
+
 export const SERVICE_NAME = "ws-hub";
 
 export function handler(request: Request): Response {
