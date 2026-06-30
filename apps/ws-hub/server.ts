@@ -88,10 +88,11 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
   const server = Bun.serve<StreamSocketData>({
     port: deps.port ?? 0,
     hostname: deps.hostname,
-    // Long silences are normal on a live call; keep the socket up near Bun's max.
-    // A client reconnect carries `?since_seq` so an idle close loses nothing —
-    // a server-side keepalive ping for arbitrarily long silences is a follow-up.
-    idleTimeout: 960,
+    // Long silences are normal on a live call; hold the socket at Bun's max
+    // idleTimeout (255 s). A client reconnect carries `?since_seq` so an idle
+    // close loses nothing — a server-side keepalive ping for arbitrarily long
+    // silences is a follow-up.
+    idleTimeout: 255,
     async fetch(req, srv): Promise<Response | undefined> {
       const url = new URL(req.url);
       if (url.pathname === "/health") return new Response("ok", { status: 200 });
