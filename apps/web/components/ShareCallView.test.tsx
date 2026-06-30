@@ -13,8 +13,12 @@ installDom();
 
 const TS = "2026-06-29 10:00:00";
 
+// Default PENDING so the async `fetchCallDetail` seed is a deterministic no-op
+// (initial state is already PENDING) — these tests drive status through the
+// stream. A non-PENDING seed left un-awaited would schedule a React render task
+// that outlives happy-dom's teardown ("window is not defined").
 function detail(over: Partial<CallDetail> = {}): CallDetail {
-  return { id: "call_1", status: "IN_CALL", degraded: false, ...over };
+  return { id: "call_1", status: "PENDING", degraded: false, ...over };
 }
 
 describe("ShareCallView — read-only shared transcript (SPEC §4.1, §5.7, Stories 2/6)", () => {
