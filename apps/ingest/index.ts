@@ -1,13 +1,33 @@
 /**
  * @samograph/ingest — Bun/Hono HTTP service (SPEC §4.1).
  *
- * POST /webhook (Recall signature + ingest_secret verify), normalizer, Postgres
- * persistence, fan-out publish, and the leader-elected tunnel watchdog land in
- * the call-path Sprint-2 issues. This foundation stub is a Bun-native request
- * handler whose GET /health echoes the `samograph-health` marker so a regional
+ * The `POST /webhook` authenticity front door (Recall signature + ingest_secret
+ * verify + idempotent dispatch, §5.3) ships in `./webhook.ts` and is re-exported
+ * here. The normalizer, Postgres transcript persistence, fan-out publish, and
+ * the leader-elected tunnel watchdog land in the remaining call-path Sprint-2
+ * issues (#78 / #79). This module also keeps the Bun-native request handler
+ * whose GET /health echoes the `samograph-health` marker so a regional
  * cloudflared named tunnel can pass the `/health` round-trip (§4.5, §8 exit).
  */
 import { HEALTH_MARKER } from "../../src/server.ts";
+
+// The §5.3 webhook authenticity front door (§6.2 #7).
+export {
+  createWebhookHandler,
+  envWebhookSecretProvider,
+  inMemoryWebhookSecretProvider,
+  inMemoryWebhookMetrics,
+  pgLookupCallByBotId,
+  WEBHOOK_MAX_BYTES,
+  type CallIdentity,
+  type Dispatch,
+  type ValidatedEvent,
+  type WebhookHandlerDeps,
+  type WebhookLogger,
+  type WebhookMetrics,
+  type WebhookRejectReason,
+  type WebhookSecretProvider,
+} from "./webhook.ts";
 
 export const SERVICE_NAME = "ingest";
 

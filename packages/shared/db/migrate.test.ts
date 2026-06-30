@@ -24,7 +24,7 @@ d("db migrations (§5.10)", () => {
     // Fresh DB: drop everything our migrations create, then migrate from zero.
     await sql.unsafe(`
       DROP TABLE IF EXISTS
-        transcripts, tokens, workers, audit_log, calls, tenants, users, regions, schema_migrations
+        webhook_events, transcripts, tokens, workers, audit_log, calls, tenants, users, regions, schema_migrations
       CASCADE;
       DROP TYPE IF EXISTS call_status CASCADE;
       DROP FUNCTION IF EXISTS reset_ingest_degraded_on_terminal() CASCADE;
