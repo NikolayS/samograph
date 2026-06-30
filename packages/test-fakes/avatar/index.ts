@@ -8,7 +8,7 @@
  * Everything is a pure function of the seed plus arguments — no `Date.now()`, no
  * randomness, no I/O — so minted tokens are BYTE-STABLE across runs and machines.
  */
-import type { AvatarProvider, AvatarSession } from "../../../src/avatar.ts";
+import type { AvatarProvider, AvatarSession, MintOptions } from "../../../src/avatar.ts";
 
 export interface AvatarFakeOptions {
   seed: string;
@@ -35,15 +35,17 @@ export class AvatarFake implements AvatarProvider {
     this.seed = options.seed;
   }
 
-  async mintSession(personaId: string, voiceId?: string): Promise<AvatarSession> {
+  async mintSession(personaId: string, opts: MintOptions = {}): Promise<AvatarSession> {
     this.minted.push(personaId);
-    // Fold voiceId into the token only when provided, so existing callers that
-    // pass no voice keep their byte-stable token.
-    const key = voiceId ? `${this.seed}|${personaId}|${voiceId}` : `${this.seed}|${personaId}`;
+    // Fold voiceId / autonomous into the token only when set, so existing
+    // callers that pass neither keep their byte-stable token.
+    let key = opts.voiceId ? `${this.seed}|${personaId}|${opts.voiceId}` : `${this.seed}|${personaId}`;
+    if (opts.autonomous) key += "|auto";
     return {
       sessionToken: `sess_${fnv1a32(key)}`,
       personaId,
       expiresAt: null,
+      autonomous: !!opts.autonomous,
     };
   }
 }

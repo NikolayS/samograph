@@ -70,6 +70,18 @@ describe("presence page avatar mode", () => {
     expect(html).toContain("showRobotFullFrame");
   });
 
+  it("autonomous mode feeds the meeting audio (getUserMedia) into the avatar", () => {
+    expect(html).toContain("data.autonomous");
+    expect(html).toContain("getUserMedia");
+    expect(html).toContain('streamToVideoElement("anam-video", inputStream)');
+  });
+
+  it("auto-reconnects on Anam CONNECTION_CLOSED instead of going black", () => {
+    expect(html).toContain("connectAvatar");
+    expect(html).toContain("CONNECTION_CLOSED");
+    expect(html).toContain("avatarReconnectFails");
+  });
+
   it("polls faster in avatar mode (snappier spoken reactions) than other modes", () => {
     expect(html).toContain('backgroundMode === "avatar"');
     expect(html).toContain("? 300 : 2000");

@@ -86,7 +86,7 @@ describe("GET /avatar/session", () => {
           await fetch(`http://localhost:${noVoice.port}/avatar/session`, { headers: READ })
         ).json()) as { sessionToken: string }
       ).sessionToken;
-      const expected = await createAvatarFake({ seed: "s" }).mintSession("p1", "v1");
+      const expected = await createAvatarFake({ seed: "s" }).mintSession("p1", { voiceId: "v1" });
       expect(t1).toBe(expected.sessionToken);
       expect(t1).not.toBe(t2);
     } finally {

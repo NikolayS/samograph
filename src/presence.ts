@@ -545,22 +545,22 @@ export function presencePageHtml(): string {
     // we never call sendUserMessage). Any failure falls back to the static
     // robot avatar so the bot camera is never blank.
     let avatarClient = null;
-    async function initAvatar() {
-      // Keep the dashboard in the DOM for now: the full-frame video covers it,
-      // and the static-avatar fallback needs the #robot image (a child of the
-      // dashboard) to still exist. Only remove the dashboard once the avatar
-      // stream is actually live.
-      document.body.style.background = "#000";
-      const video = document.createElement("video");
-      video.id = "anam-video";
-      video.autoplay = true;
-      video.playsInline = true;
-      // Deliberately NOT muted: Recall captures this page's audio into the call,
-      // so the avatar's voice must play. (muted is a boolean attribute — setting
-      // it at all, even to false, silences the element.)
-      video.style.cssText =
-        "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:2147483646;";
-      document.body.appendChild(video);
+    let avatarConnecting = false;
+    let avatarReconnectFails = 0;
+    function avatarFallback() {
+      const v = document.getElementById("anam-video");
+      if (v) v.remove();
+      showRobotFullFrame();
+    }
+    // Connect (or re-connect) the Anam stream into #anam-video. Anam ends a
+    // session at the plan's max-length cap (and on any network drop) and ships
+    // NO built-in reconnect, so on AnamEvent.CONNECTION_CLOSED we re-mint a fresh
+    // token and re-stream — the avatar refreshes itself silently instead of
+    // going black. Repeated failures back off and eventually fall back to the
+    // static robot avatar.
+    async function connectAvatar() {
+      if (avatarConnecting) return;
+      avatarConnecting = true;
       try {
         const resp = await fetch("/avatar/session", {
           cache: "no-store",
@@ -568,27 +568,78 @@ export function presencePageHtml(): string {
         });
         const data = await resp.json();
         if (!data || !data.enabled || !data.sessionToken) {
-          console.warn("[avatar] session not enabled; falling back to static avatar");
-          video.remove();
-          showRobotFullFrame();
+          console.warn("[avatar] session not enabled; static fallback");
+          avatarFallback();
           return;
         }
         // Pinned ESM build off the CDN the official Anam quickstart uses; esm.sh
         // polyfills the SDK's node:buffer dependency for the browser.
         const mod = await import("https://esm.sh/@anam-ai/js-sdk@4.17.1");
-        const client = mod.createClient(data.sessionToken, { disableInputAudio: true });
-        await client.streamToVideoElement("anam-video");
+        // AUTONOMOUS: the persona's own brain hears the meeting and replies on its
+        // own. Recall exposes the meeting audio to this page as the browser
+        // microphone, so leave input audio ENABLED and hand that mic stream to
+        // Anam as the avatar's ears. TALK-ONLY: disable input audio; the agent
+        // drives every word via the speak queue / talk().
+        let inputStream = null;
+        const client = data.autonomous
+          ? mod.createClient(data.sessionToken)
+          : mod.createClient(data.sessionToken, { disableInputAudio: true });
+        if (data.autonomous) {
+          try {
+            // getUserMedia inside a Recall output-media page returns the MEETING
+            // audio (mic auto-granted); its first audio track is the room.
+            inputStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (e) {
+            console.warn("[avatar] could not capture meeting audio for autonomous mode", e);
+          }
+        }
+        if (mod.AnamEvent && mod.AnamEvent.CONNECTION_CLOSED) {
+          client.addListener(mod.AnamEvent.CONNECTION_CLOSED, function () {
+            console.warn("[avatar] connection closed; reconnecting");
+            avatarClient = null;
+            setTimeout(connectAvatar, Math.min(800 * Math.pow(2, avatarReconnectFails), 8000));
+          });
+        }
+        if (inputStream) {
+          await client.streamToVideoElement("anam-video", inputStream);
+        } else {
+          await client.streamToVideoElement("anam-video");
+        }
         avatarClient = client;
-        // Stream is live and the full-frame video covers everything — now drop
-        // the dashboard (header/lanes/footer) so nothing peeks through.
+        avatarReconnectFails = 0;
+        // Stream is live and the full-frame video covers everything — drop the
+        // dashboard (header/lanes/footer) so nothing peeks through.
         const root = document.querySelector(".samograph-presence");
         if (root) root.remove();
-        console.log("[avatar] connected to Anam persona " + (data.personaId || ""));
+        console.log("[avatar] connected");
       } catch (err) {
-        console.error("[avatar] init failed; falling back to static avatar", err);
-        video.remove();
-        showRobotFullFrame();
+        console.error("[avatar] connect failed", err);
+        avatarReconnectFails += 1;
+        if (avatarReconnectFails >= 6) {
+          console.error("[avatar] giving up after repeated failures; static fallback");
+          avatarFallback();
+        } else {
+          setTimeout(connectAvatar, Math.min(800 * Math.pow(2, avatarReconnectFails), 8000));
+        }
+      } finally {
+        avatarConnecting = false;
       }
+    }
+    function initAvatar() {
+      // The full-frame video covers the dashboard; the static-avatar fallback
+      // still needs the #robot image (a child of the dashboard), so the
+      // dashboard is only removed once the stream is actually live.
+      document.body.style.background = "#000";
+      const video = document.createElement("video");
+      video.id = "anam-video";
+      video.autoplay = true;
+      video.playsInline = true;
+      // Deliberately NOT muted: Recall captures this page's audio into the call,
+      // so the avatar's voice must play.
+      video.style.cssText =
+        "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:2147483646;";
+      document.body.appendChild(video);
+      connectAvatar();
     }
     // Speak each new presence.speak line via the avatar's talk() command. Like
     // the chime cue, the first poll only establishes a baseline so a line

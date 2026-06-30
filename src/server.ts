@@ -377,6 +377,12 @@ export interface ServeOptions {
   // Optional voice override (mint-time) so the avatar voice can change without
   // re-publishing the persona.
   avatarVoiceId?: string | null;
+  // Autonomous mode: mint a real-brain persona that listens to the meeting and
+  // replies on its own. avatarSystemPrompt governs when/how it speaks; avatarLlmId
+  // overrides the default brain model. Off => agent-driven talk-only.
+  avatarAutonomous?: boolean | null;
+  avatarLlmId?: string | null;
+  avatarSystemPrompt?: string | null;
 }
 
 export interface LatestVideoFrame {
@@ -555,13 +561,19 @@ export function serve(
           return Response.json({ enabled: false }, { headers: noStore });
         }
         try {
-          const session = await provider.mintSession(personaId, opts.avatarVoiceId ?? undefined);
+          const session = await provider.mintSession(personaId, {
+            voiceId: opts.avatarVoiceId ?? undefined,
+            autonomous: !!opts.avatarAutonomous,
+            llmId: opts.avatarLlmId ?? undefined,
+            systemPrompt: opts.avatarSystemPrompt ?? undefined,
+          });
           return Response.json(
             {
               enabled: true,
               personaId: session.personaId,
               sessionToken: session.sessionToken,
               expiresAt: session.expiresAt,
+              autonomous: session.autonomous,
             },
             { headers: noStore },
           );
