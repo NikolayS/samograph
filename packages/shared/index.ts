@@ -66,3 +66,29 @@ export {
   recallSignature,
   verifyRecallSignature,
 } from "./recall/signature.ts";
+
+// The §5.11 observability surface (#87): the metrics registry that aggregates
+// the already-emitted counters, the Prometheus `/metrics` endpoint, the
+// tenant-context-enforcing structured logger, and the §9 activation-funnel
+// aggregator that feeds the W1-activation dashboard.
+export {
+  MetricsRegistry,
+  COUNTER_SPECS,
+  nearestRankPercentiles,
+  aggregateFunnel,
+  FUNNEL_STAGES,
+  buildLogRecord,
+  formatLogLine,
+  createLogger,
+  MissingLogContextError,
+  metricsHttpHandler,
+  METRICS_CONTENT_TYPE,
+  type CounterName,
+  type PickupLatencySummary,
+  type ActivationEvent,
+  type FunnelSnapshot,
+  type FunnelStage,
+  type LogContext,
+  type LogLevel,
+  type StructuredLogRecord,
+} from "./observe/index.ts";
