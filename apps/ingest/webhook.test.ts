@@ -56,7 +56,7 @@ function harness(overrides: Partial<WebhookHandlerDeps> = {}) {
       return botId === fake.botId ? identity : null;
     },
     sql: FORBIDDEN_SQL,
-    dispatch: async (e) => {
+    dispatch: async (_tx, e) => {
       dispatched.push(e);
     },
     metrics,
@@ -261,7 +261,7 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
       secretProvider: inMemoryWebhookSecretProvider(fake.webhookSecret),
       lookupCallByBotId: pgLookupCallByBotId(sql),
       sql,
-      dispatch: async (e) => {
+      dispatch: async (_tx, e) => {
         dispatched.push(e);
       },
       metrics,

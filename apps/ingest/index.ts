@@ -29,6 +29,20 @@ export {
   type WebhookSecretProvider,
 } from "./webhook.ts";
 
+// The §5.4 transcript pipeline: validated transcript.data → append-only
+// `transcripts` row (monotonic seq) + per-call publish + `first_line_at` once +
+// `transcript_lines_total{region}` (#78). `createTranscriptPipeline(...).dispatch`
+// is the typed seam the webhook front door subscribes to.
+export {
+  createTranscriptPipeline,
+  inMemoryTranscriptMetrics,
+  splitCanonicalLine,
+  type CanonicalLineParts,
+  type TranscriptMetrics,
+  type TranscriptPipeline,
+  type TranscriptPipelineDeps,
+} from "./transcriptPipeline.ts";
+
 export const SERVICE_NAME = "ingest";
 
 export function handler(request: Request): Response {
