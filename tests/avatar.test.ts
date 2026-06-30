@@ -87,6 +87,13 @@ describe("anam avatar provider", () => {
     expect(session.expiresAt).toBe("2026-06-30T00:10:00.000Z");
   });
 
+  it("includes voiceId in personaConfig when an override is provided", async () => {
+    process.env.ANAM_API_KEY = "anam-secret-key";
+    const { fetchFn, calls } = makeFakeFetch(() => jsonResponse({ sessionToken: "t" }));
+    await makeAnamAvatarProvider(fetchFn).mintSession("persona-9", "voice-9");
+    expect(calls[0]!.body).toEqual({ personaConfig: { personaId: "persona-9", voiceId: "voice-9" } });
+  });
+
   it("mintSession throws before any network call when ANAM_API_KEY is unset", async () => {
     delete process.env.ANAM_API_KEY;
     const { fetchFn, calls } = makeFakeFetch(() => jsonResponse({ sessionToken: "x" }));

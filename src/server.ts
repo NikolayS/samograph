@@ -374,6 +374,9 @@ export interface ServeOptions {
   // falls back to the static presence avatar.
   avatarProvider?: AvatarProvider | null;
   avatarPersonaId?: string | null;
+  // Optional voice override (mint-time) so the avatar voice can change without
+  // re-publishing the persona.
+  avatarVoiceId?: string | null;
 }
 
 export interface LatestVideoFrame {
@@ -552,7 +555,7 @@ export function serve(
           return Response.json({ enabled: false }, { headers: noStore });
         }
         try {
-          const session = await provider.mintSession(personaId);
+          const session = await provider.mintSession(personaId, opts.avatarVoiceId ?? undefined);
           return Response.json(
             {
               enabled: true,

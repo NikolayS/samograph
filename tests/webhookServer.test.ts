@@ -245,7 +245,7 @@ describe("webhook handler", () => {
       expect(html).toContain("backgroundMode");
       // unknown bg values fall back to the robot avatar (the default look)
       expect(html).toContain(
-        "[\"robot\", \"sphere\", \"field\", \"static\", \"cycle\"].includes(bgParam) ? bgParam : \"robot\"",
+        "[\"robot\", \"sphere\", \"field\", \"static\", \"cycle\", \"avatar\"].includes(bgParam) ? bgParam : \"robot\"",
       );
       expect(html).toContain("backgroundMode === \"cycle\"");
       expect(html).toContain("const frameMs = 100");

@@ -35,8 +35,12 @@ export interface AvatarSession {
 export interface AvatarProvider {
   /** Stable provider identifier (e.g. "anam"). */
   readonly name: string;
-  /** Mint a short-lived browser session token for `personaId`. */
-  mintSession(personaId: string): Promise<AvatarSession>;
+  /**
+   * Mint a short-lived browser session token for `personaId`. An optional
+   * `voiceId` overrides the persona's published voice at mint time (so the
+   * voice can be changed without re-publishing the persona).
+   */
+  mintSession(personaId: string, voiceId?: string): Promise<AvatarSession>;
 }
 
 /**
@@ -60,21 +64,24 @@ export function makeAnamAvatarProvider(fetchFn: FetchFn = fetch): AvatarProvider
   return {
     name: "anam",
 
-    async mintSession(personaId: string): Promise<AvatarSession> {
+    async mintSession(personaId: string, voiceId?: string): Promise<AvatarSession> {
       // Read the key first: if it is unset we throw before touching the network,
       // so a missing-secret deployment never makes an unauthenticated request.
       const key = anamApiKey();
+      // A published/saved ("stateful") persona is referenced by id nested under
+      // personaConfig. A bare top-level { personaId } mints a LEGACY token that
+      // the current SDK rejects ("Legacy session tokens are no longer
+      // supported"), so it must be nested. An optional voiceId overrides the
+      // persona's published voice without re-publishing it.
+      const personaConfig: { personaId: string; voiceId?: string } = { personaId };
+      if (voiceId) personaConfig.voiceId = voiceId;
       const r = await fetchFn(`${ANAM_BASE}/auth/session-token`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
         },
-        // A published/saved ("stateful") persona is referenced by id nested
-        // under personaConfig. A bare top-level { personaId } mints a LEGACY
-        // token that the current SDK rejects ("Legacy session tokens are no
-        // longer supported"), so it must be nested.
-        body: JSON.stringify({ personaConfig: { personaId } }),
+        body: JSON.stringify({ personaConfig }),
         signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) {

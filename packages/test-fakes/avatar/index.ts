@@ -35,10 +35,13 @@ export class AvatarFake implements AvatarProvider {
     this.seed = options.seed;
   }
 
-  async mintSession(personaId: string): Promise<AvatarSession> {
+  async mintSession(personaId: string, voiceId?: string): Promise<AvatarSession> {
     this.minted.push(personaId);
+    // Fold voiceId into the token only when provided, so existing callers that
+    // pass no voice keep their byte-stable token.
+    const key = voiceId ? `${this.seed}|${personaId}|${voiceId}` : `${this.seed}|${personaId}`;
     return {
-      sessionToken: `sess_${fnv1a32(`${this.seed}|${personaId}`)}`,
+      sessionToken: `sess_${fnv1a32(key)}`,
       personaId,
       expiresAt: null,
     };

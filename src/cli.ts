@@ -81,6 +81,9 @@ options:
                          ANAM_API_KEY + a persona via --anam-persona)
   --anam-persona ID      Anam persona id for --presence-bg avatar (env fallback:
                          SAMOGRAPH_ANAM_PERSONA_ID)
+  --anam-voice ID        Anam voice id override for the avatar; changes the voice
+                         without re-publishing the persona (env fallback:
+                         SAMOGRAPH_ANAM_VOICE_ID)
   --chime NAME           Default chat chime for the session, played into the
                          call audio when the bot posts a meeting-chat message
                          (default: blip). See: samograph chimes
@@ -220,7 +223,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--anam-persona", "--intro-text", "--chime"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--anam-persona", "--anam-voice", "--intro-text", "--chime"]),
     intro: new Set(["--bot-id", "--intro-text"]),
     leave: new Set(),
     status: new Set(),
@@ -348,6 +351,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         );
       }
       result.anam_persona = (opts["--anam-persona"] as string) ?? null;
+      result.anam_voice = (opts["--anam-voice"] as string) ?? null;
       result.intro = opts["--intro"] === true;
       result.intro_text = (opts["--intro-text"] as string) ?? null;
       // Session default chime. Validate eagerly (like --variant/--presence-bg)

@@ -21,7 +21,12 @@ export function resolveServeOptions(
   env: Record<string, string | undefined> = process.env,
 ): Pick<
   ServeOptions,
-  "webhookToken" | "frameToken" | "presenceToken" | "presenceWriteToken" | "avatarPersonaId"
+  | "webhookToken"
+  | "frameToken"
+  | "presenceToken"
+  | "presenceWriteToken"
+  | "avatarPersonaId"
+  | "avatarVoiceId"
 > & {
   publicBase: string;
 } {
@@ -35,6 +40,7 @@ export function resolveServeOptions(
     // ANAM_API_KEY via makeAnamAvatarProvider. Both arrive via the inherited
     // env when join spawns _serve (spawnDetached merges process.env).
     avatarPersonaId: args.anam_persona || env.SAMOGRAPH_ANAM_PERSONA_ID || "",
+    avatarVoiceId: args.anam_voice || env.SAMOGRAPH_ANAM_VOICE_ID || "",
     publicBase: args.public_base || env.SAMOGRAPH_PUBLIC_BASE || "",
   };
 }
