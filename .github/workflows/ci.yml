@@ -78,8 +78,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: DB integration tests (migrations + RLS + tokens + orchestrator + magic-link + tenancy gate + calls, no mocks)
-        run: bun test packages/shared/db packages/shared/tokens apps/bot-orchestrator apps/app-api/auth/pg-user-store.test.ts packages/shared/auth apps/app-api/calls/http.db.test.ts
+      - name: DB integration tests (full suite under Postgres — DB-gated tests auto-run via DATABASE_URL; no per-PR path edits)
+        # Run the WHOLE suite with DATABASE_URL set so every DB-gated test executes
+        # (each skips cleanly when DATABASE_URL is unset, e.g. in the Test-and-build job).
+        # Avoids the hand-maintained path list that caused serial ci.yml merge
+        # conflicts on every backend PR in Sprint 1 (#65). New DB tests need NO ci.yml edit.
+        run: bun test
 
   # Label-gated single-tenant benchmark runner for the WS publisher-latency SLO
   # (SPEC §6.2 #3). The assertion only runs on a runner with single-tenant
