@@ -75,6 +75,15 @@ export class Subscriber {
   /** Logical enqueue/drop operations, for bounded-work assertions. */
   private ops = 0;
 
+  /**
+   * FLUSH-ON-PUBLISH hook (#83 review gap, #99). When set, {@link Hub.publish}
+   * invokes it right after enqueuing a frame so the owning connection drains the
+   * queue to its socket immediately — without it the Hub fills the queue but
+   * nothing ever pushes to the wire. Left `null` for non-WS consumers (e.g. the
+   * latency benchmark) so the hot path is untouched.
+   */
+  onEnqueue: (() => void) | null = null;
+
   constructor(readonly callId: string) {}
 
   /** Outstanding data-frame count (gap control frame excluded). */
@@ -214,6 +223,15 @@ export class Hub {
       const dropped = sub._enqueue(frame);
       if (dropped > 0) {
         this.droppedByCall.set(callId, (this.droppedByCall.get(callId) ?? 0) + dropped);
+      }
+      // Flush-on-publish: push the just-queued frame(s) to the connection's socket
+      // (#99). A throwing/closed socket must not stall fan-out to other subscribers.
+      if (sub.onEnqueue) {
+        try {
+          sub.onEnqueue();
+        } catch {
+          /* a slow/closed socket never blocks the others in the channel (§5.5) */
+        }
       }
     }
   }

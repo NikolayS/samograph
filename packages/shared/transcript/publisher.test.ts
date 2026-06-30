@@ -6,10 +6,16 @@
  * lifecycle (#79) publish onto, and what ws-hub (#83) consumes — so these tests
  * pin the seam contract with NO Postgres, NO ws-hub, NO tokens.
  */
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { connect } from "../db/client.ts";
+import { migrate } from "../db/migrate.ts";
 import {
   InMemoryTranscriptPublisher,
+  PgListenNotifyPublisher,
   createInMemoryTranscriptPublisher,
+  encodeSignal,
+  parseSignal,
   transcriptChannel,
   type TranscriptControlFrame,
   type TranscriptLineFrame,
@@ -72,6 +78,75 @@ describe("TranscriptPublisher in-memory fake (§5.5)", () => {
     expect(pub.framesFor("call-A")).toEqual([lineFrame("call-A", 1), warning]);
     // Control frames are not lines.
     expect(pub.linesFor("call-A").map((f) => f.seq)).toEqual([1]);
+  });
+});
+
+describe("encodeSignal / parseSignal — the 8 KB-safe NOTIFY payload (#98)", () => {
+  it("reduces a line frame to a tiny { k:'line', call_id, seq } signal (no text)", () => {
+    const frame = lineFrame("call-A", 42);
+    const sig = encodeSignal(frame);
+    expect(sig).toEqual({ k: "line", call_id: "call-A", seq: 42 });
+    // The signal is constant-size regardless of utterance length — the #98 fix.
+    const huge = { ...frame, text: "x".repeat(20_000) };
+    expect(JSON.stringify(encodeSignal(huge))).toBe(JSON.stringify(sig));
+    expect(JSON.stringify(encodeSignal(huge)).length).toBeLessThan(120);
+  });
+
+  it("carries a (small, seq-less) control frame inline as { k:'ctl', frame }", () => {
+    const warning: TranscriptControlFrame = { type: "warning", call_id: "call-A", text: "tunnel unreachable" };
+    expect(encodeSignal(warning)).toEqual({ k: "ctl", frame: warning });
+  });
+
+  it("round-trips a line and a control signal through parse", () => {
+    const line = encodeSignal(lineFrame("c1", 9));
+    expect(parseSignal(JSON.stringify(line))).toEqual(line);
+    const ctl = encodeSignal({ type: "status", call_id: "c1", status: "IN_CALL" });
+    expect(parseSignal(JSON.stringify(ctl))).toEqual(ctl);
+  });
+
+  it("rejects malformed / non-signal payloads as null", () => {
+    for (const bad of ["", "not json", "null", "[]", '{"k":"line"}', '{"k":"line","call_id":"c"}', '{"k":"ctl"}', '{"k":"nope"}']) {
+      expect(parseSignal(bad)).toBeNull();
+    }
+  });
+});
+
+// ─── DB-gated: the actual 8 KB pg_notify cap, against real Postgres (#98) ──────
+const HAVE_DB = !!process.env.DATABASE_URL;
+const d = HAVE_DB ? describe : describe.skip;
+
+d("PgListenNotifyPublisher — long utterance can't roll back the dedup tx (#98)", () => {
+  let sql: ReturnType<typeof connect>;
+  beforeAll(async () => {
+    sql = connect();
+    await migrate(sql);
+  });
+  afterAll(async () => {
+    await sql`DELETE FROM webhook_events WHERE bot_id LIKE 'wh-8kb-%'`;
+    await sql.close();
+  });
+
+  it("a >8 KB line published INSIDE a tx does not throw, and the tx commits", async () => {
+    const pub = new PgListenNotifyPublisher(sql);
+    const botId = `wh-8kb-${randomUUID()}`;
+    const eventId = `evt-${randomUUID()}`;
+    const callId = randomUUID();
+    // 9000-byte utterance > the hard 8000-byte pg_notify payload cap. The OLD
+    // impl put the full frame JSON in the payload → 'payload string too long'
+    // thrown INSIDE the tx → the wrapping dedup tx (the marker insert) rolls back.
+    const frame: TranscriptLineFrame = {
+      type: "line", call_id: callId, seq: 7, ts: "2026-01-01 00:00:00", speaker: "Alice", text: "x".repeat(9000),
+    };
+
+    await sql.begin(async (tx) => {
+      // Stand in for the §93 dedup-ledger write that wraps publish.
+      await tx`INSERT INTO webhook_events (bot_id, recall_event_id) VALUES (${botId}, ${eventId})`;
+      await pub.publish(frame, tx); // GREEN: signal-only payload, never overflows
+    });
+
+    // The wrapping tx COMMITTED — the marker row survived (proves no rollback).
+    const rows = await sql`SELECT 1 AS ok FROM webhook_events WHERE bot_id = ${botId} AND recall_event_id = ${eventId}`;
+    expect(rows.length).toBe(1);
   });
 });
 
