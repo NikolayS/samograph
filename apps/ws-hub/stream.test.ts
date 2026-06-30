@@ -33,6 +33,7 @@ import {
   type StreamSocket,
   type PrepareStreamResult,
 } from "./stream.ts";
+import { ShareCaps } from "./caps.ts";
 
 // ─── fakes / helpers ────────────────────────────────────────────────────────
 
@@ -226,6 +227,53 @@ describe("StreamConnection backfill-then-live (no DB)", () => {
   });
 });
 
+describe("StreamConnection share caps wiring (no DB)", () => {
+  function shareConn(caps: ShareCaps, capKey: string | undefined, scope: "read" | "share") {
+    const hub = new Hub();
+    const socket = new FakeSocket();
+    const conn = new StreamConnection({
+      socket,
+      hub,
+      callId: "call-1",
+      scope,
+      subscriber: hub.subscribe("call-1"),
+      initialSeq: 0,
+      reauthorize: async () => true,
+      caps,
+      capKey,
+      clockMs: () => 0, // pinned clock: the command window never slides here
+    });
+    return { conn, socket };
+  }
+
+  it("a share connection's command() enforces the per-connection command cap", () => {
+    const caps = new ShareCaps({ commandsPerWindow: 2 });
+    const { conn } = shareConn(caps, "tok-key", "share");
+    expect(conn.command().allowed).toBe(true);
+    expect(conn.command().allowed).toBe(true);
+    const over = conn.command();
+    expect(over.allowed).toBe(false); // the 3rd command exceeds the cap of 2
+    expect(over.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it("a read connection is NEVER share-command-capped, even with caps present", () => {
+    const caps = new ShareCaps({ commandsPerWindow: 2 });
+    const { conn } = shareConn(caps, undefined, "read");
+    for (let i = 0; i < 10; i++) expect(conn.command().allowed).toBe(true);
+  });
+
+  it("a share connection releases its concurrent slot on close()", () => {
+    const caps = new ShareCaps();
+    caps.tryEstablish("tok-key", 0); // the slot reserved at establish time
+    expect(caps.concurrent("tok-key")).toBe(1);
+    const { conn } = shareConn(caps, "tok-key", "share");
+    conn.close();
+    expect(caps.concurrent("tok-key")).toBe(0); // freed exactly once on close
+    conn.close(); // idempotent — does not double-release
+    expect(caps.concurrent("tok-key")).toBe(0);
+  });
+});
+
 // =============================================================================
 // 2. DB-backed — real Postgres, real RLS, real tenancy gate + verifier.
 // =============================================================================
@@ -282,6 +330,15 @@ d("GET /calls/:id/stream — DB-backed (§5.5 / §5.6 / §6.2 #3/#4)", () => {
     const prepared = await prepareStream(sql, req, authDeps);
     if (!prepared.ok) return { opened: false as const, response: prepared.response };
     const conn = await openStream(socket, prepared, { sql, hub, authDeps });
+    return { opened: true as const, conn, scope: prepared.scope };
+  }
+
+  /** Same wiring, but with the share caps threaded through prepare + open. */
+  async function upgradeWithCaps(socket: FakeSocket, hub: Hub, req: Request, caps: ShareCaps) {
+    const deps = { ...authDeps, caps };
+    const prepared = await prepareStream(sql, req, deps);
+    if (!prepared.ok) return { opened: false as const, response: prepared.response };
+    const conn = await openStream(socket, prepared, { sql, hub, authDeps: deps, caps });
     return { opened: true as const, conn, scope: prepared.scope };
   }
 
@@ -472,5 +529,92 @@ d("GET /calls/:id/stream — DB-backed (§5.5 / §5.6 / §6.2 #3/#4)", () => {
     expect(socket.closedWith).not.toBeNull();
     expect(elapsed).toBeLessThan(1000);
     expect(hub.subscriberCount(callA)).toBe(0); // unsubscribed on close
+  });
+
+  // ── §6.2 #10: share caps wired onto the upgrade (over-cap → 429 + Retry-After) ─
+  it("a share upgrade over the concurrent cap → 429 SAMO-RATE-001 + Retry-After; closing frees a slot", async () => {
+    const caps = new ShareCaps({ maxConcurrent: 1 });
+    const { token } = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+
+    // 1st share connection on the token is admitted and opens.
+    const s1 = new FakeSocket();
+    const r1 = await upgradeWithCaps(s1, new Hub(), streamReq(callA, { token, since: 100 }), caps);
+    expect(r1.opened).toBe(true);
+
+    // 2nd concurrent connection on the SAME token exceeds the cap → 429, no socket.
+    const s2 = new FakeSocket();
+    const r2 = await upgradeWithCaps(s2, new Hub(), streamReq(callA, { token, since: 100 }), caps);
+    expect(r2.opened).toBe(false);
+    if (!r2.opened) {
+      expect(r2.response.status).toBe(429);
+      expect(r2.response.headers.get("Retry-After")).not.toBeNull();
+      expect(((await r2.response.json()) as { code: string }).code).toBe("SAMO-RATE-001");
+    }
+    expect(s2.sent.length).toBe(0); // nothing streamed to a rejected upgrade
+
+    // Closing the 1st frees the single slot → a new connection is admitted again.
+    if (r1.opened) r1.conn.close();
+    const s3 = new FakeSocket();
+    const r3 = await upgradeWithCaps(s3, new Hub(), streamReq(callA, { token, since: 100 }), caps);
+    expect(r3.opened).toBe(true);
+  });
+
+  it("read connections are NOT subject to share caps: a 0-slot cap admits read but rejects share", async () => {
+    const caps = new ShareCaps({ maxConcurrent: 0 }); // zero share slots
+
+    // A session (read) upgrade still opens — read is never share-capped.
+    const sRead = new FakeSocket();
+    const rRead = await upgradeWithCaps(sRead, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), caps);
+    expect(rRead.opened).toBe(true);
+    if (rRead.opened) expect(rRead.scope).toBe("read");
+
+    // A share upgrade under the same 0-slot cap is rejected → the cap is on the share path.
+    const { token } = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    const sShare = new FakeSocket();
+    const rShare = await upgradeWithCaps(sShare, new Hub(), streamReq(callA, { token, since: 100 }), caps);
+    expect(rShare.opened).toBe(false);
+    if (!rShare.opened) expect(rShare.response.status).toBe(429);
+  });
+
+  // ── §6.2 #10 AC#5: revoke kills the token's share sockets only ──────────────
+  it("revoke closes the token's share socket but leaves a read connection AND a different share token open", async () => {
+    const s1 = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    const s2 = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+
+    const sockS1 = new FakeSocket();
+    const sockS2 = new FakeSocket();
+    const sockRead = new FakeSocket();
+    const hub = new Hub();
+    const connS1 = await upgrade(sockS1, hub, streamReq(callA, { token: s1.token, since: 100 }));
+    const connS2 = await upgrade(sockS2, hub, streamReq(callA, { token: s2.token, since: 100 }));
+    const connRead = await upgrade(sockRead, hub, streamReq(callA, { cookie: "cookie-A", since: 100 }));
+    expect(connS1.opened && connS2.opened && connRead.opened).toBe(true);
+    if (!connS1.opened || !connS2.opened || !connRead.opened) return;
+
+    // Revoke ONLY share token s1.
+    expect(await revokeToken(sql, s1.jti)).toBe(true);
+
+    // Next recheck (no cache): s1 closes within the SLO; s2 + read stay open.
+    const t0 = performance.now();
+    const okS1 = await connS1.conn.recheck();
+    const elapsed = performance.now() - t0;
+    const okS2 = await connS2.conn.recheck();
+    const okRead = await connRead.conn.recheck();
+    console.log(
+      `[stream/share-revoke-isolation] s1→close=${elapsed.toFixed(1)}ms s2.open=${okS2} read.open=${okRead}`,
+    );
+
+    expect(okS1).toBe(false);
+    expect(connS1.conn.isClosed()).toBe(true);
+    expect(sockS1.closedWith).not.toBeNull();
+    expect(elapsed).toBeLessThan(1000);
+
+    expect(okS2).toBe(true); // a DIFFERENT share token on the same call is unaffected
+    expect(connS2.conn.isClosed()).toBe(false);
+    expect(sockS2.closedWith).toBeNull();
+
+    expect(okRead).toBe(true); // the read connection on the same call is unaffected
+    expect(connRead.conn.isClosed()).toBe(false);
+    expect(sockRead.closedWith).toBeNull();
   });
 });

@@ -60,6 +60,20 @@ export {
   type CallCredentials,
 } from "./request.ts";
 
+export {
+  ShareCaps,
+  shareCapKey,
+  rateLimitedResponse,
+  SHARE_MAX_CONCURRENT,
+  SHARE_COMMANDS_PER_WINDOW,
+  SHARE_COMMAND_WINDOW_MS,
+  SHARE_ESTABLISH_PER_WINDOW,
+  SHARE_ESTABLISH_WINDOW_MS,
+  RATE_LIMIT_ERROR_CODE,
+  type ShareCapsConfig,
+  type CapDecision,
+} from "./caps.ts";
+
 export const SERVICE_NAME = "ws-hub";
 
 export function handler(request: Request): Response {
