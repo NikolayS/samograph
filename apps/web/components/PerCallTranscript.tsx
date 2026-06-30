@@ -109,6 +109,11 @@ export function PerCallTranscript({
     let streamEventArrived = false;
     let dead = false;
     let cancelled = false;
+    // Reconnect backoff: 0 ⇒ the first drop resumes immediately (snappy); each
+    // further drop with no intervening downstream traffic backs off, so a
+    // persistently-closing socket can't busy-loop. Reset by any real frame.
+    let reconnectAttempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const makeRef = (): CallRef => ({
       callId: callIdRef.current,
@@ -143,17 +148,27 @@ export function PerCallTranscript({
     };
 
     const scheduleReconnect = () => {
-      // Deferred so we never re-enter the fake's synchronous delivery loop while
-      // it is still iterating subscribers (a same-tick reconnect would spin).
-      queueMicrotask(() => {
+      const run = () => {
         if (cancelled || dead) return;
         handleRef.current?.close();
         open();
-      });
+      };
+      const delay =
+        reconnectAttempts === 0
+          ? 0
+          : Math.min(500 * 2 ** (reconnectAttempts - 1), 10_000);
+      reconnectAttempts += 1;
+      // The first reconnect is deferred to a microtask (never re-enter the fake's
+      // synchronous delivery loop); later ones use a backing-off timer.
+      if (delay === 0) queueMicrotask(run);
+      else reconnectTimer = setTimeout(run, delay);
     };
 
     const onEvent = (event: TranscriptStreamEvent) => {
       if (cancelled) return;
+      // Real downstream traffic means the connection works — reset the backoff so
+      // the next genuine drop resumes immediately. (`open`/`closed` don't count.)
+      if (event.type !== "open" && event.type !== "closed") reconnectAttempts = 0;
       switch (event.type) {
         case "open":
           streamEventArrived = true;
@@ -221,6 +236,7 @@ export function PerCallTranscript({
     return () => {
       cancelled = true;
       dead = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       handleRef.current?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps — auth read via ref; key gates re-subscribe.
