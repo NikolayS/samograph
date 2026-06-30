@@ -131,6 +131,21 @@ export class ShareCaps {
   }
 
   /**
+   * Drop a connection's command-rate state (#102 review note). The per-connection
+   * sliding window in {@link commandsByConn} is otherwise never reclaimed, so a
+   * long-lived hub would leak one array per connection ever opened. The stream
+   * connection calls this on close, keyed on its connection id.
+   */
+  forgetConnection(connectionKey: string): void {
+    this.commandsByConn.delete(connectionKey);
+  }
+
+  /** Whether any command-rate state is retained for a connection (observability / tests). */
+  tracksConnection(connectionKey: string): boolean {
+    return this.commandsByConn.has(connectionKey);
+  }
+
+  /**
    * Admit a client→server command on `connectionKey`, or deny it (20 / 60 s,
    * sliding). A DENY does not consume a slot, so the window frees as the oldest
    * command ages out.

@@ -266,6 +266,22 @@ export class StreamConnection {
     return this.lastSeq;
   }
 
+  /** The per-connection id the share command-rate cap is keyed on (close pruning). */
+  connectionId(): string {
+    return this.connId;
+  }
+
+  /**
+   * Turn on FLUSH-ON-PUBLISH (#99): wire the Hub subscriber so each published
+   * frame is drained to the socket immediately. Call this ONCE, AFTER the initial
+   * backfill/replay has been sent (so a frame queued during the read is delivered
+   * in order by that first {@link flush}, not interleaved ahead of the backfill).
+   */
+  enableAutoFlush(): void {
+    if (this.closed) return;
+    this.subscriber.onEnqueue = () => this.flush();
+  }
+
   /** Whether this connection has been closed. */
   isClosed(): boolean {
     return this.closed;
@@ -323,9 +339,14 @@ export class StreamConnection {
   close(code = 1000, reason = "stream closed"): void {
     if (this.closed) return;
     this.closed = true;
+    this.subscriber.onEnqueue = null; // stop flush-on-publish before unsubscribe
     // Free the per-token concurrent slot reserved at establish time (§5.7) — once,
     // because `closed` guards re-entry. A `read` connection has no `capKey`.
-    if (this.caps && this.capKey) this.caps.release(this.capKey);
+    if (this.caps) {
+      if (this.capKey) this.caps.release(this.capKey);
+      // Prune the per-connection command-rate window so it is not leaked (#102).
+      this.caps.forgetConnection(this.connId);
+    }
     this.hub.unsubscribe(this.subscriber);
     this.socket.close(code, reason);
   }
@@ -380,16 +401,28 @@ export async function openStream(
     clockMs: deps.clockMs,
   });
 
-  // Read backfill/replay under the call's tenant (RLS-scoped, §5.10).
-  const lines = await sql.begin(async (tx) => {
-    await tx.unsafe("SET LOCAL ROLE samograph_app");
-    await setTenant(tx as unknown as SQL, prepared.tenantId);
-    return prepared.sinceSeq !== null
-      ? replayTranscripts(tx as unknown as SQL, prepared.callId, prepared.sinceSeq)
-      : backfillRecent(tx as unknown as SQL, prepared.callId, limit);
-  });
+  // Read backfill/replay under the call's tenant (RLS-scoped, §5.10). A throw here
+  // (DB outage, bad cursor) must NOT leak the reserved share cap slot or the Hub
+  // subscription that were taken before this point (#102 review): close the
+  // connection (releases the slot exactly once + unsubscribes) and rethrow.
+  try {
+    const lines = await sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL ROLE samograph_app");
+      await setTenant(tx as unknown as SQL, prepared.tenantId);
+      return prepared.sinceSeq !== null
+        ? replayTranscripts(tx as unknown as SQL, prepared.callId, prepared.sinceSeq)
+        : backfillRecent(tx as unknown as SQL, prepared.callId, limit);
+    });
 
-  connection.sendBackfill(lines);
-  connection.flush();
+    connection.sendBackfill(lines);
+    connection.flush();
+    // Switch to FLUSH-ON-PUBLISH for everything after the backfill (#99). Enabling
+    // it here — after the synchronous backfill flush, before yielding — means no
+    // live frame can slip in unflushed: nothing else runs between flush() and this.
+    connection.enableAutoFlush();
+  } catch (err) {
+    connection.close(1011, "backfill failed");
+    throw err;
+  }
   return connection;
 }

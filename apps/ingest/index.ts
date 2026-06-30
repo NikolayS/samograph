@@ -84,6 +84,21 @@ export {
   type WatchdogMetrics,
 } from "./tunnelWatchdog.ts";
 
+// The §4.1 `Bun.serve` ENTRYPOINT: webhook front door → composed dispatch
+// (pipeline + lifecycle) → publisher, plus the watchdog scheduler driver (#99).
+export {
+  createIngestApp,
+  startIngestServer,
+  buildIngestDispatch,
+  startRegionWatchdogs,
+  PgListenNotifyPublisher,
+  type IngestAppDeps,
+  type IngestDispatchDeps,
+  type IngestServerDeps,
+  type IngestServerHandle,
+  type WatchdogSchedulerDeps,
+} from "./server.ts";
+
 export const SERVICE_NAME = "ingest";
 
 export function handler(request: Request): Response {

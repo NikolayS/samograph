@@ -28,6 +28,10 @@ DB_PORT="${DB_PORT:-5432}"
 export DATABASE_URL="${DATABASE_URL:-postgres://${DB_USER}:${DB_PASS}@localhost:${DB_PORT}/${DB_NAME}}"
 APP_API_PORT="${APP_API_PORT:-8787}"
 WEB_PORT="${WEB_PORT:-3000}"
+# Live transport (ingest + ws-hub composed on one shared Hub — #99).
+WS_HUB_PORT="${WS_HUB_PORT:-8788}"
+INGEST_PORT="${INGEST_PORT:-8089}"
+DEV_CTRL_PORT="${DEV_CTRL_PORT:-8790}"
 APP_API_ORIGIN="http://localhost:${APP_API_PORT}"
 LOGDIR="$ROOT/.dev-local"
 mkdir -p "$LOGDIR"
@@ -38,6 +42,7 @@ warn() { printf '\033[0;33m[dev-local]\033[0m %s\n' "$*"; }
 port_listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 api_healthy()    { curl -fsS -o /dev/null "http://localhost:${APP_API_PORT}/health" 2>/dev/null; }
 web_healthy()    { curl -fsS -o /dev/null "http://localhost:${WEB_PORT}/" 2>/dev/null; }
+live_healthy()   { curl -fsS -o /dev/null "http://localhost:${DEV_CTRL_PORT}/health" 2>/dev/null; }
 
 ensure_postgres() {
   if ! docker info >/dev/null 2>&1; then
@@ -85,6 +90,16 @@ start_api() {
   warn "app-api did not become healthy — see $LOGDIR/app-api.log"; return 1
 }
 
+start_live() {
+  if live_healthy; then log "live (ingest+ws-hub) already healthy on :$DEV_CTRL_PORT — skipping"; return 0; fi
+  log "starting live transport (ingest :$INGEST_PORT + ws-hub :$WS_HUB_PORT, dev-ctrl :$DEV_CTRL_PORT)"
+  WS_HUB_PORT="$WS_HUB_PORT" INGEST_PORT="$INGEST_PORT" DEV_CTRL_PORT="$DEV_CTRL_PORT" \
+    nohup bun "$ROOT/apps/ws-hub/dev-live-server.ts" >"$LOGDIR/live.log" 2>&1 &
+  echo $! > "$LOGDIR/live.pid"
+  for _ in $(seq 1 40); do live_healthy && { log "live up (pid $(cat "$LOGDIR/live.pid"))"; return 0; }; sleep 0.5; done
+  warn "live did not become healthy — see $LOGDIR/live.log"; return 1
+}
+
 start_web() {
   if web_healthy; then log "web already serving on :$WEB_PORT — skipping"; return 0; fi
   log "starting web (next dev, under bun) on :$WEB_PORT"
@@ -103,6 +118,7 @@ do_start() {
   ensure_postgres
   run_migrations
   start_api
+  start_live
   start_web
   cat <<EOF
 
@@ -111,8 +127,11 @@ do_start() {
     web (Next.js) : http://localhost:${WEB_PORT}
     app-api       : http://localhost:${APP_API_PORT}   (GET /health)
     dev magic link: http://localhost:${APP_API_PORT}/__dev/last-magic-link
+    live ws-hub   : http://localhost:${WS_HUB_PORT}/calls/:id/stream (WS)
+    live ingest   : http://localhost:${INGEST_PORT}/webhook
+    live dev-say  : http://localhost:${DEV_CTRL_PORT}/__dev/say
     Postgres      : ${DATABASE_URL}
-  logs: ${LOGDIR}/app-api.log , ${LOGDIR}/web.log
+  logs: ${LOGDIR}/{app-api,live,web}.log
   stop: bash scripts/dev-local.sh stop   (add --db to also stop Postgres)
 =========================================================
 
@@ -122,18 +141,25 @@ do_start() {
        (or read it from ${LOGDIR}/app-api.log)
     3. open that link -> "You're signed in" -> Go to dashboard
     4. paste https://meet.google.com/abc-defg-hij -> "Add to call" -> PENDING
+    5. on the per-call page, stream a LIVE line into it (fake):
+       curl -s http://localhost:${DEV_CTRL_PORT}/__dev/say \\
+         -H 'content-type: application/json' \\
+         -d '{"call_id":"<call_id>","speaker":"Alice","text":"hello live"}'
 EOF
 }
 
 do_stop() {
-  log "stopping web + app-api"
-  for name in web app-api; do
+  log "stopping web + live + app-api"
+  for name in web live app-api; do
     if [ -f "$LOGDIR/$name.pid" ]; then
       kill "$(cat "$LOGDIR/$name.pid")" 2>/dev/null || true
       rm -f "$LOGDIR/$name.pid"
     fi
   done
   kill_by_port "$WEB_PORT"
+  kill_by_port "$DEV_CTRL_PORT"
+  kill_by_port "$WS_HUB_PORT"
+  kill_by_port "$INGEST_PORT"
   kill_by_port "$APP_API_PORT"
   if [ "${1:-}" = "--db" ]; then
     log "stopping Postgres container '$DB_CONTAINER'"
@@ -145,8 +171,9 @@ do_stop() {
 }
 
 do_status() {
-  api_healthy && echo "app-api : UP   (http://localhost:${APP_API_PORT})" || echo "app-api : down"
-  web_healthy && echo "web     : UP   (http://localhost:${WEB_PORT})"     || echo "web     : down"
+  api_healthy  && echo "app-api : UP   (http://localhost:${APP_API_PORT})" || echo "app-api : down"
+  live_healthy && echo "live    : UP   (ws-hub :${WS_HUB_PORT}, ingest :${INGEST_PORT}, dev-say :${DEV_CTRL_PORT})" || echo "live    : down"
+  web_healthy  && echo "web     : UP   (http://localhost:${WEB_PORT})"     || echo "web     : down"
   docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$DB_CONTAINER" \
     && echo "postgres: UP   ($DB_CONTAINER)" || echo "postgres: down"
 }

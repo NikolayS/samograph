@@ -225,6 +225,27 @@ describe("StreamConnection backfill-then-live (no DB)", () => {
   it("the revoke recheck interval is ≤ 1 s so a revoke closes the socket within the SLO", () => {
     expect(RECHECK_INTERVAL_MS).toBeLessThanOrEqual(1000);
   });
+
+  it("enableAutoFlush() pushes published frames to the socket with NO manual flush (#99 flush-on-publish)", () => {
+    const { hub, socket, conn } = setup();
+    conn.sendBackfill([line(1)]); // boundary at 1
+    conn.flush(); // initial drain of the backfill
+    conn.enableAutoFlush();
+
+    hub.publish("call-1", liveFrame(2)); // delivered by the flush-on-publish hook alone
+    expect(socket.lineSeqs()).toEqual([1, 2]);
+    hub.publish("call-1", liveFrame(3));
+    hub.publish("call-1", liveFrame(2)); // stale dup → still deduped by the boundary
+    expect(socket.lineSeqs()).toEqual([1, 2, 3]);
+  });
+
+  it("close() detaches the flush-on-publish hook so a post-close publish never sends", () => {
+    const { hub, socket, conn } = setup();
+    conn.enableAutoFlush();
+    conn.close();
+    hub.publish("call-1", liveFrame(9)); // unsubscribed + hook detached → nothing
+    expect(socket.sent.length).toBe(0);
+  });
 });
 
 describe("StreamConnection share caps wiring (no DB)", () => {
@@ -271,6 +292,53 @@ describe("StreamConnection share caps wiring (no DB)", () => {
     expect(caps.concurrent("tok-key")).toBe(0); // freed exactly once on close
     conn.close(); // idempotent — does not double-release
     expect(caps.concurrent("tok-key")).toBe(0);
+  });
+
+  it("close() prunes the per-connection command-rate window so caps don't leak (#102 review)", () => {
+    const caps = new ShareCaps({ commandsPerWindow: 5 });
+    caps.tryEstablish("tok-key", 0);
+    const { conn } = shareConn(caps, "tok-key", "share");
+    conn.command(); // records a timestamp keyed on this connection id
+    const id = conn.connectionId();
+    expect(caps.tracksConnection(id)).toBe(true);
+    conn.close();
+    expect(caps.tracksConnection(id)).toBe(false); // window reclaimed, not leaked
+  });
+});
+
+describe("openStream cap-slot safety on a failed backfill (#102 review, no DB)", () => {
+  it("a backfill throw frees the reserved share slot and unsubscribes", async () => {
+    const caps = new ShareCaps({ maxConcurrent: 1 });
+    const capKey = "tok-key";
+    caps.tryEstablish(capKey, 0); // prepareStream reserved the slot before openStream
+    expect(caps.concurrent(capKey)).toBe(1);
+
+    const hub = new Hub();
+    const socket = new FakeSocket();
+    const prepared: Extract<PrepareStreamResult, { ok: true }> = {
+      ok: true,
+      callId: "call-1",
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      scope: "share",
+      scopes: ["share"],
+      sinceSeq: null,
+      credentials: { sessionCookie: null, shareToken: "tok" },
+      capKey,
+    };
+    // A SQL whose `begin` (the backfill read) rejects — the only DB touch in open.
+    const throwingSql = {
+      begin: async () => {
+        throw new Error("db down");
+      },
+    } as unknown as SQL;
+
+    await expect(
+      openStream(socket, prepared, { sql: throwingSql, hub, authDeps: NO_CRED_DEPS, caps }),
+    ).rejects.toThrow("db down");
+
+    expect(caps.concurrent(capKey)).toBe(0); // slot freed, not leaked
+    expect(hub.subscriberCount("call-1")).toBe(0); // subscription cleaned up
+    expect(socket.closedWith).not.toBeNull(); // socket was closed
   });
 });
 

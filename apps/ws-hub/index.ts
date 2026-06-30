@@ -74,6 +74,31 @@ export {
   type CapDecision,
 } from "./caps.ts";
 
+// The §98 line FAN-IN: re-hydrate a `{ call_id, seq }` signal by seq under RLS
+// and publish the full frame onto the Hub (the consuming half of the seam).
+export {
+  createFanIn,
+  fetchLineFrame,
+  type FanIn,
+  type FanInDeps,
+} from "./fanIn.ts";
+
+// The `Bun.serve` ENTRYPOINT: authorize+upgrade /calls/:id/stream, flush-on-
+// publish, the revoke recheck timer, and the /transcript gap-resync (#99).
+export {
+  startWsHubServer,
+  stopServerBounded,
+  type WsHubServerDeps,
+  type WsHubServerHandle,
+} from "./server.ts";
+
+// The composed in-process ingest⇄ws-hub live stack over one shared Hub (#99).
+export {
+  composeLiveStack,
+  type LiveStackDeps,
+  type LiveStackHandle,
+} from "./liveBridge.ts";
+
 export const SERVICE_NAME = "ws-hub";
 
 export function handler(request: Request): Response {
