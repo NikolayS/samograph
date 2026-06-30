@@ -599,9 +599,14 @@ export function presencePageHtml(): string {
       const at = speak && speak.at ? String(speak.at) : "";
       if (!speakReady) { lastSpeakAt = at; speakReady = true; return; }
       if (!at || at === lastSpeakAt) return;
+      // If the Anam stream is not live yet (connect is async and takes a few
+      // seconds), do NOT advance lastSpeakAt — leave the cue so the next poll
+      // retries it once connected. Otherwise a line spoken right after join
+      // (e.g. a startup announcement) would be silently consumed and lost.
+      if (!avatarClient) return;
       lastSpeakAt = at;
       const text = speak && speak.text ? String(speak.text) : "";
-      if (avatarClient && text) {
+      if (text) {
         Promise.resolve(avatarClient.talk(text)).catch((e) => console.error("[avatar] talk failed", e));
       }
     }

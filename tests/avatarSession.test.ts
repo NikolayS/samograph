@@ -55,10 +55,43 @@ describe("GET /avatar/session", () => {
       };
       expect(json.enabled).toBe(true);
       expect(json.personaId).toBe("persona-1");
-      expect(typeof json.sessionToken).toBe("string");
-      expect(json.sessionToken.length).toBeGreaterThan(0);
+      // Assert the exact byte-stable token the fake mints (not mere existence).
+      const expected = await createAvatarFake({ seed: "s" }).mintSession("persona-1");
+      expect(json.sessionToken).toBe(expected.sessionToken);
     } finally {
       server.stop(true);
+    }
+  });
+
+  it("forwards avatarVoiceId to the mint (distinct token vs no voice override)", async () => {
+    const withVoice = serve(0, tf, {
+      ...TOKENS,
+      avatarProvider: createAvatarFake({ seed: "s" }),
+      avatarPersonaId: "p1",
+      avatarVoiceId: "v1",
+    });
+    const noVoice = serve(0, tf, {
+      ...TOKENS,
+      avatarProvider: createAvatarFake({ seed: "s" }),
+      avatarPersonaId: "p1",
+    });
+    try {
+      const t1 = (
+        (await (
+          await fetch(`http://localhost:${withVoice.port}/avatar/session`, { headers: READ })
+        ).json()) as { sessionToken: string }
+      ).sessionToken;
+      const t2 = (
+        (await (
+          await fetch(`http://localhost:${noVoice.port}/avatar/session`, { headers: READ })
+        ).json()) as { sessionToken: string }
+      ).sessionToken;
+      const expected = await createAvatarFake({ seed: "s" }).mintSession("p1", "v1");
+      expect(t1).toBe(expected.sessionToken);
+      expect(t1).not.toBe(t2);
+    } finally {
+      withVoice.stop(true);
+      noVoice.stop(true);
     }
   });
 

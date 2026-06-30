@@ -74,12 +74,25 @@ describe("argParsing", () => {
     expect(parseArgs(["join", "https://zoom.us/j/1"]).presence_bg).toBeNull();
   });
 
-  it("join presence-bg accepts the four background modes", () => {
-    for (const bg of ["sphere", "field", "static", "cycle"]) {
+  it("join presence-bg accepts the background modes (incl. avatar)", () => {
+    for (const bg of ["robot", "sphere", "field", "static", "cycle", "avatar"]) {
       expect(
         parseArgs(["join", "https://zoom.us/j/1", "--presence-bg", bg]).presence_bg,
       ).toBe(bg);
     }
+  });
+
+  it("join parses --anam-persona and --anam-voice", () => {
+    const args = parseArgs([
+      "join",
+      "https://zoom.us/j/1",
+      "--anam-persona",
+      "persona-123",
+      "--anam-voice",
+      "voice-456",
+    ]);
+    expect(args.anam_persona).toBe("persona-123");
+    expect(args.anam_voice).toBe("voice-456");
   });
 
   it("join presence-bg rejects unknown values", () => {

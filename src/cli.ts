@@ -70,7 +70,12 @@ options:
                          ERR_NGROK_727). Binary from PATH or CLOUDFLARED_BIN.
   --webhook-base URL     Use an existing public tunnel URL instead of starting one
                          (e.g. localtunnel/cloudflared pointing at --port);
-                         mutually exclusive with --tunnel
+                         mutually exclusive with --tunnel.
+                         In a restricted-egress environment where THIS host
+                         cannot reach the public URL (so the health/camera
+                         preflight false-negatives) but the meeting bot can,
+                         set SAMOGRAPH_SKIP_TUNNEL_CHECK=1 to trust a tunnel
+                         you have verified out-of-band.
   --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
                          (default: web_4_core; smoothest camera rendering)
   --no-presence          Join without the presence camera page (skips the

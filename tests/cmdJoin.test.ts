@@ -1119,4 +1119,50 @@ describe("spawnDetached", () => {
   });
 });
 
+describe("cmdJoin SAMOGRAPH_SKIP_TUNNEL_CHECK", () => {
+  let tmp: string;
+  let env: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    env = saveEnv();
+    tmp = makeTmpDir();
+    process.env.SAMOGRAPH_STATE_FILE = join(tmp, "state.json");
+    process.env.SAMOGRAPH_HOME = tmp;
+    process.env.SAMOGRAPH_DICT_DIR = join(tmp, "dicts");
+    mkdirSync(process.env.SAMOGRAPH_DICT_DIR, { recursive: true });
+    delete process.env.SAMOGRAPH_SKIP_TUNNEL_CHECK;
+  });
+  afterEach(() => {
+    restoreEnv(env);
+    cleanupTmpDir(tmp);
+  });
+
+  // Deps whose /health round-trip never returns the marker -> health fails.
+  function failingHealthDeps(captured: { payload?: any }): JoinDeps {
+    const d = makeDeps(captured);
+    return {
+      ...d,
+      fetch: async (url: string) =>
+        url.includes("/health")
+          ? new Response("nope", { status: 502 })
+          : new Response(PRESENCE_MARKER_PAGE),
+    };
+  }
+
+  it("refuses to join when the tunnel health check fails (skip unset)", async () => {
+    const captured: { payload?: any } = {};
+    await expect(cmdJoin(joinArgs(), failingHealthDeps(captured))).rejects.toThrow();
+    // createBot must never be reached when the tunnel is unhealthy.
+    expect(captured.payload).toBeUndefined();
+  });
+
+  it("joins despite a failing health check when the skip flag is set", async () => {
+    process.env.SAMOGRAPH_SKIP_TUNNEL_CHECK = "1";
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs(), failingHealthDeps(captured));
+    // The bot was created -> join proceeded past the (skipped) health gate.
+    expect(captured.payload).toBeDefined();
+  });
+});
+
 export {};

@@ -27,6 +27,8 @@ describe("resolveServeOptions", () => {
     delete process.env.SAMOGRAPH_PRESENCE_TOKEN;
     delete process.env.SAMOGRAPH_PRESENCE_WRITE_TOKEN;
     delete process.env.SAMOGRAPH_PUBLIC_BASE;
+    delete process.env.SAMOGRAPH_ANAM_PERSONA_ID;
+    delete process.env.SAMOGRAPH_ANAM_VOICE_ID;
   });
 
   afterEach(() => {
@@ -58,6 +60,25 @@ describe("resolveServeOptions", () => {
     expect(opts.frameToken).toBe("");
     expect(opts.presenceToken).toBe("");
     expect(opts.presenceWriteToken).toBe("");
+  });
+
+  it("resolves avatar persona + voice ids (empty default, env fallback, flag wins)", () => {
+    // empty default
+    let opts = resolveServeOptions(serveArgs());
+    expect(opts.avatarPersonaId).toBe("");
+    expect(opts.avatarVoiceId).toBe("");
+    // env fallback
+    process.env.SAMOGRAPH_ANAM_PERSONA_ID = "env-persona";
+    process.env.SAMOGRAPH_ANAM_VOICE_ID = "env-voice";
+    opts = resolveServeOptions(serveArgs());
+    expect(opts.avatarPersonaId).toBe("env-persona");
+    expect(opts.avatarVoiceId).toBe("env-voice");
+    // explicit flags win over env
+    opts = resolveServeOptions(
+      serveArgs({ anam_persona: "flag-persona", anam_voice: "flag-voice" }),
+    );
+    expect(opts.avatarPersonaId).toBe("flag-persona");
+    expect(opts.avatarVoiceId).toBe("flag-voice");
   });
 
   it("resolves the watchdog public base from the --public-base flag", () => {

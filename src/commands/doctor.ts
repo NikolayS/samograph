@@ -46,6 +46,15 @@ export async function cmdDoctor(): Promise<void> {
       detail: process.env.RECALL_API_KEY ? "set" : "missing",
     },
     {
+      // Optional: only needed for the realtime avatar (--presence-bg avatar),
+      // so a missing key never fails doctor — it is just surfaced.
+      name: "ANAM_API_KEY",
+      ok: true,
+      detail: process.env.ANAM_API_KEY
+        ? "set"
+        : "missing (optional: needed for --presence-bg avatar)",
+    },
+    {
       name: "ngrok",
       ok: ngrokVersion.ok,
       detail: ngrokVersion.detail || "not found in PATH",
