@@ -494,7 +494,7 @@ export function presencePageHtml(): string {
     const token = params.get("token") || "";
     const bgParam = params.get("bg") || "robot";
     // Named modes only; unknown values fall back to the robot avatar.
-    const backgroundMode = ["robot", "sphere", "field", "static", "cycle"].includes(bgParam) ? bgParam : "robot";
+    const backgroundMode = ["robot", "sphere", "field", "static", "cycle", "avatar"].includes(bgParam) ? bgParam : "robot";
     const styles = {
       idle: ["#64748b", "rgba(100, 116, 139, 0.18)", "rgba(100, 116, 139, 0.36)"],
       listening: ["#38bdf8", "rgba(56, 189, 248, 0.16)", "rgba(56, 189, 248, 0.44)"],
@@ -519,11 +519,10 @@ export function presencePageHtml(): string {
     function cssVarRgb(name) {
       return hexToRgb(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
     }
-    function initRobot() {
-      // Robot mode is just a full-frame static picture. Move the image to be a
-      // direct child of <body> (escaping the tile's stacking/overflow context),
-      // then remove the entire dynamic dashboard so no header/lanes/footer/FPS
-      // text can show. No refresh/FPS loops run in this mode.
+    function showRobotFullFrame() {
+      // Move the static image to be a direct child of <body> (escaping the
+      // tile's stacking/overflow context), then remove the entire dynamic
+      // dashboard so no header/lanes/footer/FPS text can show.
       const robot = document.getElementById("robot");
       const root = document.querySelector(".samograph-presence");
       if (robot) {
@@ -532,6 +531,79 @@ export function presencePageHtml(): string {
       }
       if (root) root.remove();
       document.body.style.background = "#000";
+    }
+    function initRobot() {
+      // Robot mode is just a full-frame static picture. No refresh/FPS loops
+      // do anything visible in this mode (the dashboard is gone).
+      showRobotFullFrame();
+    }
+    // Realtime avatar (bg=avatar): a full-frame talking head streamed from Anam
+    // over WebRTC. The page asks the server (which alone holds the API key) for
+    // a short-lived session token, attaches the stream to a full-frame <video>,
+    // and speaks each new presence "speak" line via the agent-driven talk()
+    // command — the persona's own brain stays out of it (disableInputAudio +
+    // we never call sendUserMessage). Any failure falls back to the static
+    // robot avatar so the bot camera is never blank.
+    let avatarClient = null;
+    async function initAvatar() {
+      // Keep the dashboard in the DOM for now: the full-frame video covers it,
+      // and the static-avatar fallback needs the #robot image (a child of the
+      // dashboard) to still exist. Only remove the dashboard once the avatar
+      // stream is actually live.
+      document.body.style.background = "#000";
+      const video = document.createElement("video");
+      video.id = "anam-video";
+      video.autoplay = true;
+      video.playsInline = true;
+      // Deliberately NOT muted: Recall captures this page's audio into the call,
+      // so the avatar's voice must play. (muted is a boolean attribute — setting
+      // it at all, even to false, silences the element.)
+      video.style.cssText =
+        "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:2147483646;";
+      document.body.appendChild(video);
+      try {
+        const resp = await fetch("/avatar/session", {
+          cache: "no-store",
+          headers: { "X-Samograph-Presence-Token": token },
+        });
+        const data = await resp.json();
+        if (!data || !data.enabled || !data.sessionToken) {
+          console.warn("[avatar] session not enabled; falling back to static avatar");
+          video.remove();
+          showRobotFullFrame();
+          return;
+        }
+        // Pinned ESM build off the CDN the official Anam quickstart uses; esm.sh
+        // polyfills the SDK's node:buffer dependency for the browser.
+        const mod = await import("https://esm.sh/@anam-ai/js-sdk@4.17.1");
+        const client = mod.createClient(data.sessionToken, { disableInputAudio: true });
+        await client.streamToVideoElement("anam-video");
+        avatarClient = client;
+        // Stream is live and the full-frame video covers everything — now drop
+        // the dashboard (header/lanes/footer) so nothing peeks through.
+        const root = document.querySelector(".samograph-presence");
+        if (root) root.remove();
+        console.log("[avatar] connected to Anam persona " + (data.personaId || ""));
+      } catch (err) {
+        console.error("[avatar] init failed; falling back to static avatar", err);
+        video.remove();
+        showRobotFullFrame();
+      }
+    }
+    // Speak each new presence.speak line via the avatar's talk() command. Like
+    // the chime cue, the first poll only establishes a baseline so a line
+    // already sitting in the snapshot at (re)connect does not double-speak.
+    let lastSpeakAt = "";
+    let speakReady = false;
+    function handleSpeak(speak) {
+      const at = speak && speak.at ? String(speak.at) : "";
+      if (!speakReady) { lastSpeakAt = at; speakReady = true; return; }
+      if (!at || at === lastSpeakAt) return;
+      lastSpeakAt = at;
+      const text = speak && speak.text ? String(speak.text) : "";
+      if (avatarClient && text) {
+        Promise.resolve(avatarClient.talk(text)).catch((e) => console.error("[avatar] talk failed", e));
+      }
     }
     function initPlasma() {
       const canvas = document.getElementById("plasma");
@@ -775,6 +847,7 @@ export function presencePageHtml(): string {
         if (!response.ok) return;
         const data = await response.json();
         handleChime(data.chime);
+        handleSpeak(data.speak);
         const signature = String(data.updated_at || "");
         if (signature !== lastSignature) {
           lastSignature = signature;
@@ -812,6 +885,8 @@ export function presencePageHtml(): string {
     }
     if (backgroundMode === "robot") {
       initRobot();
+    } else if (backgroundMode === "avatar") {
+      initAvatar();
     } else {
       initPlasma();
       initFpsProbe();

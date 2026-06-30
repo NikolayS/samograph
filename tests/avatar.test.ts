@@ -78,7 +78,9 @@ describe("anam avatar provider", () => {
     expect(calls[0]!.url).toBe(`${ANAM_BASE}/auth/session-token`);
     expect(calls[0]!.method).toBe("POST");
     expect(calls[0]!.headers["Authorization"]).toBe("Bearer anam-secret-key");
-    expect(calls[0]!.body).toEqual({ personaId: "persona-123" });
+    // Published persona => id nested under personaConfig (a bare { personaId }
+    // mints a legacy token the SDK rejects).
+    expect(calls[0]!.body).toEqual({ personaConfig: { personaId: "persona-123" } });
 
     expect(session.sessionToken).toBe("sess-abc");
     expect(session.personaId).toBe("persona-123");

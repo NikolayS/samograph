@@ -70,7 +70,11 @@ export function makeAnamAvatarProvider(fetchFn: FetchFn = fetch): AvatarProvider
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ personaId }),
+        // A published/saved ("stateful") persona is referenced by id nested
+        // under personaConfig. A bare top-level { personaId } mints a LEGACY
+        // token that the current SDK rejects ("Legacy session tokens are no
+        // longer supported"), so it must be nested.
+        body: JSON.stringify({ personaConfig: { personaId } }),
         signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) {
