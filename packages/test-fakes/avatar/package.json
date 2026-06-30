@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/test-fakes-avatar",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Deterministic, seedable, network-free in-repo avatar-provider fake (SPEC §6.1)."
+}
