@@ -104,11 +104,14 @@ export function makeAnamAvatarProvider(fetchFn: FetchFn = fetch): AvatarProvider
       // A bare top-level { personaId } mints a LEGACY token the SDK rejects, so
       // the id must be nested. The ephemeral path is the only documented way to
       // set llmId/systemPrompt, so autonomous mode uses it.
-      let personaConfig: Record<string, string>;
+      let personaConfig: Record<string, unknown>;
       if (autonomous) {
         // Pull the published persona's avatar so the ephemeral persona keeps the
         // same face; voice is overridable, brain is a real LLM (so it replies on
-        // its own), and systemPrompt governs when it speaks.
+        // its own), and systemPrompt governs when it speaks. skipGreeting:true
+        // (nested in personaConfig, per the API schema) stops the brain from
+        // speaking an opening greeting on connect — it stays silent until
+        // addressed.
         const persona = await fetchPersona(fetchFn, key, personaId);
         personaConfig = {
           name: "samograph",
@@ -116,6 +119,7 @@ export function makeAnamAvatarProvider(fetchFn: FetchFn = fetch): AvatarProvider
           avatarModel: persona.avatarModel,
           voiceId: opts.voiceId || persona.voiceId,
           llmId: opts.llmId || ANAM_DEFAULT_BRAIN_LLM_ID,
+          skipGreeting: true,
         };
         if (opts.systemPrompt) personaConfig.systemPrompt = opts.systemPrompt;
       } else {

@@ -142,6 +142,7 @@ describe("anam avatar provider", () => {
         avatarModel: "cara-4",
         voiceId: "voice-override",
         llmId: ANAM_DEFAULT_BRAIN_LLM_ID,
+        skipGreeting: true,
         systemPrompt: "Only speak when addressed.",
       },
       silenceBeforeSessionEndSeconds: 0,
