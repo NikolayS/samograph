@@ -12,6 +12,8 @@ export interface ParsedArgs {
   tunnel?: string | null;
   no_presence?: boolean;
   presence_bg?: string | null;
+  anam_persona?: string | null;
+  anam_voice?: string | null;
   frame_dir?: string | null;
   variant?: string | null;
   bot_id?: string | null;

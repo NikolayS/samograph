@@ -109,7 +109,7 @@ Use `chat` only when you intentionally want to write into the meeting chat. Othe
 
 ## Dynamic Bot Presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samograph-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samograph presence` sends in a header. The page starts as `listening` and refreshes itself from the callback server every second while the presence snapshot is changing, backing off to every 5 seconds after 30 seconds without changes (the polls travel through the public tunnel, so this preserves tunnel request quota — see Tunnel Health). Pick the background mode with `join --presence-bg <sphere|field|static|cycle>` (`sphere` is the default; `static` is the cheapest to render; `cycle` alternates between field and sphere; unknown values fall back to `sphere`). The mode is fixed at join time.
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samograph-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samograph presence` sends in a header. The page starts as `listening` and refreshes itself from the callback server every second while the presence snapshot is changing, backing off to every 5 seconds after 30 seconds without changes (the polls travel through the public tunnel, so this preserves tunnel request quota — see Tunnel Health). Pick the background mode with `join --presence-bg <robot|sphere|field|static|cycle|avatar>` (`robot` is the default static samoagent image; `static` is the cheapest animated look; `cycle` alternates between field and sphere; `avatar` is a realtime lip-synced talking head — see Important Flags and the `ANAM_API_KEY` env var; unknown values fall back to `robot`). The mode is fixed at join time.
 
 The presence camera requires the tunnel to serve the page cleanly to a browser. Free-ngrok and localtunnel show an interstitial page to browser user agents, which blocks the camera: `join` detects this in a preflight check, prints a warning, and joins **without** the presence camera — transcription, chat, and frames are unaffected, but `samograph presence` is unavailable for that call. Use a paid/clean tunnel (e.g. a paid ngrok plan or cloudflared) for the presence camera, or pass `join --no-presence` to skip the camera and the preflight entirely.
 
@@ -184,7 +184,9 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting one. Mutually exclusive with `--tunnel`. E.g. run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here. The join-time health round-trip still verifies it relays requests.
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
 - `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
-- `join --presence-bg MODE` - presence camera background: `sphere` (default), `field`, `static` (cheapest), or `cycle` (alternates field/sphere); fixed at join time.
+- `join --presence-bg MODE` - presence camera look: `robot` (default, static samoagent image), `sphere`, `field`, `static` (cheapest), `cycle` (alternates field/sphere), or `avatar` (realtime lip-synced talking head — needs `ANAM_API_KEY` + a persona via `--anam-persona`; falls back to the static avatar if Anam is unavailable). Fixed at join time. In `avatar` mode, `samograph presence speaking "text"` makes the avatar speak that text.
+- `join --anam-persona ID` - Anam persona id for `--presence-bg avatar` (env fallback `SAMOGRAPH_ANAM_PERSONA_ID`). Setting it defaults `--presence-bg` to `avatar`.
+- `join --anam-voice ID` - Anam voice id override for the avatar, applied at mint time so the voice changes without re-publishing the persona (env fallback `SAMOGRAPH_ANAM_VOICE_ID`).
 - `join --chime NAME` - default chat chime for the session (saved in state), played into the call audio when the bot posts a meeting-chat message. Defaults to `blip`. `chat --chime NAME` overrides it per message. Run `samograph chimes` for the list.
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
@@ -239,6 +241,16 @@ Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out
 - `SAMOGRAPH_PRESENCE_TOKEN` - read token for the presence page and `/presence.json`.
 - `SAMOGRAPH_PRESENCE_WRITE_TOKEN` - write token required by `POST /presence`.
 - `SAMOGRAPH_PUBLIC_BASE` - public tunnel base URL for the mid-call tunnel watchdog (`join` passes it as `--public-base`; the env var is the fallback for manual `_serve` runs; empty disables the watchdog).
+
+Realtime avatar (`--presence-bg avatar`):
+
+- `ANAM_API_KEY` - **required** for the avatar camera; read server-side at session-mint time to mint a short-lived browser session token (the key itself never reaches the page). Get one at [anam.ai](https://anam.ai).
+- `SAMOGRAPH_ANAM_PERSONA_ID` - Anam persona id for the avatar (fallback for `join --anam-persona`).
+- `SAMOGRAPH_ANAM_VOICE_ID` - voice id override applied at mint time, changing the avatar voice without re-publishing the persona (fallback for `join --anam-voice`).
+
+Tunnel:
+
+- `SAMOGRAPH_SKIP_TUNNEL_CHECK` - set to any non-empty value to skip `join`'s local tunnel health check **and** the presence-camera preflight. For restricted-egress environments where this host cannot reach the public tunnel URL (so the local probe false-negatives) but the meeting bot can. Only use it with a tunnel you have verified reachable out-of-band.
 
 Tunnel binaries:
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import {
   ANAM_BASE,
+  ANAM_DEFAULT_BRAIN_LLM_ID,
   anamApiKey,
   makeAnamAvatarProvider,
   type AvatarProvider,
@@ -78,11 +79,77 @@ describe("anam avatar provider", () => {
     expect(calls[0]!.url).toBe(`${ANAM_BASE}/auth/session-token`);
     expect(calls[0]!.method).toBe("POST");
     expect(calls[0]!.headers["Authorization"]).toBe("Bearer anam-secret-key");
-    expect(calls[0]!.body).toEqual({ personaId: "persona-123" });
+    // Published persona => id nested under personaConfig (a bare { personaId }
+    // mints a legacy token the SDK rejects). Silence auto-end is disabled.
+    expect(calls[0]!.body).toEqual({
+      personaConfig: { personaId: "persona-123" },
+      silenceBeforeSessionEndSeconds: 0,
+      silenceBeforeSkipTurnSeconds: 0,
+    });
 
     expect(session.sessionToken).toBe("sess-abc");
     expect(session.personaId).toBe("persona-123");
     expect(session.expiresAt).toBe("2026-06-30T00:10:00.000Z");
+  });
+
+  it("includes voiceId in personaConfig when an override is provided", async () => {
+    process.env.ANAM_API_KEY = "anam-secret-key";
+    const { fetchFn, calls } = makeFakeFetch(() => jsonResponse({ sessionToken: "t" }));
+    await makeAnamAvatarProvider(fetchFn).mintSession("persona-9", { voiceId: "voice-9" });
+    expect(calls[0]!.body).toEqual({
+      personaConfig: { personaId: "persona-9", voiceId: "voice-9" },
+      silenceBeforeSessionEndSeconds: 0,
+      silenceBeforeSkipTurnSeconds: 0,
+    });
+  });
+
+  it("autonomous mode mints an ephemeral real-brain persona from the persona's face", async () => {
+    process.env.ANAM_API_KEY = "anam-secret-key";
+    const calls: Captured[] = [];
+    const fetchFn = async (url: string, init: RequestInit = {}) => {
+      const method = init.method ?? "GET";
+      let body: unknown = init.body;
+      if (typeof body === "string") {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          // leave raw
+        }
+      }
+      calls.push({ url, method, headers: {}, body });
+      if (method === "GET") {
+        return jsonResponse({
+          avatar: { id: "avatar-1" },
+          avatarModel: "cara-4",
+          voice: { id: "persona-voice" },
+        });
+      }
+      return jsonResponse({ sessionToken: "sess-auto" });
+    };
+    const session = await makeAnamAvatarProvider(fetchFn).mintSession("persona-x", {
+      autonomous: true,
+      systemPrompt: "Only speak when addressed.",
+      voiceId: "voice-override",
+    });
+    // First a GET for the persona's face, then a POST to mint the token.
+    expect(calls[0]!.method).toBe("GET");
+    expect(calls[0]!.url).toBe(`${ANAM_BASE}/personas/persona-x`);
+    expect(calls[1]!.method).toBe("POST");
+    expect(calls[1]!.body).toEqual({
+      personaConfig: {
+        name: "samograph",
+        avatarId: "avatar-1",
+        avatarModel: "cara-4",
+        voiceId: "voice-override",
+        llmId: ANAM_DEFAULT_BRAIN_LLM_ID,
+        skipGreeting: true,
+        systemPrompt: "Only speak when addressed.",
+      },
+      silenceBeforeSessionEndSeconds: 0,
+      silenceBeforeSkipTurnSeconds: 0,
+    });
+    expect(session.autonomous).toBe(true);
+    expect(session.sessionToken).toBe("sess-auto");
   });
 
   it("mintSession throws before any network call when ANAM_API_KEY is unset", async () => {

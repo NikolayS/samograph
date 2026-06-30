@@ -245,7 +245,7 @@ describe("webhook handler", () => {
       expect(html).toContain("backgroundMode");
       // unknown bg values fall back to the robot avatar (the default look)
       expect(html).toContain(
-        "[\"robot\", \"sphere\", \"field\", \"static\", \"cycle\"].includes(bgParam) ? bgParam : \"robot\"",
+        "[\"robot\", \"sphere\", \"field\", \"static\", \"cycle\", \"avatar\"].includes(bgParam) ? bgParam : \"robot\"",
       );
       expect(html).toContain("backgroundMode === \"cycle\"");
       expect(html).toContain("const frameMs = 100");
@@ -639,8 +639,10 @@ describe("webhook handler", () => {
       expect(html).not.toContain("setInterval(refresh");
       expect(html).toContain("setTimeout(pollLoop");
       // 1000 ms polls while something changed within the last 30000 ms,
-      // backing off to 5000 ms when idle
-      expect(html).toContain("< 30000 ? 1000 : 5000");
+      // backing off to 5000 ms when idle (avatar mode polls faster; see
+      // presence-page tests)
+      expect(html).toContain("< 30000");
+      expect(html).toContain("active ? 1000 : 5000");
       // activity is detected by comparing the snapshot's updated_at stamp
       expect(html).toContain("!== lastSignature");
     } finally {

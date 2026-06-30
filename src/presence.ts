@@ -18,7 +18,20 @@ export interface PresenceSnapshot {
   updated_at: string;
   activities: PresenceActivity[];
   chime: PresenceChime | null;
+  speak: PresenceSpeak | null;
 }
+
+// A transient speech cue for the realtime avatar (bg=avatar mode). The camera
+// page makes the avatar say `text` once per distinct `at` timestamp, so the
+// same line sitting in the snapshot never re-speaks. Independent of `message`
+// (the on-screen status string), which is capped shorter for the dashboard.
+export interface PresenceSpeak {
+  text: string;
+  at: string;
+}
+
+// Speech lines can run longer than the 160-char on-screen status message.
+export const SPEAK_MAX_CHARS = 400;
 
 // A transient audio cue. The camera page plays a short sound once per distinct
 // `at` timestamp (e.g. when the bot posts a meeting-chat message), so the same
@@ -78,6 +91,7 @@ export function newPresenceSnapshot(
     updated_at: new Date().toISOString(),
     activities,
     chime: null,
+    speak: null,
   };
 }
 
@@ -88,6 +102,20 @@ export function withChime(snapshot: PresenceSnapshot): PresenceSnapshot {
     ...snapshot,
     updated_at: new Date().toISOString(),
     chime: { at: new Date().toISOString() },
+  };
+}
+
+// Stamp a transient speech line onto the snapshot for the realtime avatar to
+// speak. Like withChime, bumps updated_at so the poller picks it up promptly.
+// Empty/whitespace text is a no-op (returns the snapshot unchanged).
+export function withSpeak(snapshot: PresenceSnapshot, text: string): PresenceSnapshot {
+  const clean = sanitizePresenceText(text, SPEAK_MAX_CHARS);
+  if (!clean) return snapshot;
+  const at = new Date().toISOString();
+  return {
+    ...snapshot,
+    updated_at: at,
+    speak: { text: clean, at },
   };
 }
 
@@ -466,7 +494,7 @@ export function presencePageHtml(): string {
     const token = params.get("token") || "";
     const bgParam = params.get("bg") || "robot";
     // Named modes only; unknown values fall back to the robot avatar.
-    const backgroundMode = ["robot", "sphere", "field", "static", "cycle"].includes(bgParam) ? bgParam : "robot";
+    const backgroundMode = ["robot", "sphere", "field", "static", "cycle", "avatar"].includes(bgParam) ? bgParam : "robot";
     const styles = {
       idle: ["#64748b", "rgba(100, 116, 139, 0.18)", "rgba(100, 116, 139, 0.36)"],
       listening: ["#38bdf8", "rgba(56, 189, 248, 0.16)", "rgba(56, 189, 248, 0.44)"],
@@ -491,11 +519,10 @@ export function presencePageHtml(): string {
     function cssVarRgb(name) {
       return hexToRgb(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
     }
-    function initRobot() {
-      // Robot mode is just a full-frame static picture. Move the image to be a
-      // direct child of <body> (escaping the tile's stacking/overflow context),
-      // then remove the entire dynamic dashboard so no header/lanes/footer/FPS
-      // text can show. No refresh/FPS loops run in this mode.
+    function showRobotFullFrame() {
+      // Move the static image to be a direct child of <body> (escaping the
+      // tile's stacking/overflow context), then remove the entire dynamic
+      // dashboard so no header/lanes/footer/FPS text can show.
       const robot = document.getElementById("robot");
       const root = document.querySelector(".samograph-presence");
       if (robot) {
@@ -504,6 +531,135 @@ export function presencePageHtml(): string {
       }
       if (root) root.remove();
       document.body.style.background = "#000";
+    }
+    function initRobot() {
+      // Robot mode is just a full-frame static picture. No refresh/FPS loops
+      // do anything visible in this mode (the dashboard is gone).
+      showRobotFullFrame();
+    }
+    // Realtime avatar (bg=avatar): a full-frame talking head streamed from Anam
+    // over WebRTC. The page asks the server (which alone holds the API key) for
+    // a short-lived session token, attaches the stream to a full-frame <video>,
+    // and speaks each new presence "speak" line via the agent-driven talk()
+    // command — the persona's own brain stays out of it (disableInputAudio +
+    // we never call sendUserMessage). Any failure falls back to the static
+    // robot avatar so the bot camera is never blank.
+    let avatarClient = null;
+    let avatarConnecting = false;
+    let avatarReconnectFails = 0;
+    function avatarFallback() {
+      const v = document.getElementById("anam-video");
+      if (v) v.remove();
+      showRobotFullFrame();
+    }
+    // Connect (or re-connect) the Anam stream into #anam-video. Anam ends a
+    // session at the plan's max-length cap (and on any network drop) and ships
+    // NO built-in reconnect, so on AnamEvent.CONNECTION_CLOSED we re-mint a fresh
+    // token and re-stream — the avatar refreshes itself silently instead of
+    // going black. Repeated failures back off and eventually fall back to the
+    // static robot avatar.
+    async function connectAvatar() {
+      if (avatarConnecting) return;
+      avatarConnecting = true;
+      try {
+        const resp = await fetch("/avatar/session", {
+          cache: "no-store",
+          headers: { "X-Samograph-Presence-Token": token },
+        });
+        const data = await resp.json();
+        if (!data || !data.enabled || !data.sessionToken) {
+          console.warn("[avatar] session not enabled; static fallback");
+          avatarFallback();
+          return;
+        }
+        // Pinned ESM build off the CDN the official Anam quickstart uses; esm.sh
+        // polyfills the SDK's node:buffer dependency for the browser.
+        const mod = await import("https://esm.sh/@anam-ai/js-sdk@4.17.1");
+        // AUTONOMOUS: the persona's own brain hears the meeting and replies on its
+        // own. Recall exposes the meeting audio to this page as the browser
+        // microphone, so leave input audio ENABLED and hand that mic stream to
+        // Anam as the avatar's ears. TALK-ONLY: disable input audio; the agent
+        // drives every word via the speak queue / talk().
+        let inputStream = null;
+        const client = data.autonomous
+          ? mod.createClient(data.sessionToken)
+          : mod.createClient(data.sessionToken, { disableInputAudio: true });
+        if (data.autonomous) {
+          try {
+            // getUserMedia inside a Recall output-media page returns the MEETING
+            // audio (mic auto-granted); its first audio track is the room.
+            inputStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (e) {
+            console.warn("[avatar] could not capture meeting audio for autonomous mode", e);
+          }
+        }
+        if (mod.AnamEvent && mod.AnamEvent.CONNECTION_CLOSED) {
+          client.addListener(mod.AnamEvent.CONNECTION_CLOSED, function () {
+            console.warn("[avatar] connection closed; reconnecting");
+            avatarClient = null;
+            setTimeout(connectAvatar, Math.min(800 * Math.pow(2, avatarReconnectFails), 8000));
+          });
+        }
+        if (inputStream) {
+          await client.streamToVideoElement("anam-video", inputStream);
+        } else {
+          await client.streamToVideoElement("anam-video");
+        }
+        avatarClient = client;
+        avatarReconnectFails = 0;
+        // Stream is live and the full-frame video covers everything — drop the
+        // dashboard (header/lanes/footer) so nothing peeks through.
+        const root = document.querySelector(".samograph-presence");
+        if (root) root.remove();
+        console.log("[avatar] connected");
+      } catch (err) {
+        console.error("[avatar] connect failed", err);
+        avatarReconnectFails += 1;
+        if (avatarReconnectFails >= 6) {
+          console.error("[avatar] giving up after repeated failures; static fallback");
+          avatarFallback();
+        } else {
+          setTimeout(connectAvatar, Math.min(800 * Math.pow(2, avatarReconnectFails), 8000));
+        }
+      } finally {
+        avatarConnecting = false;
+      }
+    }
+    function initAvatar() {
+      // The full-frame video covers the dashboard; the static-avatar fallback
+      // still needs the #robot image (a child of the dashboard), so the
+      // dashboard is only removed once the stream is actually live.
+      document.body.style.background = "#000";
+      const video = document.createElement("video");
+      video.id = "anam-video";
+      video.autoplay = true;
+      video.playsInline = true;
+      // Deliberately NOT muted: Recall captures this page's audio into the call,
+      // so the avatar's voice must play.
+      video.style.cssText =
+        "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:2147483646;";
+      document.body.appendChild(video);
+      connectAvatar();
+    }
+    // Speak each new presence.speak line via the avatar's talk() command. Like
+    // the chime cue, the first poll only establishes a baseline so a line
+    // already sitting in the snapshot at (re)connect does not double-speak.
+    let lastSpeakAt = "";
+    let speakReady = false;
+    function handleSpeak(speak) {
+      const at = speak && speak.at ? String(speak.at) : "";
+      if (!speakReady) { lastSpeakAt = at; speakReady = true; return; }
+      if (!at || at === lastSpeakAt) return;
+      // If the Anam stream is not live yet (connect is async and takes a few
+      // seconds), do NOT advance lastSpeakAt — leave the cue so the next poll
+      // retries it once connected. Otherwise a line spoken right after join
+      // (e.g. a startup announcement) would be silently consumed and lost.
+      if (!avatarClient) return;
+      lastSpeakAt = at;
+      const text = speak && speak.text ? String(speak.text) : "";
+      if (text) {
+        Promise.resolve(avatarClient.talk(text)).catch((e) => console.error("[avatar] talk failed", e));
+      }
     }
     function initPlasma() {
       const canvas = document.getElementById("plasma");
@@ -747,6 +903,7 @@ export function presencePageHtml(): string {
         if (!response.ok) return;
         const data = await response.json();
         handleChime(data.chime);
+        handleSpeak(data.speak);
         const signature = String(data.updated_at || "");
         if (signature !== lastSignature) {
           lastSignature = signature;
@@ -775,8 +932,14 @@ export function presencePageHtml(): string {
       } catch {}
     }
     function nextPollDelay() {
-      // 1 s while the snapshot changed within the last 30 s, else 5 s.
-      return Date.now() - lastActivityAt < 30000 ? 1000 : 5000;
+      const active = Date.now() - lastActivityAt < 30000;
+      // Avatar mode drives realtime SPEECH off this poll (the speak cue is only
+      // picked up on a poll), so it polls faster while active for snappier
+      // reactions — its tunnel carries low-rate JSON and is used with a
+      // no-request-limit tunnel. Other modes keep the conservative 1 s / 5 s
+      // cadence to preserve tunnel request quota.
+      if (backgroundMode === "avatar") return active ? 300 : 2000;
+      return active ? 1000 : 5000;
     }
     async function pollLoop() {
       await refresh();
@@ -784,6 +947,8 @@ export function presencePageHtml(): string {
     }
     if (backgroundMode === "robot") {
       initRobot();
+    } else if (backgroundMode === "avatar") {
+      initAvatar();
     } else {
       initPlasma();
       initFpsProbe();

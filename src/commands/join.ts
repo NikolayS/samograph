@@ -346,6 +346,13 @@ export async function cmdJoin(
     }
     const publicBaseUrl = webhookUrl.replace(/\/+$/, "");
 
+    // Realtime-avatar persona id (not a secret): flag wins, else env. When set
+    // it both selects bg=avatar by default and is forwarded to _serve below.
+    const avatarPersonaId =
+      args.anam_persona || process.env.SAMOGRAPH_ANAM_PERSONA_ID || "";
+    const avatarVoiceId =
+      args.anam_voice || process.env.SAMOGRAPH_ANAM_VOICE_ID || "";
+
     // start webhook server (spawns self with _serve subcommand). The public
     // base URL travels via argv (it is not a secret) so _serve can run the
     // mid-call tunnel watchdog; tokens travel via env only.
@@ -369,26 +376,48 @@ export async function cmdJoin(
           SAMOGRAPH_FRAME_TOKEN: frameToken,
           SAMOGRAPH_PRESENCE_TOKEN: presenceToken,
           SAMOGRAPH_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+          // Persona id for the realtime avatar (not a secret). ANAM_API_KEY is
+          // inherited from the parent env by spawnDetached, so the key stays out
+          // of argv and out of this explicit map.
+          ...(avatarPersonaId ? { SAMOGRAPH_ANAM_PERSONA_ID: avatarPersonaId } : {}),
+          ...(avatarVoiceId ? { SAMOGRAPH_ANAM_VOICE_ID: avatarVoiceId } : {}),
         },
       },
     );
     started.add(server);
 
+    // Escape hatch for restricted-egress environments (e.g. a sandbox whose
+    // allowlist blocks *.trycloudflare.com): the LOCAL round-trip below is a
+    // false negative there even though the meeting platform's bot, on its own
+    // network, reaches the tunnel fine. Only set this when you have verified
+    // the public URL is reachable by an external client out-of-band.
+    const skipTunnelCheck = !!process.env.SAMOGRAPH_SKIP_TUNNEL_CHECK;
+
     // Round-trip check: does the public URL actually reach this server?
     // Unlike the presence preflight below (camera-only, degrades), webhook
     // reachability is core — a dead tunnel means join-and-sit-silent with an
     // empty transcript (the ERR_NGROK_727 incident), so refuse to join.
-    const health = await checkTunnelHealth(publicBaseUrl, fetchFn, sleepFn);
-    if (!health.ok) {
-      process.stderr.write(tunnelHealthFailureMessage(health));
-      cleanupUnsaved();
-      throw new ExitError(1);
+    if (skipTunnelCheck) {
+      process.stdout.write(
+        "Skipping tunnel health check (SAMOGRAPH_SKIP_TUNNEL_CHECK set) — " +
+          "trusting a pre-verified external tunnel.\n",
+      );
+    } else {
+      const health = await checkTunnelHealth(publicBaseUrl, fetchFn, sleepFn);
+      if (!health.ok) {
+        process.stderr.write(tunnelHealthFailureMessage(health));
+        cleanupUnsaved();
+        throw new ExitError(1);
+      }
     }
 
     // null = join without the webpage presence camera (opted out via
     // --no-presence, or degraded after a failed preflight).
-    const presenceBgSuffix = args.presence_bg
-      ? `&bg=${encodeURIComponent(args.presence_bg)}`
+    // Explicit --presence-bg wins; otherwise default to the avatar look when a
+    // persona is configured, so `--anam-persona <id>` alone is enough.
+    const presenceBg = args.presence_bg ?? (avatarPersonaId ? "avatar" : null);
+    const presenceBgSuffix = presenceBg
+      ? `&bg=${encodeURIComponent(presenceBg)}`
       : "";
     let presencePageUrl: string | null = args.no_presence
       ? null
@@ -397,11 +426,12 @@ export async function cmdJoin(
     process.stdout.write(`Webhook: ${webhookUrl}\n`);
     if (presencePageUrl) {
       process.stdout.write(`Presence camera: ${presencePageUrl}\n`);
-      const presenceReachable = await waitForPresenceCamera(
-        presencePageUrl,
-        fetchFn,
-        sleepFn,
-      );
+      // Same false-negative rationale as the health check: the camera preflight
+      // probes via this host's egress. When trusting a pre-verified tunnel,
+      // skip it so the avatar camera is not needlessly dropped.
+      const presenceReachable = skipTunnelCheck
+        ? true
+        : await waitForPresenceCamera(presencePageUrl, fetchFn, sleepFn);
       if (!presenceReachable) {
         process.stderr.write(
           "Warning: the presence camera page is not reachable by a browser — " +

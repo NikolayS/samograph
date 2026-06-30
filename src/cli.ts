@@ -70,13 +70,25 @@ options:
                          ERR_NGROK_727). Binary from PATH or CLOUDFLARED_BIN.
   --webhook-base URL     Use an existing public tunnel URL instead of starting one
                          (e.g. localtunnel/cloudflared pointing at --port);
-                         mutually exclusive with --tunnel
+                         mutually exclusive with --tunnel.
+                         In a restricted-egress environment where THIS host
+                         cannot reach the public URL (so the health/camera
+                         preflight false-negatives) but the meeting bot can,
+                         set SAMOGRAPH_SKIP_TUNNEL_CHECK=1 to trust a tunnel
+                         you have verified out-of-band.
   --variant NAME         Recall Output Media bot size: web|web_4_core|web_gpu
                          (default: web_4_core; smoothest camera rendering)
   --no-presence          Join without the presence camera page (skips the
                          camera-page preflight entirely)
-  --presence-bg MODE     Presence camera look: robot|sphere|field|static|cycle
-                         (default: robot — static samoagent avatar image)
+  --presence-bg MODE     Presence camera look: robot|sphere|field|static|cycle|avatar
+                         (default: robot — static samoagent avatar image;
+                         avatar = realtime lip-synced talking head, needs
+                         ANAM_API_KEY + a persona via --anam-persona)
+  --anam-persona ID      Anam persona id for --presence-bg avatar (env fallback:
+                         SAMOGRAPH_ANAM_PERSONA_ID)
+  --anam-voice ID        Anam voice id override for the avatar; changes the voice
+                         without re-publishing the persona (env fallback:
+                         SAMOGRAPH_ANAM_VOICE_ID)
   --chime NAME           Default chat chime for the session, played into the
                          call audio when the bot posts a meeting-chat message
                          (default: blip). See: samograph chimes
@@ -216,7 +228,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
-    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--intro-text", "--chime"]),
+    join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--anam-persona", "--anam-voice", "--intro-text", "--chime"]),
     intro: new Set(["--bot-id", "--intro-text"]),
     leave: new Set(),
     status: new Set(),
@@ -337,12 +349,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.presence_bg = (opts["--presence-bg"] as string) ?? null;
       if (
         result.presence_bg !== null &&
-        !["robot", "sphere", "field", "static", "cycle"].includes(result.presence_bg)
+        !["robot", "sphere", "field", "static", "cycle", "avatar"].includes(result.presence_bg)
       ) {
         throw new ArgError(
-          `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from robot, sphere, field, static, cycle)`,
+          `argument --presence-bg: invalid choice: '${result.presence_bg}' (choose from robot, sphere, field, static, cycle, avatar)`,
         );
       }
+      result.anam_persona = (opts["--anam-persona"] as string) ?? null;
+      result.anam_voice = (opts["--anam-voice"] as string) ?? null;
       result.intro = opts["--intro"] === true;
       result.intro_text = (opts["--intro-text"] as string) ?? null;
       // Session default chime. Validate eagerly (like --variant/--presence-bg)
