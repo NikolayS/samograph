@@ -19,6 +19,7 @@ import {
   inMemorySecretProvider,
   orchestrateJoin,
   pickRegion,
+  publicWebhookBase,
   regionTunnelBase,
   type CallStore,
   type CreateBotRequest,
@@ -102,6 +103,51 @@ describe("webhook URL shape (§5.2)", () => {
     expect(regionTunnelBase("us-east")).toBe("https://us-east.tunnel.samograph.dev");
     expect(buildWebhookUrl("https://us-east.tunnel.samograph.dev", "bot_abc", "sek")).toBe(
       "https://us-east.tunnel.samograph.dev/webhook?bot=bot_abc&t=sek",
+    );
+  });
+});
+
+describe("configurable public webhook base (§5.2; issue #88 VM deploy)", () => {
+  it("publicWebhookBase reads PUBLIC_WEBHOOK_BASE and returns its origin", () => {
+    expect(publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "https://samograph-main.samo.cat" })).toBe(
+      "https://samograph-main.samo.cat",
+    );
+    // Trailing path/slash is normalized away to the origin.
+    expect(publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "https://h.example/ignored" })).toBe(
+      "https://h.example",
+    );
+  });
+
+  it("publicWebhookBase is undefined when unset (regional tunnel default applies)", () => {
+    expect(publicWebhookBase({})).toBeUndefined();
+  });
+
+  it("publicWebhookBase rejects a non-https base with a clear error", () => {
+    expect(() => publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "http://insecure" })).toThrow(/https/);
+    expect(() => publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "not a url" })).toThrow(
+      /PUBLIC_WEBHOOK_BASE/,
+    );
+  });
+
+  it("orchestrateJoin builds the webhook URL against deps.webhookBase when provided", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    let captured: { req: CreateBotRequest; webhookUrl: string } | null = null;
+    const { store } = memStore();
+    const secret = "fixed-secret-for-webhookbase-test-00000000000";
+
+    await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      {
+        recall: fakeRecall(fake, (c) => (captured = c)),
+        store,
+        generateSecret: () => secret,
+        webhookBase: "https://samograph-main.samo.cat",
+      },
+    );
+
+    const cap = captured as unknown as { webhookUrl: string };
+    expect(cap.webhookUrl).toBe(
+      `https://samograph-main.samo.cat/webhook?bot=${fake.botId}&t=${secret}`,
     );
   });
 });

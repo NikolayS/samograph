@@ -84,6 +84,13 @@ export interface OrchestrateDeps {
   store: CallStore;
   /** Region override; defaults to {@link pickRegion}. */
   region?: string;
+  /**
+   * Public webhook base override (§5.3). When set (e.g. from `PUBLIC_WEBHOOK_BASE`,
+   * see {@link publicWebhookBase}), the per-call webhook URL is built against this
+   * origin instead of the region's tunnel base — the seam that lets a real bot on a
+   * public VM reach an operator-controlled ingress. Defaults to {@link regionTunnelBase}.
+   */
+  webhookBase?: string;
   /** Secret generator override (deterministic in tests); defaults to {@link generateIngestSecret}. */
   generateSecret?: () => string;
   logger?: Logger;
@@ -141,6 +148,28 @@ export function regionTunnelBase(region: string): string {
   return base;
 }
 
+/**
+ * The operator-configured public webhook base (§5.3), read from `PUBLIC_WEBHOOK_BASE`
+ * (e.g. `https://samograph-main.samo.cat`). Returns the bare origin (path/trailing
+ * slash stripped), or `undefined` when unset (the region's tunnel base applies).
+ * A set-but-malformed or non-https value throws a clear error — a real bot must not
+ * silently register an unreachable/insecure webhook destination.
+ */
+export function publicWebhookBase(env: Record<string, string | undefined> = process.env): string | undefined {
+  const raw = (env.PUBLIC_WEBHOOK_BASE ?? "").trim();
+  if (!raw) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`PUBLIC_WEBHOOK_BASE is not a valid URL: ${raw}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`PUBLIC_WEBHOOK_BASE must be an https:// URL (got ${parsed.protocol}//…)`);
+  }
+  return parsed.origin;
+}
+
 /** Build the per-call webhook URL: `<base>/webhook?bot=<id>&t=<ingest_secret>` (§5.2). */
 export function buildWebhookUrl(base: string, recallBotId: string, ingestSecret: string): string {
   const q = new URLSearchParams({ bot: recallBotId, t: ingestSecret });
@@ -170,7 +199,9 @@ export async function orchestrateJoin(
   await deps.store.recordIngestSecret(job.callId, hash, region);
 
   // 2) Create the Recall bot; finalize the webhook URL with the assigned bot id.
-  const base = regionTunnelBase(region);
+  //    A `webhookBase` override (PUBLIC_WEBHOOK_BASE) wins over the regional tunnel
+  //    base so a real bot on a public VM can reach an operator-controlled ingress.
+  const base = deps.webhookBase ?? regionTunnelBase(region);
   const created = await deps.recall.createBot({
     meetingUrl: job.meetingUrl,
     botName: BOT_NAME,

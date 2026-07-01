@@ -35,6 +35,12 @@ and a leader-elected ingest watchdog (§4.5/§4.6).
 a call can be `IN_CALL` **and** degraded at the same time. See
 [ingest-degraded.md](./ingest-degraded.md).
 
+## Operational toggles
+
+| Toggle | Effect | Doc |
+|---|---|---|
+| `RECALL_LIVE` + `RECALL_API_KEY` | Flip the bot-orchestrator from the deterministic fake to the REAL Recall client so an actual bot joins (default = fake; never set in CI) | [real-recall-flag.md](./real-recall-flag.md) |
+
 ## Conventions
 
 - All log lines are structured JSON carrying `call_id`, `tenant_id`, `region`

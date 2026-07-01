@@ -32,6 +32,7 @@ import {
   inMemoryWebhookMetrics,
   inMemoryWebhookSecretProvider,
   pgLookupCallByBotId,
+  pgLookupCallByIngestSecret,
   type ValidatedEvent,
   type WebhookHandlerDeps,
 } from "./webhook.ts";
@@ -287,6 +288,7 @@ d("handleTranscriptEvent persistence (§5.4/§5.2/§5.5/§5.11, TDD #1-#7)", () 
     const handler = createWebhookHandler({
       secretProvider: inMemoryWebhookSecretProvider(fake.webhookSecret),
       lookupCallByBotId: pgLookupCallByBotId(sql),
+      lookupCallByIngestSecret: pgLookupCallByIngestSecret(sql),
       sql,
       dispatch: pipeline.dispatch,
       metrics: inMemoryWebhookMetrics(),

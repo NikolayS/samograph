@@ -29,6 +29,7 @@ import {
 import {
   createWebhookHandler,
   pgLookupCallByBotId,
+  pgLookupCallByIngestSecret,
   inMemoryWebhookMetrics,
   type CallIdentity,
   type WebhookMetrics,
@@ -67,6 +68,8 @@ export interface LiveStackDeps {
   hub?: Hub;
   /** `?bot=` → call resolver; defaults to the privileged Postgres lookup. */
   lookupCallByBotId?: (botId: string) => Promise<CallIdentity | null>;
+  /** `?t=` → call resolver (ingest_secret_hash); defaults to the privileged Postgres lookup. */
+  lookupCallByIngestSecret?: (ingestSecretHash: string) => Promise<CallIdentity | null>;
   wsPort?: number;
   ingestPort?: number;
   hostname?: string;
@@ -97,6 +100,8 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   const lifecycleMetrics = deps.lifecycleMetrics ?? inMemoryBotLifecycleMetrics();
   const webhookMetrics = deps.webhookMetrics ?? inMemoryWebhookMetrics();
   const lookupCallByBotId = deps.lookupCallByBotId ?? pgLookupCallByBotId(deps.sql);
+  const lookupCallByIngestSecret =
+    deps.lookupCallByIngestSecret ?? pgLookupCallByIngestSecret(deps.sql);
 
   const fanIn = createFanIn({
     sql: deps.sql,
@@ -139,6 +144,7 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
     const handler = createWebhookHandler({
       secretProvider: deps.secretProvider,
       lookupCallByBotId,
+      lookupCallByIngestSecret,
       sql: deps.sql,
       dispatch,
       metrics: webhookMetrics,

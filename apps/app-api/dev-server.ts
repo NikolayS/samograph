@@ -11,7 +11,10 @@
  *   - Magic-link email is the in-memory `EmailSender` fake; instead of sending,
  *     it PRINTS the sign-in URL to stdout and exposes it at `GET /__dev/last-magic-link`.
  *   - The bot-orchestrator is backed by the deterministic in-repo Recall FAKE
- *     (packages/test-fakes/recall) — no real Recall bot ever joins a call.
+ *     (packages/test-fakes/recall) by default — no real bot joins. Setting
+ *     `RECALL_LIVE=1` + `RECALL_API_KEY` (issue #88) flips it to the REAL client so
+ *     an actual bot joins; point `PUBLIC_WEBHOOK_BASE` at a public ingress for the
+ *     webhook (live transcript additionally needs that tunnel — sprint-exit gate).
  *   - Signing/session secrets fall back to obvious DEV-ONLY constants.
  *   - Set-Cookie `Secure` is stripped so the cookie is stored over http://localhost.
  *
@@ -34,10 +37,10 @@ import { connect } from "../../packages/shared/db/index.ts";
 import {
   orchestrateJoin,
   pgCallStore,
-  type RecallClient,
+  publicWebhookBase,
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
-import { createRecallFake } from "../../packages/test-fakes/recall/index.ts";
+import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
 
 // ── DEV-ONLY config + secrets (clearly marked; NEVER use in production) ────────
 const PORT = Number(process.env.APP_API_PORT ?? 8787);
@@ -90,24 +93,29 @@ const authService = new AuthService({
 });
 const authHandler = createAuthHandler(authService);
 
+// Validate PUBLIC_WEBHOOK_BASE once at startup (fail fast on a malformed value);
+// undefined → the orchestrator's regional tunnel base applies (the fake default).
+const WEBHOOK_BASE = publicWebhookBase();
+
+// Fail fast at STARTUP (not silently per-call) when the real Recall path is
+// requested without a key — issue #88: never silently fall back to the fake.
+if (isRecallLive()) liveRecallClient();
+
 /**
- * bot-orchestrator seam (§5.2): drive each new call through the createBot path
- * backed by the deterministic Recall fake, persisting region + ingest-secret hash
- * and flipping the row PENDING→JOINING. Runs on the privileged (superuser)
- * connection so the orchestrator's `UPDATE calls` bypasses RLS (no tenant ctx).
+ * bot-orchestrator seam (§5.2): drive each new call through the createBot path,
+ * persisting region + ingest-secret hash and flipping the row PENDING→JOINING. The
+ * Recall client is flag-selected (`getRecallClient`, issue #88): the deterministic
+ * fake by default; the REAL client when `RECALL_LIVE` + `RECALL_API_KEY` are set, so
+ * a real bot joins. Runs on the privileged (superuser) connection so the
+ * orchestrator's `UPDATE calls` bypasses RLS (no tenant ctx).
  */
 async function enqueue(job: OrchestratorJob): Promise<void> {
-  const fake = createRecallFake({ seed: job.callId });
-  const recall: RecallClient = {
-    async createBot(req) {
-      const { id } = fake.createBot();
-      return { id, webhookUrl: req.buildWebhookUrl(id) };
-    },
-  };
+  const recall = getRecallClient({ seed: job.callId });
   try {
     const result = await orchestrateJoin(job, {
       recall,
       store: pgCallStore(sql),
+      webhookBase: WEBHOOK_BASE,
       logger: { info: (event, fields) => console.log(`[orchestrator] ${event}`, fields ?? {}) },
     });
     console.log(
@@ -164,12 +172,15 @@ const server = Bun.serve({
   },
 });
 
+const recallMode = isRecallLive()
+  ? `REAL (RECALL_LIVE) → bot joins; webhook base ${WEBHOOK_BASE ?? "(regional tunnel default)"}`
+  : "in-repo deterministic FAKE (no real bot joins)";
 console.log(
   `\n[app-api] composed dev server listening on http://localhost:${server.port}\n` +
     `  routes: GET /health | POST /auth/magic-link | GET /auth/callback |\n` +
     `          POST/GET /calls | GET /calls/:id | GET /__dev/last-magic-link\n` +
     `  magic-link callbacks point at ${WEB_ORIGIN} (the web app)\n` +
-    `  Recall: in-repo deterministic FAKE (no real bot joins)\n` +
+    `  Recall: ${recallMode}\n` +
     `  Email:  in-memory FAKE (link printed above + /__dev/last-magic-link)\n`,
 );
 if (usingDevSecrets) {

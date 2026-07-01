@@ -1,27 +1,33 @@
 /**
  * The ingest webhook authenticity front door (SPEC §5.3, §6.2 #7).
  *
- * `POST /webhook?bot=…&t=…` is the most security-sensitive call-path surface:
+ * `POST /webhook?[bot=…&]t=…` is the most security-sensitive call-path surface:
  * the Recall API key is shared across tenants (§4.4), so an external attacker
- * spoofing `?bot=<victim>` is the threat. This handler validates in the exact
- * §5.3 order, FAILS CLOSED (bodyless 4xx, one WARN, a `webhook_rejected_total`
- * increment, never reaching `dispatch`), and is idempotent under Recall's
- * at-least-once delivery via `(bot_id, recall_event_id)` (0003 / §6.2 #7).
+ * spoofing a webhook into a victim's call is the threat. FAILS CLOSED (bodyless
+ * 4xx, one WARN, a `webhook_rejected_total` increment, never reaching `dispatch`),
+ * idempotent under Recall's at-least-once delivery via `(bot_id, recall_event_id)`.
+ *
+ * PRIMARY AUTH is the per-call `?t=` ingest_secret (a 256-bit secret we generate
+ * and embed in the webhook URL we hand Recall). Recall's REAL-TIME webhooks
+ * (`realtime_endpoints`) are NOT HMAC-signed — the URL token IS the authenticator,
+ * exactly the proven CLI model (`src/server.ts` authenticates `?token=` only).
+ * See amendment S2-11.
  *
  * Validation order (each step's failure is final — no later step runs):
- *   1. Recall HMAC signature vs the per-region webhook secret  → 401 bad_signature
- *   2. `?bot=` resolves to a known `calls.recall_bot_id`        → 401 unknown_bot
- *   3. `?t=` matches `calls.ingest_secret_hash`, constant time → 401 ingest_secret_mismatch
- *      (an authenticated-but-malformed body is dropped here too → 401 malformed)
- *   4. Tenancy gate: the body's claimed `bot_id` must equal the authenticated
- *      `?bot=`; `setTenant` scopes the idempotency write to that tenant (§5.10)
- *                                                              → 403 cross_tenant
+ *   1. Recall signature — OPTIONAL defense-in-depth: verified only if a signature
+ *      header is PRESENT (a present-but-forged one → 401 bad_signature, before any
+ *      DB touch); ABSENT (the real-time path) is fine — the `?t=` secret is the gate.
+ *   2. Resolve the owning call: `?bot=` → `calls.recall_bot_id` (+ a constant-time
+ *      `?t=` step-3 check), OR — when `?bot=` is absent — `?t=` → `ingest_secret_hash`
+ *      (the hashed indexed lookup IS the secret match). No resolution → 401 unknown_bot.
+ *   3. (canonical path only) `?t=` matches `calls.ingest_secret_hash`, constant time
+ *      → 401 ingest_secret_mismatch. An authenticated-but-malformed body → 401 malformed.
+ *   4. Tenancy gate: a body-claimed `bot_id` must equal the authenticated bot;
+ *      `setTenant` scopes the idempotency write to that tenant → 403 cross_tenant.
  *
- * Steps 1–3 are the §5.3 server↔Recall authenticity checks → `SAMO-WEBHOOK-401`
- * (§5.16). Step 4 is the tenancy gate → `SAMO-AUTHZ-001` (403), matching §6.2 #7
- * ("cross-tenant → 403 (tenancy gate)"). Only after all four pass does the
- * handler record the event and call the typed `dispatch(event)` seam — this
- * issue does NOT write transcript rows or transition call status (#78 / #79).
+ * Steps 1–3 are the §5.3 authenticity checks → `SAMO-WEBHOOK-401` (§5.16). Step 4 is
+ * the tenancy gate → `SAMO-AUTHZ-001` (403), matching §6.2 #7. Only after all pass
+ * does the handler record the event and call the typed `dispatch(event)` seam.
  */
 import { createHash } from "node:crypto";
 import type { SQL } from "bun";
@@ -94,6 +100,15 @@ export interface WebhookHandlerDeps {
   secretProvider: WebhookSecretProvider;
   /** Privileged (pre-tenant) `?bot=` → call resolver; `null` when the bot is unknown. */
   lookupCallByBotId: (recallBotId: string) => Promise<CallIdentity | null>;
+  /**
+   * Privileged (pre-tenant) `?t=` → call resolver, keyed on `ingest_secret_hash`;
+   * used when `?bot=` is ABSENT (the real-Recall path, §5.3 / amendment S2-10):
+   * Recall registers the realtime webhook at createBot time with only
+   * `?t=<ingest_secret>` because the assigned bot id is not yet known. `null` when
+   * no call matches the hash (or the bot has not been acked yet — see
+   * {@link pgLookupCallByIngestSecret}).
+   */
+  lookupCallByIngestSecret: (ingestSecretHash: string) => Promise<CallIdentity | null>;
   /** Connection used ONLY for the tenant-scoped idempotency write (never on reject paths). */
   sql: SQL;
   /** The downstream seam — invoked at most once per `(botId, recallEventId)`. */
@@ -174,27 +189,51 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     const rawBody = await request.text();
     if (rawBody.length > WEBHOOK_MAX_BYTES) return reject("malformed", 401);
 
-    // ── 1. Recall HMAC signature vs the per-region webhook secret. ───────────
-    // Rejects external spoofs that never went through Recall — checked FIRST, so
-    // an unsigned attacker never reaches the privileged bot lookup or the DB.
-    const secret = await deps.secretProvider.webhookSecret();
+    // ── 1. Recall signature — OPTIONAL defense-in-depth, NOT the primary gate.
+    // Recall's real-time webhooks (realtime_endpoints) are NOT HMAC-signed — auth
+    // is the per-call `?t=` ingest_secret in the URL (the proven CLI model,
+    // src/server.ts; §5.3 / amendment S2-11). So: a PRESENT signature header (an
+    // account-level Svix webhook) MUST verify — a present-but-forged one is rejected
+    // HERE, before any DB touch; an ABSENT header (the real-time transcript path) is
+    // NOT rejected — the `?t=` secret below is the required authenticator. Omitting
+    // the header buys an attacker nothing: they still need the 256-bit per-call secret.
     const presented = request.headers.get(RECALL_SIGNATURE_HEADER);
-    if (!verifyRecallSignature(rawBody, presented, secret)) {
-      return reject("bad_signature", 401);
+    if (presented !== null) {
+      const secret = await deps.secretProvider.webhookSecret();
+      if (!verifyRecallSignature(rawBody, presented, secret)) {
+        return reject("bad_signature", 401);
+      }
     }
 
-    // ── 2. `?bot=` resolves to a known `calls.recall_bot_id`. ────────────────
+    // ── 2. Resolve the owning call. Canonical path: `?bot=` → recall_bot_id +
+    // a constant-time `?t=` check (step 3). Real-Recall path: when `?bot=` is
+    // ABSENT (Recall registered `…/webhook?t=<ingest_secret>` at createBot time,
+    // before its assigned bot id was known — §5.3 / amendment S2-10), resolve BY
+    // the ingest secret's hash. That hashed, indexed lookup IS the `?t=` match, so
+    // step 3 is not re-run for it. Neither key present → 401.
     const botParam = url.searchParams.get("bot");
-    if (!botParam) return reject("unknown_bot", 401);
-    const identity = await deps.lookupCallByBotId(botParam);
-    if (!identity) return reject("unknown_bot", 401, { botId: botParam });
+    const tParam = url.searchParams.get("t");
+    let identity: CallIdentity | null;
+    if (botParam) {
+      identity = await deps.lookupCallByBotId(botParam);
+      if (!identity) return reject("unknown_bot", 401, { botId: botParam });
 
-    // ── 3. `?t=` matches `calls.ingest_secret_hash`, in constant time. ───────
-    // We hold only the hash; hash the presented plaintext and constant-time
-    // compare via the CLI's `tokensEqual` (fails closed on empty/missing).
-    const presentedHash = botParamSecretHash(url.searchParams.get("t"));
-    if (!tokensEqual(presentedHash, identity.ingestSecretHash)) {
-      return reject("ingest_secret_mismatch", 401, { botId: botParam });
+      // ── 3. `?t=` matches `calls.ingest_secret_hash`, in constant time. ─────
+      // We hold only the hash; hash the presented plaintext and constant-time
+      // compare via the CLI's `tokensEqual` (fails closed on empty/missing).
+      const presentedHash = botParamSecretHash(tParam);
+      if (!tokensEqual(presentedHash, identity.ingestSecretHash)) {
+        return reject("ingest_secret_mismatch", 401, { botId: botParam });
+      }
+    } else if (tParam) {
+      // Finding the row BY sha256(t) IS the §5.3 secret match (the 256-bit secret
+      // makes its hash a unique probe). The resolver returns null when no call
+      // matches OR the bot has not been acked yet (recall_bot_id NULL) — fail
+      // closed so Recall re-delivers (§6.2 #7).
+      identity = await deps.lookupCallByIngestSecret(sha256Hex(tParam));
+      if (!identity) return reject("unknown_bot", 401);
+    } else {
+      return reject("unknown_bot", 401);
     }
 
     // An authentic-but-malformed body is dropped here (never reaches dispatch).
@@ -308,6 +347,43 @@ export function pgLookupCallByBotId(
       tenantId: rows[0].tenant_id,
       ingestSecretHash: rows[0].ingest_secret_hash,
       recallBotId: rows[0].recall_bot_id,
+    };
+  };
+}
+
+/**
+ * Privileged (pre-tenant) `?t=` → {@link CallIdentity} resolver over Postgres,
+ * keyed on `ingest_secret_hash` (indexed by migration 0005). Used for the
+ * real-Recall path where Recall registered `…/webhook?t=<ingest_secret>` at
+ * createBot time (no `?bot=` yet, §5.3 / amendment S2-10). Finding the row BY the
+ * presented secret's hash IS the §5.3 authenticity match — there is no separate
+ * constant-time compare (the 256-bit secret makes the hash a unique probe).
+ *
+ * Returns `null` when no call matches OR when the call's `recall_bot_id` is still
+ * NULL (the bot has not been acked yet): the dedup ledger + `webhook_events` RLS
+ * key on `recall_bot_id`, so we fail closed and let Recall re-deliver (§6.2 #7).
+ */
+export function pgLookupCallByIngestSecret(
+  sql: SQL,
+): (ingestSecretHash: string) => Promise<CallIdentity | null> {
+  return async (ingestSecretHash) => {
+    const rows = (await sql`
+      SELECT id, tenant_id, ingest_secret_hash, recall_bot_id
+      FROM calls
+      WHERE ingest_secret_hash = ${ingestSecretHash}
+      LIMIT 1`) as unknown as Array<{
+      id: string;
+      tenant_id: string;
+      ingest_secret_hash: string | null;
+      recall_bot_id: string | null;
+    }>;
+    const row = rows[0];
+    if (!row || !row.recall_bot_id) return null;
+    return {
+      callId: row.id,
+      tenantId: row.tenant_id,
+      ingestSecretHash: row.ingest_secret_hash,
+      recallBotId: row.recall_bot_id,
     };
   };
 }
