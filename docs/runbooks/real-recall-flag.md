@@ -37,8 +37,16 @@ bun apps/app-api/dev-server.ts
 ```
 
 Then `POST /calls {meeting_url}` with a real Meet/Zoom URL — a real bot joins
-within ~15 s and the call row flips PENDING → JOINING (→ IN_CALL once Recall
-reports `in_call_recording`).
+within ~15 s and the call row flips PENDING → JOINING.
+
+> **Known limitation (amendment S2-12): call status does NOT auto-advance yet with
+> real Recall.** The real-time webhook endpoint carries `transcript.data` **only** —
+> Recall rejects `bot.status_change` on a real-time endpoint (HTTP 400, "not a valid
+> choice"). So the §5.2 lifecycle (`bot.status_change` → `calls.status`) receives no
+> status events over this channel: the row stays JOINING and does **not** flip to
+> IN_CALL / DONE on its own. Transcript ingest still works (the bot joins and is heard).
+> Live status delivery from real Recall needs a **separate status / account-level
+> webhook config** (not the real-time endpoint) and is tracked as its own follow-up.
 
 ## Turn it off
 
