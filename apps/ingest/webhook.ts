@@ -29,7 +29,7 @@
  * the tenancy gate → `SAMO-AUTHZ-001` (403), matching §6.2 #7. Only after all pass
  * does the handler record the event and call the typed `dispatch(event)` seam.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
 import {
   RECALL_SIGNATURE_HEADER,
@@ -122,11 +122,6 @@ export const WEBHOOK_MAX_BYTES = 1024 * 1024;
 
 const KIND_TRANSCRIPT = "transcript.data";
 const KIND_STATUS = "bot.status_change";
-
-/** SHA-256 hex of a value — used to hash the presented `?t=` before the compare. */
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
 
 interface ParsedEnvelope {
   recallEventId: string;

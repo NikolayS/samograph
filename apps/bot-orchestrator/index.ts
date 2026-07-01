@@ -16,7 +16,8 @@
  * Inbound webhook verification + the normalizer (§5.3), worker registration
  * (§6.2 #9), the real tunnel, and real-Recall wiring are deliberately OUT of scope.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
 
 /** This service's stable name (parity with the other workspace stubs). */
@@ -138,7 +139,7 @@ export function generateIngestSecret(): string {
 
 /** SHA-256 (hex) of the ingest_secret — the only form ever persisted (§4.2). */
 export function ingestSecretHash(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex");
+  return sha256Hex(secret);
 }
 
 /** The persistent regional tunnel base for a region; throws on an unknown region. */

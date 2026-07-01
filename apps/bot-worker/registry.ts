@@ -14,7 +14,8 @@
  * credential. The {@link WorkerStore} port keeps the core unit-testable; the
  * Postgres binding is {@link pgWorkerStore}.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
 
 /**
@@ -27,7 +28,7 @@ export function generateWorkerSecret(): string {
 
 /** SHA-256 (hex) of the worker secret — the only form ever persisted (§4.2, §5.8). */
 export function hashWorkerSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex");
+  return sha256Hex(secret);
 }
 
 /** The exact row written to `workers` — note: the HASH, never the plaintext. */
