@@ -386,6 +386,43 @@ running server. `apps/ws-hub/server.ts`.
 
 ---
 
+### S2-10. §5.2 / §5.3 / §6.1 — real Recall behind `RECALL_LIVE` (issue #88) — *Extension*
+
+**Amends:** §6.1 (the deterministic fake is the default), §5.2 / §5.3 (the createBot
+webhook URL), §5.9 (bot display name + Deepgram real-time transcription).
+
+**What differs / is added:**
+- **Flag seam.** `apps/bot-orchestrator/recallClient.ts` adds `getRecallClient()`. The
+  DEFAULT stays the deterministic in-repo fake (§6.1) — CI/local need NO key. The REAL
+  `src/recall.ts` client is reached ONLY when `RECALL_LIVE` (canonical) **or** its
+  `RECALL_AI` alias (the wording in issue #88) is truthy **AND** `RECALL_API_KEY` is set.
+  The flag is never set in CI. Flag on + no key → a clear **startup** error, never a
+  silent fallback (validated at dev-server boot via `liveRecallClient()`).
+- **Configurable public webhook base.** `publicWebhookBase()` reads `PUBLIC_WEBHOOK_BASE`
+  (e.g. `https://samograph-main.samo.cat`) and `orchestrateJoin` accepts a `webhookBase`
+  override (defaulting to the regional tunnel base). This is the seam that lets a real bot
+  on a public VM register an operator-controlled ingress (§5.3). A set-but-non-https value
+  fails fast.
+- **Registered webhook URL carries `?t=` only, not `?bot=&t=`.** Recall assigns
+  `recall_bot_id` only in the createBot **response**, so the realtime endpoint URL we
+  register at creation cannot embed `?bot=<id>`. We register `…/webhook?t=<ingest_secret>`
+  (the proven `src/commands/join.ts` pattern; Recall echoes `bot_id` in every event body),
+  and the orchestrator records the canonical `?bot=<id>&t=<secret>` form (§5.3) once the id
+  is known. The §5.3 ingest verifier's cheap `?bot=` pre-check therefore resolves the bot
+  from the body for the real path.
+- **Deepgram real-time transcription** is enabled in the createBot payload
+  (`recording_config.transcript.provider.deepgram_streaming`), and the bot display name is
+  the fixed `samograph (recording)` (§5.9), both reusing the CLI's proven shape.
+
+**Why:** Lets the owner watch an ACTUAL bot join a Zoom/Meet call without disturbing the
+fake-by-default CI gate. Live transcript end-to-end remains a SEPARATE concern — it
+additionally needs the public webhook tunnel reachable (the sprint-exit manual gate); this
+seam only gets a real bot INTO the call. `apps/bot-orchestrator/recallClient.ts`,
+`apps/bot-orchestrator/index.ts`, `apps/app-api/dev-server.ts`,
+`docs/runbooks/real-recall-flag.md`.
+
+---
+
 ### Gaps tracked as issues (NOT amendments)
 
 Per this document's rule, genuine gaps/follow-ups are GitHub issues, not amendments:
@@ -399,8 +436,9 @@ Per this document's rule, genuine gaps/follow-ups are GitHub issues, not amendme
   dashboard feed today).
 - **#109** — provision the `samograph-bench-isolated` CI runner so the §6.2 #3
   p99 ≤ 5 ms SLO actually asserts (it currently skips loudly).
-- **#88** — *optional* real-Recall env flag (a real bot joins) — needs
-  `RECALL_API_KEY`; default stays the fake.
+- **#88** — *optional* real-Recall env flag (a real bot joins) — **implemented**
+  (see S2-10): `RECALL_LIVE` + `RECALL_API_KEY`; default stays the fake. Live
+  transcript end-to-end still needs the public webhook tunnel (sprint-exit gate).
 
 ---
 
