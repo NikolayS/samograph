@@ -13,7 +13,7 @@
  * filtering — enforces isolation even if the route logic has a bug. A superuser
  * connection would BYPASS RLS and defeat the gate.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
 import type { Keyring } from "../../../packages/shared/tokens/signing.ts";
 import { mintShareToken, revokeToken } from "../../../packages/shared/tokens/store.ts";
@@ -92,11 +92,6 @@ function hasShareCredential(req: Request, url: URL): boolean {
   if ((url.searchParams.get("token") ?? "").length > 0) return true;
   const auth = req.headers.get("authorization");
   return auth !== null && /^Bearer\s+.+/i.test(auth.trim());
-}
-
-/** sha256-hex over a value — the audit `payload_sha256` of a token id (never the secret). */
-function sha256hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 /** The single bodyless 401 for an authentication failure (§5.1). */
@@ -216,7 +211,7 @@ export function createCallsHandler(
         });
         await tx`
           INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
-          VALUES (${authz.tenantId}, ${callId}, ${`user:${claims.userId}`}, 'share.mint', ${sha256hex(m.jti)})`;
+          VALUES (${authz.tenantId}, ${callId}, ${`user:${claims.userId}`}, 'share.mint', ${sha256Hex(m.jti)})`;
         return m;
       });
       if (!minted) return denied();
@@ -246,7 +241,7 @@ export function createCallsHandler(
         if (did) {
           await tx`
             INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
-            VALUES (${authz.tenantId}, ${callId}, ${`user:${claims.userId}`}, 'share.revoke', ${sha256hex(tokenId)})`;
+            VALUES (${authz.tenantId}, ${callId}, ${`user:${claims.userId}`}, 'share.revoke', ${sha256Hex(tokenId)})`;
         }
         return { authorized: true as const };
       });

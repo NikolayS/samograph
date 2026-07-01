@@ -19,7 +19,7 @@
  * The cap key for a token is a sha256 of the share-token string (its stable
  * identity) — never the raw secret as a map key, never logged.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../packages/shared/crypto.ts";
 
 // ── Spec numbers (§5.7). Defaults of {@link ShareCaps}; overridable for tests. ──
 /** Per-token concurrent-connection cap. */
@@ -165,7 +165,7 @@ export class ShareCaps {
 
 /** Stable per-token cap key: sha256 of the share-token string (never the raw secret). */
 export function shareCapKey(shareToken: string): string {
-  return createHash("sha256").update(shareToken).digest("hex");
+  return sha256Hex(shareToken);
 }
 
 /**

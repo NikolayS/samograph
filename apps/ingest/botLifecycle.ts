@@ -27,7 +27,7 @@
  * so Recall legitimately retries (at-least-once). The PENDING/JOINING→IN_CALL
  * guard means a re-emitted DISTINCT `in_call_recording` never double-posts.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
 import type {
   TranscriptControlFrame,
@@ -223,8 +223,6 @@ export interface BotLifecycle {
   /** The {@link Dispatch} adapter the webhook front door (#93) subscribes to. */
   dispatch: Dispatch;
 }
-
-const sha256Hex = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Pull `status.code` / `status.sub_code` out of a `bot.status_change` payload. */
 function readStatus(payload: ValidatedEvent["payload"]): { code: string; subCode: string | null } | null {
