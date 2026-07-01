@@ -433,6 +433,37 @@ ingest. `apps/bot-orchestrator/recallClient.ts`, `apps/bot-orchestrator/index.ts
 
 ---
 
+### S2-11. §5.3 — the Recall webhook signature is OPTIONAL; `?t=` ingest_secret is the primary auth — *Correction/Deviation (v1)*
+
+**Amends:** §5.3 step 1 ("Recall webhook signature verified … Rejects external spoofs").
+
+**What differs:** §5.3 lists the Recall HMAC signature as the **required first gate**. But
+Recall's **real-time** webhooks (the per-bot `realtime_endpoints` that carry `transcript.data`
+and `bot.status_change`) are **NOT HMAC-signed** — verified against the proven CLI, which
+authenticates its webhook by the **URL token only** and no signature
+(`src/server.ts`: `POST /webhook?token=<secret>` → `tokensEqual(searchParams.get("token"), webhookToken)`;
+no HMAC anywhere). Requiring a signature would therefore **401 every real webhook** — the bot
+joins but is deaf. So `apps/ingest/webhook.ts` now treats the signature as **optional
+defense-in-depth**: if a signature header is **present** (e.g. an account-level Svix webhook)
+it MUST verify — a present-but-forged one is rejected (401 `bad_signature`) before any DB
+touch; if **absent** (the real-time path) it is NOT rejected. The **primary, required** gate
+is the per-call **`?t=` ingest_secret** — a 256-bit secret we generate and embed in the
+webhook URL handed to Recall — matched constant-time (`?bot=` path) or as a hashed indexed
+lookup (`?t=` path, S2-10). An attacker omitting the signature gains nothing: they still need
+the secret.
+
+**Security invariant (unchanged):** nothing dispatches without a valid `?t=` secret — a
+well-formed spoof with a wrong/absent secret is rejected (`unknown_bot`/`ingest_secret_mismatch`),
+and a malformed body is dropped before the normalizer even on the authenticated path
+(fuzz-tested both ways in `apps/ingest/webhook.test.ts`).
+
+**Tradeoff (accept for v1, matches the CLI):** the secret rides in the URL query, so it can
+appear in ingress/proxy access logs. Mitigations in place: HTTPS transport, a per-call
+(not global) secret, and only the SHA-256 hash is persisted (§4.2). A follow-up could move
+the token to a request header; not a v1 blocker. `apps/ingest/webhook.ts`.
+
+---
+
 ### Gaps tracked as issues (NOT amendments)
 
 Per this document's rule, genuine gaps/follow-ups are GitHub issues, not amendments:

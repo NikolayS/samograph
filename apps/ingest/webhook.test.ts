@@ -126,11 +126,12 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     expect(h.dispatched).toHaveLength(0);
   });
 
-  it("?t=-only (no ?bot=): a bad signature STILL gates at step 1 — resolver never consulted (§5.3 / S2-10)", async () => {
+  it("?t=-only: a PRESENT-but-forged signature is still rejected (optional → but verified if present) (§5.3 / S2-11)", async () => {
     const h = harness();
     const env = h.fake.webhook(h.fake.lifecycle("in_call_recording"));
-    // Real-Recall registers `…/webhook?t=<secret>` (no ?bot=). An unsigned/forged
-    // POST must still be rejected FIRST by the Recall signature — before any lookup.
+    // The signature is OPTIONAL, but if a header IS present it must verify — a
+    // present-but-forged one is rejected at step 1, before any lookup (even with a
+    // valid ?t=). Defense-in-depth for account-level Svix webhooks.
     const res = await h.handler(
       new Request(`https://ingest.local/webhook?t=${h.fake.ingestSecret}`, {
         method: "POST",
@@ -141,6 +142,26 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     expect(res.status).toBe(401);
     expect(h.metrics.rejected).toEqual({ bad_signature: 1 });
     expect(h.ingestSecretLookups()).toBe(0);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it("NO signature header + ?t= (the real-time Recall path): NOT rejected as bad_signature — the ?t= secret is the gate (§5.3 / S2-11)", async () => {
+    const h = harness();
+    const env = h.fake.webhook(h.fake.lifecycle("in_call_recording"));
+    // Real Recall real-time webhooks are UNSIGNED (proven CLI model, src/server.ts).
+    // An unsigned request must NOT short-circuit at signature; it reaches the ?t=
+    // gate, which rejects a WRONG secret. (Old code 401'd every unsigned webhook.)
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=wrong-secret`, {
+        method: "POST",
+        headers: { "content-type": "application/json" }, // NO signature header
+        body: env.rawBody,
+      }),
+    );
+    expect(res.status).toBe(401);
+    // The point: it was NOT rejected as bad_signature; it reached the ?t= resolver.
+    expect(h.metrics.rejected).toEqual({ unknown_bot: 1 });
+    expect(h.ingestSecretLookups()).toBe(1);
     expect(h.dispatched).toHaveLength(0);
   });
 
@@ -235,7 +256,7 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     }
   });
 
-  it("fuzz corpus of UNSIGNED malformed bodies → never 2xx, never dispatch, each counts bad_signature (#6)", async () => {
+  it("fuzz: the ?t= secret is the gate — no valid secret → never 2xx/dispatch; valid secret + malformed → 401 (#6/#7)", async () => {
     const corpus = [
       "",
       "{}",
@@ -248,12 +269,15 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
       '{"a":'.repeat(50),
       JSON.stringify({ recall_event_id: "x".repeat(5000), event: "bot.status_change", data: {} }),
     ];
+    // The `?t=` ingest_secret is the PRIMARY gate (§5.3 / S2-11): without it NOTHING
+    // dispatches — not even a perfectly well-formed envelope. A missing signature does
+    // NOT help an attacker; the 256-bit per-call secret does the gating.
     for (const rawBody of corpus) {
       const h = harness();
       const res = await h.handler(
-        new Request(`https://ingest.local/webhook?bot=${h.fake.botId}&t=${h.fake.ingestSecret}`, {
+        new Request(`https://ingest.local/webhook?t=attacker-guess-no-secret`, {
           method: "POST",
-          headers: { "content-type": "application/json" }, // no/invalid signature
+          headers: { "content-type": "application/json" }, // no signature (real-time path)
           body: rawBody,
         }),
       );
@@ -261,9 +285,27 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
       expect(res.status).toBeLessThan(500);
       expect(res.status).not.toBe(200);
       expect(h.dispatched).toHaveLength(0);
-      // Unsigned -> rejected at step 1 (signature), before the bot lookup.
-      expect(h.metrics.rejected).toEqual({ bad_signature: 1 });
-      expect(h.lookupCalls()).toBe(0);
+      // Rejected by the ?t= gate (unknown call) — a valid-looking body cannot smuggle in.
+      expect(h.metrics.rejected).toEqual({ unknown_bot: 1 });
+    }
+
+    // Second property: even WITH the valid secret and NO signature (the real Recall
+    // path), MALFORMED bodies are dropped before the normalizer/dispatch — never a
+    // partially-valid state. (The last corpus entry is a well-formed envelope, so it
+    // is excluded here; it legitimately dispatches on the authenticated path.)
+    for (const rawBody of corpus.slice(0, -1)) {
+      const h = harness();
+      const res = await h.handler(
+        new Request(`https://ingest.local/webhook?t=${h.fake.ingestSecret}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" }, // no signature
+          body: rawBody,
+        }),
+      );
+      expect(res.status).toBe(401);
+      expect(res.status).not.toBe(200);
+      expect(h.dispatched).toHaveLength(0);
+      expect(h.metrics.rejected).toEqual({ malformed: 1 });
     }
   });
 
@@ -322,17 +364,19 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
     return { handler, dispatched, metrics };
   }
 
-  // The real-Recall path registers `…/webhook?t=<secret>` with NO ?bot= (the bot
-  // id is unknown at createBot time). These pin that ingest resolves the call BY
-  // the ingest secret and DISPATCHES for both event kinds — the "joins but deaf"
-  // fix (§5.3 / amendment S2-10). Without the fix these 401 (unknown_bot).
-  it("?t=-only (no ?bot=): a bot.status_change resolves + dispatches (200)", async () => {
+  // The real-Recall path registers `…/webhook?t=<secret>` with NO ?bot= (the bot id
+  // is unknown at createBot time) and Recall delivers real-time webhooks UNSIGNED
+  // (proven CLI model, src/server.ts). These pin that ingest resolves the call BY the
+  // ingest secret and DISPATCHES for both event kinds even with NO signature header —
+  // the "joins but deaf" fix (§5.3 / amendments S2-10, S2-11). No-signature + valid
+  // ?t= is the real-world case that MUST pass; the old code 401'd it.
+  it("?t=-only, NO signature header: a bot.status_change resolves + dispatches (200)", async () => {
     const h = dbHarness();
     const env = fake.webhook(fake.lifecycle("call_ended"));
     const res = await h.handler(
       new Request(`https://ingest.local/webhook?t=${fake.ingestSecret}`, {
         method: "POST",
-        headers: env.headers,
+        headers: { "content-type": "application/json" }, // NO signature (real Recall path)
         body: env.rawBody,
       }),
     );
@@ -347,13 +391,13 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
     });
   });
 
-  it("?t=-only (no ?bot=): a transcript.data resolves + dispatches (200) — no body bot_id needed", async () => {
+  it("?t=-only, NO signature header: a transcript.data resolves + dispatches (200) — no body bot_id needed", async () => {
     const h = dbHarness();
     const env = fake.webhook(fake.transcriptData({ words: ["hello", "world"], speaker: "Alice" }));
     const res = await h.handler(
       new Request(`https://ingest.local/webhook?t=${fake.ingestSecret}`, {
         method: "POST",
-        headers: env.headers,
+        headers: { "content-type": "application/json" }, // NO signature (real Recall path)
         body: env.rawBody,
       }),
     );
@@ -368,13 +412,13 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
     });
   });
 
-  it("?t=-only with a WRONG ingest secret → 401, never dispatch", async () => {
+  it("?t=-only (unsigned) with a WRONG ingest secret → 401, never dispatch", async () => {
     const h = dbHarness();
     const env = fake.webhook(fake.lifecycle("in_call_recording"));
     const res = await h.handler(
       new Request(`https://ingest.local/webhook?t=totally-wrong-secret`, {
         method: "POST",
-        headers: env.headers,
+        headers: { "content-type": "application/json" }, // NO signature (real Recall path)
         body: env.rawBody,
       }),
     );

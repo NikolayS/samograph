@@ -51,8 +51,13 @@ deterministic fake — no key needed, no real bot.
   `?bot=` (Recall assigns the bot id only in the createBot response). Ingest
   resolves the owning call by `?t=` → `calls.ingest_secret_hash` when `?bot=` is
   absent (`apps/ingest/webhook.ts`, amendment S2-10) — this is what makes a
-  `?t=`-only URL deliverable, so the bot is not "joined but deaf". The Recall
-  signature check still gates first. The canonical `?bot=<id>&t=<secret>` form
-  (§5.3) is recorded on the call row once Recall assigns the id.
+  `?t=`-only URL deliverable, so the bot is not "joined but deaf". The canonical
+  `?bot=<id>&t=<secret>` form (§5.3) is recorded on the call row once Recall
+  assigns the id.
+- **Auth model (amendment S2-11):** Recall's real-time webhooks are **unsigned** —
+  the `?t=` ingest_secret IS the authenticator (the proven CLI model). So ingest
+  does NOT require a Recall signature on the real-time path (`RECALL_WEBHOOK_SECRET`
+  is only needed if you also front account-level Svix webhooks); a signature is
+  verified only if present. Keep the tunnel HTTPS — the secret rides in the URL.
 - **Never** put `RECALL_API_KEY` in issues, PR comments, commits, or logs. If one
   leaks, rotate it immediately (§4.10).

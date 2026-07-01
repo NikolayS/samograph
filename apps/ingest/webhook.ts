@@ -1,27 +1,33 @@
 /**
  * The ingest webhook authenticity front door (SPEC §5.3, §6.2 #7).
  *
- * `POST /webhook?bot=…&t=…` is the most security-sensitive call-path surface:
+ * `POST /webhook?[bot=…&]t=…` is the most security-sensitive call-path surface:
  * the Recall API key is shared across tenants (§4.4), so an external attacker
- * spoofing `?bot=<victim>` is the threat. This handler validates in the exact
- * §5.3 order, FAILS CLOSED (bodyless 4xx, one WARN, a `webhook_rejected_total`
- * increment, never reaching `dispatch`), and is idempotent under Recall's
- * at-least-once delivery via `(bot_id, recall_event_id)` (0003 / §6.2 #7).
+ * spoofing a webhook into a victim's call is the threat. FAILS CLOSED (bodyless
+ * 4xx, one WARN, a `webhook_rejected_total` increment, never reaching `dispatch`),
+ * idempotent under Recall's at-least-once delivery via `(bot_id, recall_event_id)`.
+ *
+ * PRIMARY AUTH is the per-call `?t=` ingest_secret (a 256-bit secret we generate
+ * and embed in the webhook URL we hand Recall). Recall's REAL-TIME webhooks
+ * (`realtime_endpoints`) are NOT HMAC-signed — the URL token IS the authenticator,
+ * exactly the proven CLI model (`src/server.ts` authenticates `?token=` only).
+ * See amendment S2-11.
  *
  * Validation order (each step's failure is final — no later step runs):
- *   1. Recall HMAC signature vs the per-region webhook secret  → 401 bad_signature
- *   2. `?bot=` resolves to a known `calls.recall_bot_id`        → 401 unknown_bot
- *   3. `?t=` matches `calls.ingest_secret_hash`, constant time → 401 ingest_secret_mismatch
- *      (an authenticated-but-malformed body is dropped here too → 401 malformed)
- *   4. Tenancy gate: the body's claimed `bot_id` must equal the authenticated
- *      `?bot=`; `setTenant` scopes the idempotency write to that tenant (§5.10)
- *                                                              → 403 cross_tenant
+ *   1. Recall signature — OPTIONAL defense-in-depth: verified only if a signature
+ *      header is PRESENT (a present-but-forged one → 401 bad_signature, before any
+ *      DB touch); ABSENT (the real-time path) is fine — the `?t=` secret is the gate.
+ *   2. Resolve the owning call: `?bot=` → `calls.recall_bot_id` (+ a constant-time
+ *      `?t=` step-3 check), OR — when `?bot=` is absent — `?t=` → `ingest_secret_hash`
+ *      (the hashed indexed lookup IS the secret match). No resolution → 401 unknown_bot.
+ *   3. (canonical path only) `?t=` matches `calls.ingest_secret_hash`, constant time
+ *      → 401 ingest_secret_mismatch. An authenticated-but-malformed body → 401 malformed.
+ *   4. Tenancy gate: a body-claimed `bot_id` must equal the authenticated bot;
+ *      `setTenant` scopes the idempotency write to that tenant → 403 cross_tenant.
  *
- * Steps 1–3 are the §5.3 server↔Recall authenticity checks → `SAMO-WEBHOOK-401`
- * (§5.16). Step 4 is the tenancy gate → `SAMO-AUTHZ-001` (403), matching §6.2 #7
- * ("cross-tenant → 403 (tenancy gate)"). Only after all four pass does the
- * handler record the event and call the typed `dispatch(event)` seam — this
- * issue does NOT write transcript rows or transition call status (#78 / #79).
+ * Steps 1–3 are the §5.3 authenticity checks → `SAMO-WEBHOOK-401` (§5.16). Step 4 is
+ * the tenancy gate → `SAMO-AUTHZ-001` (403), matching §6.2 #7. Only after all pass
+ * does the handler record the event and call the typed `dispatch(event)` seam.
  */
 import { createHash } from "node:crypto";
 import type { SQL } from "bun";
@@ -183,13 +189,20 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     const rawBody = await request.text();
     if (rawBody.length > WEBHOOK_MAX_BYTES) return reject("malformed", 401);
 
-    // ── 1. Recall HMAC signature vs the per-region webhook secret. ───────────
-    // Rejects external spoofs that never went through Recall — checked FIRST, so
-    // an unsigned attacker never reaches the privileged bot lookup or the DB.
-    const secret = await deps.secretProvider.webhookSecret();
+    // ── 1. Recall signature — OPTIONAL defense-in-depth, NOT the primary gate.
+    // Recall's real-time webhooks (realtime_endpoints) are NOT HMAC-signed — auth
+    // is the per-call `?t=` ingest_secret in the URL (the proven CLI model,
+    // src/server.ts; §5.3 / amendment S2-11). So: a PRESENT signature header (an
+    // account-level Svix webhook) MUST verify — a present-but-forged one is rejected
+    // HERE, before any DB touch; an ABSENT header (the real-time transcript path) is
+    // NOT rejected — the `?t=` secret below is the required authenticator. Omitting
+    // the header buys an attacker nothing: they still need the 256-bit per-call secret.
     const presented = request.headers.get(RECALL_SIGNATURE_HEADER);
-    if (!verifyRecallSignature(rawBody, presented, secret)) {
-      return reject("bad_signature", 401);
+    if (presented !== null) {
+      const secret = await deps.secretProvider.webhookSecret();
+      if (!verifyRecallSignature(rawBody, presented, secret)) {
+        return reject("bad_signature", 401);
+      }
     }
 
     // ── 2. Resolve the owning call. Canonical path: `?bot=` → recall_bot_id +
