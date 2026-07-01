@@ -403,13 +403,21 @@ webhook URL), §5.9 (bot display name + Deepgram real-time transcription).
   override (defaulting to the regional tunnel base). This is the seam that lets a real bot
   on a public VM register an operator-controlled ingress (§5.3). A set-but-non-https value
   fails fast.
-- **Registered webhook URL carries `?t=` only, not `?bot=&t=`.** Recall assigns
-  `recall_bot_id` only in the createBot **response**, so the realtime endpoint URL we
-  register at creation cannot embed `?bot=<id>`. We register `…/webhook?t=<ingest_secret>`
-  (the proven `src/commands/join.ts` pattern; Recall echoes `bot_id` in every event body),
-  and the orchestrator records the canonical `?bot=<id>&t=<secret>` form (§5.3) once the id
-  is known. The §5.3 ingest verifier's cheap `?bot=` pre-check therefore resolves the bot
-  from the body for the real path.
+- **Registered webhook URL carries `?t=` only, not `?bot=&t=`; ingest resolves the call by
+  the ingest secret.** Recall assigns `recall_bot_id` only in the createBot **response**, so
+  the realtime endpoint URL we register at creation cannot embed `?bot=<id>`. We register
+  `…/webhook?t=<ingest_secret>` (the proven `src/commands/join.ts` pattern) and the
+  orchestrator still records the canonical `?bot=<id>&t=<secret>` form (§5.3) on the call row
+  once the id is known. **The §5.3 ingest front door (`apps/ingest/webhook.ts`) is extended
+  to resolve the owning call by `?t=` when `?bot=` is absent** — `pgLookupCallByIngestSecret`
+  keys on `sha256(t) = calls.ingest_secret_hash` (indexed by migration `0005`); finding the
+  row BY that hash IS the §5.3 secret match, so the constant-time `?t=` compare (step 3) is
+  not re-run for that path. This works for BOTH `transcript.data` (which has NO body
+  `bot_id`) and `bot.status_change`, because the `?t=` is always in the URL query. **Step 1
+  (the Recall signature vs the per-region webhook secret) still gates FIRST, fail-closed**;
+  the canonical `?bot=&t=` path is unchanged. *(NB: an earlier draft said ingest resolves
+  the bot "from the body" — that was wrong; `transcript.data` carries no body `bot_id`, so a
+  `?t=`-only URL without this ingest change would 401 and the bot would join but be deaf.)*
 - **Deepgram real-time transcription** is enabled in the createBot payload
   (`recording_config.transcript.provider.deepgram_streaming`), and the bot display name is
   the fixed `samograph (recording)` (§5.9), both reusing the CLI's proven shape.
@@ -417,8 +425,10 @@ webhook URL), §5.9 (bot display name + Deepgram real-time transcription).
 **Why:** Lets the owner watch an ACTUAL bot join a Zoom/Meet call without disturbing the
 fake-by-default CI gate. Live transcript end-to-end remains a SEPARATE concern — it
 additionally needs the public webhook tunnel reachable (the sprint-exit manual gate); this
-seam only gets a real bot INTO the call. `apps/bot-orchestrator/recallClient.ts`,
-`apps/bot-orchestrator/index.ts`, `apps/app-api/dev-server.ts`,
+seam gets a real bot INTO the call AND makes the `?t=`-registered webhook deliverable to
+ingest. `apps/bot-orchestrator/recallClient.ts`, `apps/bot-orchestrator/index.ts`,
+`apps/app-api/dev-server.ts`, `apps/ingest/webhook.ts`,
+`packages/shared/db/migrations/0005_calls_ingest_secret_hash_idx.sql`,
 `docs/runbooks/real-recall-flag.md`.
 
 ---

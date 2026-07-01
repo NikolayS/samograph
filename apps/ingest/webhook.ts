@@ -94,6 +94,15 @@ export interface WebhookHandlerDeps {
   secretProvider: WebhookSecretProvider;
   /** Privileged (pre-tenant) `?bot=` → call resolver; `null` when the bot is unknown. */
   lookupCallByBotId: (recallBotId: string) => Promise<CallIdentity | null>;
+  /**
+   * Privileged (pre-tenant) `?t=` → call resolver, keyed on `ingest_secret_hash`;
+   * used when `?bot=` is ABSENT (the real-Recall path, §5.3 / amendment S2-10):
+   * Recall registers the realtime webhook at createBot time with only
+   * `?t=<ingest_secret>` because the assigned bot id is not yet known. `null` when
+   * no call matches the hash (or the bot has not been acked yet — see
+   * {@link pgLookupCallByIngestSecret}).
+   */
+  lookupCallByIngestSecret: (ingestSecretHash: string) => Promise<CallIdentity | null>;
   /** Connection used ONLY for the tenant-scoped idempotency write (never on reject paths). */
   sql: SQL;
   /** The downstream seam — invoked at most once per `(botId, recallEventId)`. */
@@ -183,18 +192,35 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       return reject("bad_signature", 401);
     }
 
-    // ── 2. `?bot=` resolves to a known `calls.recall_bot_id`. ────────────────
+    // ── 2. Resolve the owning call. Canonical path: `?bot=` → recall_bot_id +
+    // a constant-time `?t=` check (step 3). Real-Recall path: when `?bot=` is
+    // ABSENT (Recall registered `…/webhook?t=<ingest_secret>` at createBot time,
+    // before its assigned bot id was known — §5.3 / amendment S2-10), resolve BY
+    // the ingest secret's hash. That hashed, indexed lookup IS the `?t=` match, so
+    // step 3 is not re-run for it. Neither key present → 401.
     const botParam = url.searchParams.get("bot");
-    if (!botParam) return reject("unknown_bot", 401);
-    const identity = await deps.lookupCallByBotId(botParam);
-    if (!identity) return reject("unknown_bot", 401, { botId: botParam });
+    const tParam = url.searchParams.get("t");
+    let identity: CallIdentity | null;
+    if (botParam) {
+      identity = await deps.lookupCallByBotId(botParam);
+      if (!identity) return reject("unknown_bot", 401, { botId: botParam });
 
-    // ── 3. `?t=` matches `calls.ingest_secret_hash`, in constant time. ───────
-    // We hold only the hash; hash the presented plaintext and constant-time
-    // compare via the CLI's `tokensEqual` (fails closed on empty/missing).
-    const presentedHash = botParamSecretHash(url.searchParams.get("t"));
-    if (!tokensEqual(presentedHash, identity.ingestSecretHash)) {
-      return reject("ingest_secret_mismatch", 401, { botId: botParam });
+      // ── 3. `?t=` matches `calls.ingest_secret_hash`, in constant time. ─────
+      // We hold only the hash; hash the presented plaintext and constant-time
+      // compare via the CLI's `tokensEqual` (fails closed on empty/missing).
+      const presentedHash = botParamSecretHash(tParam);
+      if (!tokensEqual(presentedHash, identity.ingestSecretHash)) {
+        return reject("ingest_secret_mismatch", 401, { botId: botParam });
+      }
+    } else if (tParam) {
+      // Finding the row BY sha256(t) IS the §5.3 secret match (the 256-bit secret
+      // makes its hash a unique probe). The resolver returns null when no call
+      // matches OR the bot has not been acked yet (recall_bot_id NULL) — fail
+      // closed so Recall re-delivers (§6.2 #7).
+      identity = await deps.lookupCallByIngestSecret(sha256Hex(tParam));
+      if (!identity) return reject("unknown_bot", 401);
+    } else {
+      return reject("unknown_bot", 401);
     }
 
     // An authentic-but-malformed body is dropped here (never reaches dispatch).
@@ -308,6 +334,43 @@ export function pgLookupCallByBotId(
       tenantId: rows[0].tenant_id,
       ingestSecretHash: rows[0].ingest_secret_hash,
       recallBotId: rows[0].recall_bot_id,
+    };
+  };
+}
+
+/**
+ * Privileged (pre-tenant) `?t=` → {@link CallIdentity} resolver over Postgres,
+ * keyed on `ingest_secret_hash` (indexed by migration 0005). Used for the
+ * real-Recall path where Recall registered `…/webhook?t=<ingest_secret>` at
+ * createBot time (no `?bot=` yet, §5.3 / amendment S2-10). Finding the row BY the
+ * presented secret's hash IS the §5.3 authenticity match — there is no separate
+ * constant-time compare (the 256-bit secret makes the hash a unique probe).
+ *
+ * Returns `null` when no call matches OR when the call's `recall_bot_id` is still
+ * NULL (the bot has not been acked yet): the dedup ledger + `webhook_events` RLS
+ * key on `recall_bot_id`, so we fail closed and let Recall re-deliver (§6.2 #7).
+ */
+export function pgLookupCallByIngestSecret(
+  sql: SQL,
+): (ingestSecretHash: string) => Promise<CallIdentity | null> {
+  return async (ingestSecretHash) => {
+    const rows = (await sql`
+      SELECT id, tenant_id, ingest_secret_hash, recall_bot_id
+      FROM calls
+      WHERE ingest_secret_hash = ${ingestSecretHash}
+      LIMIT 1`) as unknown as Array<{
+      id: string;
+      tenant_id: string;
+      ingest_secret_hash: string | null;
+      recall_bot_id: string | null;
+    }>;
+    const row = rows[0];
+    if (!row || !row.recall_bot_id) return null;
+    return {
+      callId: row.id,
+      tenantId: row.tenant_id,
+      ingestSecretHash: row.ingest_secret_hash,
+      recallBotId: row.recall_bot_id,
     };
   };
 }

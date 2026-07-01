@@ -19,6 +19,7 @@ export {
   inMemoryWebhookSecretProvider,
   inMemoryWebhookMetrics,
   pgLookupCallByBotId,
+  pgLookupCallByIngestSecret,
   WEBHOOK_MAX_BYTES,
   type CallIdentity,
   type Dispatch,

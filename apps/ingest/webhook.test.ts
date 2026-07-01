@@ -18,6 +18,7 @@ import {
   inMemoryWebhookMetrics,
   inMemoryWebhookSecretProvider,
   pgLookupCallByBotId,
+  pgLookupCallByIngestSecret,
   type CallIdentity,
   type ValidatedEvent,
   type WebhookHandlerDeps,
@@ -43,6 +44,7 @@ function harness(overrides: Partial<WebhookHandlerDeps> = {}) {
   const warns: Array<{ code: string; fields: Record<string, unknown> }> = [];
   const metrics = inMemoryWebhookMetrics();
   let lookupCalls = 0;
+  let ingestSecretLookups = 0;
   const identity: CallIdentity = {
     callId: "11111111-1111-1111-1111-111111111111",
     tenantId: "22222222-2222-2222-2222-222222222222",
@@ -55,6 +57,10 @@ function harness(overrides: Partial<WebhookHandlerDeps> = {}) {
       lookupCalls += 1;
       return botId === fake.botId ? identity : null;
     },
+    lookupCallByIngestSecret: async (hash) => {
+      ingestSecretLookups += 1;
+      return hash === sha256Hex(fake.ingestSecret) ? identity : null;
+    },
     sql: FORBIDDEN_SQL,
     dispatch: async (_tx, e) => {
       dispatched.push(e);
@@ -64,7 +70,16 @@ function harness(overrides: Partial<WebhookHandlerDeps> = {}) {
     ...overrides,
   };
   const handler = createWebhookHandler(deps);
-  return { fake, handler, dispatched, warns, metrics, identity, lookupCalls: () => lookupCalls };
+  return {
+    fake,
+    handler,
+    dispatched,
+    warns,
+    metrics,
+    identity,
+    lookupCalls: () => lookupCalls,
+    ingestSecretLookups: () => ingestSecretLookups,
+  };
 }
 
 describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §6.2 #7)", () => {
@@ -108,6 +123,43 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     );
     expect(res.status).toBe(401);
     expect(h.metrics.rejected).toEqual({ unknown_bot: 1 });
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it("?t=-only (no ?bot=): a bad signature STILL gates at step 1 — resolver never consulted (§5.3 / S2-10)", async () => {
+    const h = harness();
+    const env = h.fake.webhook(h.fake.lifecycle("in_call_recording"));
+    // Real-Recall registers `…/webhook?t=<secret>` (no ?bot=). An unsigned/forged
+    // POST must still be rejected FIRST by the Recall signature — before any lookup.
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=${h.fake.ingestSecret}`, {
+        method: "POST",
+        headers: h.fake.badSignature(env).headers,
+        body: env.rawBody,
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(h.metrics.rejected).toEqual({ bad_signature: 1 });
+    expect(h.ingestSecretLookups()).toBe(0);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it("?t=-only (no ?bot=) with valid signature resolves the call BY the ingest secret; unknown secret → 401 (§5.3 / S2-10)", async () => {
+    const h = harness();
+    const env = h.fake.webhook(h.fake.lifecycle("in_call_recording"));
+    // Valid Recall signature, ?t=-only, but a WRONG ingest secret → resolver
+    // consulted (the fix) and returns no call → 401 unknown_bot (never dispatch).
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=not-the-real-secret`, {
+        method: "POST",
+        headers: env.headers,
+        body: env.rawBody,
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(h.metrics.rejected).toEqual({ unknown_bot: 1 });
+    // The ?t= resolver MUST have been consulted (the old code rejected before it).
+    expect(h.ingestSecretLookups()).toBe(1);
     expect(h.dispatched).toHaveLength(0);
   });
 
@@ -260,6 +312,7 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
     const handler = createWebhookHandler({
       secretProvider: inMemoryWebhookSecretProvider(fake.webhookSecret),
       lookupCallByBotId: pgLookupCallByBotId(sql),
+      lookupCallByIngestSecret: pgLookupCallByIngestSecret(sql),
       sql,
       dispatch: async (_tx, e) => {
         dispatched.push(e);
@@ -268,6 +321,66 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
     });
     return { handler, dispatched, metrics };
   }
+
+  // The real-Recall path registers `…/webhook?t=<secret>` with NO ?bot= (the bot
+  // id is unknown at createBot time). These pin that ingest resolves the call BY
+  // the ingest secret and DISPATCHES for both event kinds — the "joins but deaf"
+  // fix (§5.3 / amendment S2-10). Without the fix these 401 (unknown_bot).
+  it("?t=-only (no ?bot=): a bot.status_change resolves + dispatches (200)", async () => {
+    const h = dbHarness();
+    const env = fake.webhook(fake.lifecycle("call_ended"));
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=${fake.ingestSecret}`, {
+        method: "POST",
+        headers: env.headers,
+        body: env.rawBody,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]).toMatchObject({
+      kind: "bot.status_change",
+      botId: fake.botId,
+      callId,
+      tenantId,
+      recallEventId: env.recallEventId,
+    });
+  });
+
+  it("?t=-only (no ?bot=): a transcript.data resolves + dispatches (200) — no body bot_id needed", async () => {
+    const h = dbHarness();
+    const env = fake.webhook(fake.transcriptData({ words: ["hello", "world"], speaker: "Alice" }));
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=${fake.ingestSecret}`, {
+        method: "POST",
+        headers: env.headers,
+        body: env.rawBody,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]).toMatchObject({
+      kind: "transcript.data",
+      botId: fake.botId,
+      callId,
+      tenantId,
+      recallEventId: env.recallEventId,
+    });
+  });
+
+  it("?t=-only with a WRONG ingest secret → 401, never dispatch", async () => {
+    const h = dbHarness();
+    const env = fake.webhook(fake.lifecycle("in_call_recording"));
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=totally-wrong-secret`, {
+        method: "POST",
+        headers: env.headers,
+        body: env.rawBody,
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(h.dispatched).toHaveLength(0);
+  });
 
   it("happy path: 200 and dispatches the typed ValidatedEvent exactly once", async () => {
     const h = dbHarness();

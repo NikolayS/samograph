@@ -18,6 +18,7 @@ import { PgListenNotifyPublisher, type TranscriptPublisher } from "../../package
 import {
   createWebhookHandler,
   pgLookupCallByBotId,
+  pgLookupCallByIngestSecret,
   envWebhookSecretProvider,
   type CallIdentity,
   type Dispatch,
@@ -84,6 +85,8 @@ export interface IngestAppDeps {
   logger?: WebhookLogger;
   /** `?bot=` → call resolver; defaults to the privileged Postgres lookup. */
   lookupCallByBotId?: (recallBotId: string) => Promise<CallIdentity | null>;
+  /** `?t=` → call resolver (ingest_secret_hash); defaults to the privileged Postgres lookup. */
+  lookupCallByIngestSecret?: (ingestSecretHash: string) => Promise<CallIdentity | null>;
 }
 
 /**
@@ -94,6 +97,8 @@ export function createIngestApp(deps: IngestAppDeps): (req: Request) => Promise<
   const webhook = createWebhookHandler({
     secretProvider: deps.secretProvider ?? envWebhookSecretProvider(),
     lookupCallByBotId: deps.lookupCallByBotId ?? pgLookupCallByBotId(deps.sql),
+    lookupCallByIngestSecret:
+      deps.lookupCallByIngestSecret ?? pgLookupCallByIngestSecret(deps.sql),
     sql: deps.sql,
     dispatch: deps.dispatch,
     metrics: deps.metrics,

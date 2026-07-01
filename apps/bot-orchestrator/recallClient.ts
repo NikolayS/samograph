@@ -76,9 +76,11 @@ export function liveRecallClient(deps: RecallClientDeps = {}): SrcRecallClient {
  *     ingest secret (`?t=`), subscribed to transcript + status events.
  *
  * Recall assigns `recall_bot_id` only in the createBot RESPONSE, so the endpoint
- * URL we register at creation cannot embed `?bot=<id>`; Recall echoes the bot id in
- * every event body (the CLI's pattern), and the orchestrator records the canonical
- * `?bot=<id>&t=<secret>` form (§5.3) once the id is known (see {@link getRecallClient}).
+ * URL we register at creation cannot embed `?bot=<id>`. Ingest resolves the owning
+ * call by the ingest secret (`?t=` → `calls.ingest_secret_hash`, see
+ * `apps/ingest/webhook.ts` `pgLookupCallByIngestSecret`), and the orchestrator records
+ * the canonical `?bot=<id>&t=<secret>` form (§5.3) on the call row once the id is
+ * known (see {@link getRecallClient}).
  */
 export function buildRealCreateBotPayload(req: CreateBotRequest): Record<string, unknown> {
   // `buildWebhookUrl(id)` → `<base>/webhook?bot=<id>&t=<secret>`. Recover the base

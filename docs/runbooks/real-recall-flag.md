@@ -47,9 +47,12 @@ deterministic fake — no key needed, no real bot.
 
 ## Notes
 
-- The registered webhook URL carries the per-call ingest secret (`?t=…`); Recall
-  echoes the bot id in every event body, so ingest resolves `bot_id` from the body
-  (amendment S2-10). The canonical `?bot=<id>&t=<secret>` form (§5.3) is recorded
-  on the call row once Recall assigns the id.
+- The registered webhook URL carries the per-call ingest secret (`?t=…`) but not
+  `?bot=` (Recall assigns the bot id only in the createBot response). Ingest
+  resolves the owning call by `?t=` → `calls.ingest_secret_hash` when `?bot=` is
+  absent (`apps/ingest/webhook.ts`, amendment S2-10) — this is what makes a
+  `?t=`-only URL deliverable, so the bot is not "joined but deaf". The Recall
+  signature check still gates first. The canonical `?bot=<id>&t=<secret>` form
+  (§5.3) is recorded on the call row once Recall assigns the id.
 - **Never** put `RECALL_API_KEY` in issues, PR comments, commits, or logs. If one
   leaks, rotate it immediately (§4.10).
