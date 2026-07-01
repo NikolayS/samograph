@@ -438,8 +438,8 @@ ingest. `apps/bot-orchestrator/recallClient.ts`, `apps/bot-orchestrator/index.ts
 **Amends:** §5.3 step 1 ("Recall webhook signature verified … Rejects external spoofs").
 
 **What differs:** §5.3 lists the Recall HMAC signature as the **required first gate**. But
-Recall's **real-time** webhooks (the per-bot `realtime_endpoints` that carry `transcript.data`
-and `bot.status_change`) are **NOT HMAC-signed** — verified against the proven CLI, which
+Recall's **real-time** webhooks (the per-bot `realtime_endpoints`, which carry `transcript.data`
+only — see S2-12) are **NOT HMAC-signed** — verified against the proven CLI, which
 authenticates its webhook by the **URL token only** and no signature
 (`src/server.ts`: `POST /webhook?token=<secret>` → `tokensEqual(searchParams.get("token"), webhookToken)`;
 no HMAC anywhere). Requiring a signature would therefore **401 every real webhook** — the bot
@@ -461,6 +461,34 @@ and a malformed body is dropped before the normalizer even on the authenticated 
 appear in ingress/proxy access logs. Mitigations in place: HTTPS transport, a per-call
 (not global) secret, and only the SHA-256 hash is persisted (§4.2). A follow-up could move
 the token to a request header; not a v1 blocker. `apps/ingest/webhook.ts`.
+
+---
+
+### S2-12. §5.2/§5.3 — Recall real-time endpoints accept transcript events ONLY; `bot.status_change` is invalid there — *Correction/Deviation (v1)*
+
+**Amends:** S2-10 (the createBot payload) and S2-11 (which described the real-time
+endpoint as carrying `transcript.data` + `bot.status_change`).
+
+**What differs:** the real-Recall createBot payload (`buildRealCreateBotPayload` in
+`apps/bot-orchestrator/recallClient.ts`) registered its real-time `webhook` endpoint with
+`events: ["transcript.data", "bot.status_change"]`. **Verified against REAL Recall, this is
+rejected with HTTP 400** — `"bot.status_change" is not a valid choice` for a real-time
+endpoint. Recall's real-time endpoints accept **transcript events only**; `transcript.data`
+is valid, `bot.status_change` is NOT. The endpoint `events` array is now **exactly
+`["transcript.data"]`**, matching the proven CLI shape (`src/commands/join.ts`, which never
+registered `bot.status_change` on the webhook endpoint). This was the only change to the
+payload — Deepgram provider, `bot_name` (`samograph (recording)`, §5.9), and the `?t=` webhook
+URL are unchanged.
+
+**Consequence — live call-status auto-advance is a SEPARATE follow-up.** Because the real-time
+endpoint no longer (and never validly could) carry `bot.status_change`, **with real Recall the
+call status will NOT auto-advance yet** (the §5.2 lifecycle that drives `calls.status`
+transitions from `bot.status_change` — `apps/ingest/botLifecycle.ts` — receives no such events
+over the real-time channel). Delivering Recall status changes needs a **separate status /
+account-level webhook config** (not the real-time endpoint), which is tracked as its own
+follow-up. Transcript delivery (`transcript.data`) is unaffected; the bot joins and transcript
+ingest works. `apps/bot-orchestrator/recallClient.ts`, `apps/bot-orchestrator/recallClient.test.ts`,
+`docs/runbooks/real-recall-flag.md`.
 
 ---
 

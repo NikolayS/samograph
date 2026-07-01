@@ -73,7 +73,9 @@ export function liveRecallClient(deps: RecallClientDeps = {}): SrcRecallClient {
  *   - `bot_name` = `samograph (recording)` (§5.9, the non-customizable v1 identity);
  *   - real-time transcription via Deepgram (`recording_config.transcript.provider`);
  *   - one real-time `webhook` endpoint at the public ingress carrying the per-call
- *     ingest secret (`?t=`), subscribed to transcript + status events.
+ *     ingest secret (`?t=`), subscribed to transcript events ONLY (`transcript.data`).
+ *     Real-time endpoints reject `bot.status_change` (HTTP 400) — live call-status
+ *     delivery is a SEPARATE status/webhook channel, tracked as a follow-up.
  *
  * Recall assigns `recall_bot_id` only in the createBot RESPONSE, so the endpoint
  * URL we register at creation cannot embed `?bot=<id>`. Ingest resolves the owning
@@ -104,7 +106,11 @@ export function buildRealCreateBotPayload(req: CreateBotRequest): Record<string,
         {
           type: "webhook",
           url: webhookUrl,
-          events: ["transcript.data", "bot.status_change"],
+          // Real-time endpoints accept transcript events ONLY. Real Recall rejects
+          // `bot.status_change` here with HTTP 400 ("not a valid choice") — call-status
+          // delivery uses a SEPARATE status/webhook channel, not this endpoint. Match the
+          // proven CLI shape (`src/commands/join.ts`), which registers `transcript.data` only.
+          events: ["transcript.data"],
         },
       ],
     },
