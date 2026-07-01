@@ -15,6 +15,7 @@ import {
   meetingProviderForUrl,
   type MeetingProvider,
 } from "./validateMeetingUrl.ts";
+import { throwTyped } from "./apiError.ts";
 
 /** Call lifecycle status enum (SPEC §5.2). A fresh call starts at `PENDING`. */
 export type CallStatus =
@@ -58,27 +59,7 @@ export interface AppApiClient {
   lastDevMagicLink(email: string): Promise<string | null>;
 }
 
-/** Typed failure carrying a stable SPEC §5.16 code (e.g. `SAMO-AUTH-002`). */
-export class AppApiError extends Error {
-  readonly code: string;
-  readonly retryable: boolean;
-  /** HTTP status of the failed response, when known (e.g. 401 → re-auth). */
-  readonly status?: number;
-
-  constructor(code: string, message: string, retryable = false, status?: number) {
-    super(message);
-    this.name = "AppApiError";
-    this.code = code;
-    this.retryable = retryable;
-    this.status = status;
-  }
-}
-
-interface ApiErrorBody {
-  code?: unknown;
-  message?: unknown;
-  retryable?: unknown;
-}
+export { AppApiError } from "./apiError.ts";
 
 /**
  * Real HTTP client used by the Next.js pages. The backend (#42/#43) is not built
@@ -93,20 +74,6 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
       body: JSON.stringify(body),
       credentials: "same-origin",
     });
-  }
-
-  async function throwTyped(res: Response, fallbackCode: string): Promise<never> {
-    let parsed: ApiErrorBody = {};
-    try {
-      parsed = (await res.json()) as ApiErrorBody;
-    } catch {
-      parsed = {};
-    }
-    const code = typeof parsed.code === "string" ? parsed.code : fallbackCode;
-    const message =
-      typeof parsed.message === "string" ? parsed.message : "Request failed.";
-    const retryable = parsed.retryable === true;
-    throw new AppApiError(code, message, retryable, res.status);
   }
 
   /** Map a server `calls` row (snake_case, no provider) to the web `Call` shape. */

@@ -13,7 +13,7 @@
  *
  * STUB: real-impl bodies are placeholders — implemented in the GREEN commit.
  */
-import { AppApiError } from "./appApiClient.ts";
+import { AppApiError, throwTyped } from "./apiError.ts";
 
 // Re-export so callers (and the wire test) get the typed error from one module.
 export { AppApiError };
@@ -38,29 +38,9 @@ export interface ShareApiClient {
   getShare(callId: string): Promise<ShareLink | null>;
 }
 
-interface ApiErrorBody {
-  code?: unknown;
-  message?: unknown;
-  retryable?: unknown;
-}
-
 /** Build the canonical read-only share URL for a token. */
 export function shareUrlForToken(token: string): string {
   return `/c/${token}`;
-}
-
-async function throwTyped(res: Response, fallbackCode: string): Promise<never> {
-  let parsed: ApiErrorBody = {};
-  try {
-    parsed = (await res.json()) as ApiErrorBody;
-  } catch {
-    parsed = {};
-  }
-  const code = typeof parsed.code === "string" ? parsed.code : fallbackCode;
-  const message =
-    typeof parsed.message === "string" ? parsed.message : "Request failed.";
-  const retryable = parsed.retryable === true;
-  throw new AppApiError(code, message, retryable, res.status);
 }
 
 /** Deserialize a `{ token, url }` server body into a typed, active `ShareLink`. */
