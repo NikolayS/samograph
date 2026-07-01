@@ -15,6 +15,7 @@
 import type { Server, SQL } from "bun";
 import { HEALTH_MARKER, type HealthFetch } from "../../src/server.ts";
 import { PgListenNotifyPublisher, type TranscriptPublisher } from "../../packages/shared/transcript/publisher.ts";
+import { stopServerBounded } from "../../packages/shared/serverLifecycle.ts";
 import {
   createWebhookHandler,
   pgLookupCallByBotId,
@@ -143,18 +144,9 @@ export function startIngestServer(deps: IngestServerDeps): IngestServerHandle {
     server,
     port,
     url: `http://${server.hostname}:${port}`,
-    async stop() {
-      // Bounded for shutdown determinism (parity with ws-hub; the ingest server
-      // has no server-initiated ws.close so this resolves promptly).
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        server.stop(true).then(() => timer && clearTimeout(timer)),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, 2000);
-          (timer as unknown as { unref?: () => void }).unref?.();
-        }),
-      ]);
-    },
+    // Bounded for shutdown parity with ws-hub (ingest has no server-initiated
+    // ws.close, so this resolves promptly).
+    stop: () => stopServerBounded(server),
   };
 }
 
