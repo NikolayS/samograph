@@ -131,8 +131,15 @@ interface ParsedEnvelope {
   payload: { event: string; data: unknown };
 }
 
-/** Parse + shape-check the signed body; returns null on anything malformed. */
-function parseEnvelope(rawBody: string): ParsedEnvelope | null {
+/**
+ * Parse + shape-check the body; returns null on anything malformed. The
+ * idempotency id is the Svix `Webhook-Id` header (real Recall) ‖ a body
+ * `recall_event_id` (the in-repo fake) ‖ a sha256 of the body (real realtime
+ * endpoints send no explicit id) — stable per event so a re-delivery of the same
+ * bytes dedupes on (bot_id, recall_event_id). #120: real Recall's transcript
+ * webhooks carry NO body `recall_event_id`, so requiring it 401'd every one.
+ */
+function parseEnvelope(rawBody: string, headerEventId: string | null): ParsedEnvelope | null {
   let value: unknown;
   try {
     value = JSON.parse(rawBody);
@@ -141,10 +148,13 @@ function parseEnvelope(rawBody: string): ParsedEnvelope | null {
   }
   if (typeof value !== "object" || value === null) return null;
   const obj = value as Record<string, unknown>;
-  const recallEventId = obj.recall_event_id;
   const event = obj.event;
-  if (typeof recallEventId !== "string" || recallEventId.length === 0) return null;
   if (event !== KIND_TRANSCRIPT && event !== KIND_STATUS) return null;
+  // Real Recall (and the fake) always send a `data` object; its absence is malformed.
+  if (typeof obj.data !== "object" || obj.data === null) return null;
+
+  const bodyId = typeof obj.recall_event_id === "string" ? obj.recall_event_id : "";
+  const recallEventId = (headerEventId && headerEventId.length > 0 ? headerEventId : "") || bodyId || sha256Hex(rawBody);
 
   let bodyBotId: string | null = null;
   if (event === KIND_STATUS) {
@@ -232,7 +242,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     // An authentic-but-malformed body is dropped here (never reaches dispatch).
-    const envelope = parseEnvelope(rawBody);
+    const envelope = parseEnvelope(rawBody, request.headers.get("webhook-id"));
     if (!envelope) return reject("malformed", 401, { botId: botParam });
 
     // ── 4. Tenancy gate. The body must not claim a DIFFERENT bot than the one
