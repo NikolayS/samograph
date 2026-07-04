@@ -51,6 +51,11 @@ const SESSION_SECRET =
 const MAGIC_KID = process.env.MAGIC_LINK_KID ?? "dev-kid-1";
 const MAGIC_SECRET =
   process.env.MAGIC_LINK_SECRET ?? "dev-only-magic-link-secret-change-me";
+// Share tokens are minted HERE but verified by the ws-hub — both must use the
+// same key. Match the ws-hub dev-live-server keyring (kid "dev-share" / TOKEN_SECRET),
+// same env + default, so a minted share token verifies at the stream gate.
+const TOKEN_SECRET =
+  process.env.TOKEN_SECRET ?? "dev-only-token-secret-change-me-abcd";
 
 const usingDevSecrets =
   !process.env.SESSION_SECRET || !process.env.MAGIC_LINK_SECRET;
@@ -127,7 +132,12 @@ async function enqueue(job: OrchestratorJob): Promise<void> {
   }
 }
 
-const callsHandler = createCallsHandler({ sql, sessionSecret: SESSION_SECRET, enqueue });
+const callsHandler = createCallsHandler({
+  sql,
+  sessionSecret: SESSION_SECRET,
+  enqueue,
+  keyring: { current: { kid: "dev-share", secret: TOKEN_SECRET } },
+});
 
 /** DEV-ONLY: return the most recent magic link (optionally `?email=`). */
 function devLastMagicLink(url: URL): Response {
