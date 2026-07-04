@@ -177,6 +177,11 @@ describe("StreamConnection backfill-then-live (no DB)", () => {
 
     expect(socket.lineSeqs()).toEqual([1, 2, 3, 4, 5]); // exactly once each, in order
     expect(conn.highWaterSeq()).toBe(5);
+    // Every emitted line (backfill 1-3 AND live 4-5) is marked final:true so the
+    // client appends it, not holds it as one replaceable partial (the "only the
+    // last line shows" bug).
+    expect(socket.frames().every((f) => f.type !== "line" || f.final === true)).toBe(true);
+    expect(socket.frames().filter((f) => f.type === "line")).toHaveLength(5);
   });
 
   it("a second flush only delivers strictly-newer seqs (no re-send, no gap)", () => {
