@@ -50,6 +50,11 @@ export interface FakeAppApiClientOptions {
    * exercise the dashboard's auth-gate redirect).
    */
   failListCallsWith?: FailSpec & { status?: number };
+  /**
+   * When set, `logout` rejects with this typed error AFTER recording the request
+   * — lets a test assert the button STILL redirects on a best-effort failure.
+   */
+  failLogoutWith?: FailSpec & { status?: number };
 }
 
 export class FakeAppApiClient implements AppApiClient {
@@ -84,6 +89,14 @@ export class FakeAppApiClient implements AppApiClient {
     const fail = this.options.failVerifyWith;
     if (fail) {
       throw new AppApiError(fail.code, fail.message, fail.retryable ?? false);
+    }
+  }
+
+  async logout(): Promise<void> {
+    this.requests.push({ path: "/auth/logout", method: "POST", body: {} });
+    const fail = this.options.failLogoutWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
     }
   }
 

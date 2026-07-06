@@ -112,6 +112,46 @@ describe("auth/http — GET /auth/callback", () => {
   });
 });
 
+describe("auth/http — POST /auth/logout", () => {
+  it("clears the session cookie and returns 204 with no body", async () => {
+    const { handler } = makeHandler();
+    const res = await handler(
+      new Request("https://samograph.dev/auth/logout", { method: "POST" }),
+    );
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+    const cookie = res.headers.get("set-cookie") ?? "";
+    // Empty value + Max-Age=0 unsets the cookie; keeps the fixed security attrs.
+    expect(cookie.startsWith("samo_session=;")).toBe(true);
+    expect(cookie).toContain("Max-Age=0");
+    expect(cookie).toContain("Path=/");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("Secure");
+    expect(cookie).toContain("SameSite=Lax");
+  });
+
+  it("clears the cookie even when a valid session cookie is presented", async () => {
+    const { handler } = makeHandler();
+    const res = await handler(
+      new Request("https://samograph.dev/auth/logout", {
+        method: "POST",
+        headers: { cookie: "samo_session=whatever.value" },
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("does not clear the cookie on a GET (only POST logs out)", async () => {
+    const { handler } = makeHandler();
+    const res = await handler(
+      new Request("https://samograph.dev/auth/logout", { method: "GET" }),
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+});
+
 describe("auth/http — routing", () => {
   it("404s an unknown path", async () => {
     const { handler } = makeHandler();

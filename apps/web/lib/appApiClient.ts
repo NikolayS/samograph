@@ -47,6 +47,8 @@ export interface AppApiClient {
   requestMagicLink(input: RequestMagicLinkInput): Promise<void>;
   /** `GET /auth/callback?token=…` — verifies the link; throws `AppApiError` on failure. */
   verifyMagicLink(token: string): Promise<void>;
+  /** `POST /auth/logout` — clears the session cookie server-side; throws `AppApiError` on failure. */
+  logout(): Promise<void>;
   /** `POST /calls {meeting_url}` — creates a Call (returned at status `PENDING`). */
   createCall(input: CreateCallInput): Promise<Call>;
   /** `GET /calls` — the caller's tenant's calls (newest first); throws on 401. */
@@ -97,6 +99,10 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
         { credentials: "same-origin" },
       );
       if (!res.ok) await throwTyped(res, "SAMO-AUTH-001");
+    },
+    async logout() {
+      const res = await post("/auth/logout", {});
+      if (!res.ok) await throwTyped(res, "SAMO-AUTH-LOGOUT");
     },
     async createCall(input) {
       // SPEC §5.2: app-api reads `meeting_url` (snake_case). The web `Call` type

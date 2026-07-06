@@ -161,7 +161,11 @@ const server = Bun.serve({
       res = new Response("ok", { status: 200 });
     } else if (req.method === "GET" && path === "/__dev/last-magic-link") {
       res = devLastMagicLink(url);
-    } else if (path === "/auth/magic-link" || path === "/auth/callback") {
+    } else if (
+      path === "/auth/magic-link" ||
+      path === "/auth/callback" ||
+      path === "/auth/logout"
+    ) {
       res = await authHandler(req);
     } else if (path === "/calls" || path.startsWith("/calls/")) {
       res = await callsHandler(req);
@@ -178,7 +182,7 @@ const recallMode = isRecallLive()
 console.log(
   `\n[app-api] composed dev server listening on http://localhost:${server.port}\n` +
     `  routes: GET /health | POST /auth/magic-link | GET /auth/callback |\n` +
-    `          POST/GET /calls | GET /calls/:id | GET /__dev/last-magic-link\n` +
+    `          POST /auth/logout | POST/GET /calls | GET /calls/:id | GET /__dev/last-magic-link\n` +
     `  magic-link callbacks point at ${WEB_ORIGIN} (the web app)\n` +
     `  Recall: ${recallMode}\n` +
     `  Email:  in-memory FAKE (link printed above + /__dev/last-magic-link)\n`,
