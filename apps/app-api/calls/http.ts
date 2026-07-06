@@ -56,6 +56,8 @@ function serializeCall(row: Record<string, unknown>) {
     id: row.id,
     meeting_url: row.meeting_url,
     status: row.status,
+    // §5.16 error detail for terminal failures (nullable; sanitized at write time).
+    status_reason: row.status_reason,
     ingest_degraded: row.ingest_degraded,
     region: row.region,
     recall_bot_id: row.recall_bot_id,

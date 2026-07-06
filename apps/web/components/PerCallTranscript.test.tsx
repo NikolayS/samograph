@@ -205,3 +205,63 @@ describe("PerCallTranscript — live read-along (SPEC §2, §5.2, §5.4, §5.5, 
     expect(await findByText(RATE_LIMIT_COPY)).toBeDefined();
   });
 });
+
+describe("PerCallTranscript — failed calls display the persisted error reason (SPEC §5.16)", () => {
+  it("COULD_NOT_JOIN: the header message carries the statusReason from /calls/:id", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "COULD_NOT_JOIN", statusReason: "meeting_not_found" }),
+    });
+    const { findByText } = render(
+      <PerCallTranscript streamClient={client} auth={{ kind: "session" }} callId="call_1" />,
+    );
+    expect(await findByText("Couldn't join — meeting_not_found.")).toBeDefined();
+    expect(await findByText("SAMO-CALL-JOIN")).toBeDefined();
+  });
+
+  it("COULD_NOT_RECORD: the header message carries the statusReason", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({
+        status: "COULD_NOT_RECORD",
+        statusReason: "recording_permission_denied_by_host",
+      }),
+    });
+    const { findByText } = render(
+      <PerCallTranscript streamClient={client} auth={{ kind: "session" }} callId="call_1" />,
+    );
+    expect(
+      await findByText("Couldn't start recording — recording_permission_denied_by_host."),
+    ).toBeDefined();
+    expect(await findByText("SAMO-CALL-NOREC")).toBeDefined();
+  });
+
+  it("an explicit recallReason prop still wins over the fetched detail", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "COULD_NOT_JOIN", statusReason: "meeting_not_found" }),
+    });
+    const { findByText } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "session" }}
+        callId="call_1"
+        recallReason="denied entry"
+      />,
+    );
+    expect(await findByText("Couldn't join — denied entry.")).toBeDefined();
+  });
+
+  it("the reason survives a stream status frame arriving before the detail settles", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "COULD_NOT_JOIN", statusReason: "meeting_not_found" }),
+      holdDetail: true,
+    });
+    const { findByText } = render(
+      <PerCallTranscript streamClient={client} auth={{ kind: "session" }} callId="call_1" />,
+    );
+    // The stream speaks FIRST (terminal status, no reason on the frame)…
+    act(() => client.emitStatus("COULD_NOT_JOIN"));
+    expect(await findByText("Couldn't join — the meeting couldn't be reached.")).toBeDefined();
+    // …then the REST detail lands: the persisted reason still reaches the header.
+    await act(async () => client.releaseDetail());
+    expect(await findByText("Couldn't join — meeting_not_found.")).toBeDefined();
+  });
+});

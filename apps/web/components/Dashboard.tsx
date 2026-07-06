@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AddToCallForm } from "./AddToCallForm.tsx";
 import { LogoutButton } from "./LogoutButton.tsx";
 import { AppApiError, type AppApiClient, type Call } from "../lib/appApiClient.ts";
+import { statusView } from "../lib/callStatusView.ts";
 
 export interface DashboardProps {
   client: AppApiClient;
@@ -77,11 +78,27 @@ export function Dashboard({ client, redirect, initialUrl }: DashboardProps) {
           <p>No calls yet. Paste a meeting link above to add samograph.</p>
         ) : (
           <ul>
-            {calls.map((c) => (
-              <li key={c.id}>
-                <span>{c.meetingUrl}</span> — <strong>{c.status}</strong>
-              </li>
-            ))}
+            {calls.map((c) => {
+              // §5.16 view: for a terminal failure the message carries the
+              // persisted status_reason ("Couldn't join — <reason>.").
+              const view = statusView(c.status, { recallReason: c.statusReason });
+              return (
+                <li key={c.id}>
+                  {/* Links to the per-call page; ?url= lets its Story-4
+                      "Try again" (COULD_NOT_JOIN) pre-fill the paste input. */}
+                  <a href={`/calls/${encodeURIComponent(c.id)}?url=${encodeURIComponent(c.meetingUrl)}`}>
+                    {c.meetingUrl}
+                  </a>{" "}
+                  — <strong>{c.status}</strong>
+                  {view.kind === "error" ? (
+                    <>
+                      {" — "}
+                      <span className="samograph-call-error">{view.message}</span>
+                    </>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

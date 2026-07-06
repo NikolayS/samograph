@@ -21,6 +21,8 @@ import {
   pickRegion,
   publicWebhookBase,
   regionTunnelBase,
+  runJoinJob,
+  sanitizeFailureReason,
   type CallStore,
   type CreateBotRequest,
   type RecallClient,
@@ -45,7 +47,7 @@ function fakeRecall(
 }
 
 interface RecordedCall {
-  method: "recordIngestSecret" | "markJoining";
+  method: "recordIngestSecret" | "markJoining" | "markCouldNotJoin";
   args: string[];
 }
 
@@ -60,6 +62,10 @@ function memStore(order: string[] = []) {
     async markJoining(callId, recallBotId) {
       order.push("markJoining");
       recorded.push({ method: "markJoining", args: [callId, recallBotId] });
+    },
+    async markCouldNotJoin(callId, reason) {
+      order.push("markCouldNotJoin");
+      recorded.push({ method: "markCouldNotJoin", args: [callId, reason] });
     },
   };
   return { store, recorded, order };
@@ -267,5 +273,96 @@ describe("shared Recall key boundary (§4.4)", () => {
       if (prev === undefined) delete process.env.RECALL_API_KEY;
       else process.env.RECALL_API_KEY = prev;
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Story-4 silent hang: a createBot/join FAILURE must persist COULD_NOT_JOIN +
+// a sanitized status_reason — never leave the call PENDING forever (§5.2, §5.16).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("sanitizeFailureReason (§5.16 reason, §4.4 key hygiene)", () => {
+  it("returns the error message with whitespace collapsed", () => {
+    expect(sanitizeFailureReason(new Error("recall.ai bot creation failed: 507\n  out of capacity"), [])).toBe(
+      "recall.ai bot creation failed: 507 out of capacity",
+    );
+  });
+
+  it("REDACTS every occurrence of a provided secret (the Recall API key never persists)", () => {
+    const key = "sk-recall-test-0123456789abcdef";
+    const err = new Error(`recall.ai bot creation failed: 401 {"detail":"bad token ${key}"} (key=${key})`);
+    const reason = sanitizeFailureReason(err, [key]);
+    expect(reason).not.toContain(key);
+    expect(reason).toBe(
+      'recall.ai bot creation failed: 401 {"detail":"bad token [redacted]"} (key=[redacted])',
+    );
+  });
+
+  it("defense in depth: an `Authorization: Token …` value is redacted even when the secret list misses it", () => {
+    const reason = sanitizeFailureReason(new Error("HTTP 401 sent Token abcdef0123456789 to recall"), []);
+    expect(reason).not.toContain("abcdef0123456789");
+    expect(reason).toContain("Token [redacted]");
+  });
+
+  it("stringifies non-Error throwables and falls back on an empty message", () => {
+    expect(sanitizeFailureReason("recall exploded", [])).toBe("recall exploded");
+    expect(sanitizeFailureReason(new Error(""), [])).toBe("bot could not be created");
+    expect(sanitizeFailureReason(undefined, [])).toBe("bot could not be created");
+  });
+
+  it("truncates an oversized reason to 300 chars (ellipsis-terminated)", () => {
+    const reason = sanitizeFailureReason(new Error("x".repeat(1000)), []);
+    expect(reason.length).toBe(300);
+    expect(reason.endsWith("…")).toBe(true);
+  });
+});
+
+describe("runJoinJob — join failure persists COULD_NOT_JOIN + reason (Story 4)", () => {
+  const failingRecall = (message: string): RecallClient => ({
+    async createBot() {
+      throw new Error(message);
+    },
+  });
+
+  it("on createBot failure marks the call COULD_NOT_JOIN with the sanitized reason", async () => {
+    const { store, recorded } = memStore();
+    const outcome = await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall("recall.ai bot creation failed: 507 out of capacity"), store, secrets: [] },
+    );
+
+    expect(outcome).toEqual({
+      callId: CALL_ID,
+      status: "COULD_NOT_JOIN",
+      reason: "recall.ai bot creation failed: 507 out of capacity",
+    });
+    // The failure was PERSISTED (not just logged): the exact store write happened.
+    expect(recorded.at(-1)).toEqual({
+      method: "markCouldNotJoin",
+      args: [CALL_ID, "recall.ai bot creation failed: 507 out of capacity"],
+    });
+  });
+
+  it("the persisted reason never contains the Recall API key (§4.4)", async () => {
+    const key = "sk-recall-live-9876543210fedcba";
+    const { store, recorded } = memStore();
+    await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall(`recall.ai bot creation failed: 401 key ${key} rejected`), store, secrets: [key] },
+    );
+    const persisted = recorded.at(-1);
+    expect(persisted?.method).toBe("markCouldNotJoin");
+    expect(persisted?.args[1]).not.toContain(key);
+    expect(persisted?.args[1]).toContain("[redacted]");
+  });
+
+  it("on success it is exactly orchestrateJoin (JOINING; markCouldNotJoin untouched)", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store, order } = memStore();
+    const outcome = await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store, secrets: [] },
+    );
+    expect(outcome.status).toBe("JOINING");
+    expect(order).toEqual(["recordIngestSecret", "markJoining"]);
   });
 });

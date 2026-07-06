@@ -22,7 +22,12 @@ const ZOOM_URL = "https://us02web.zoom.us/j/89012345678";
 /** The last JSON body app-api received on POST /calls (so we assert the wire key). */
 let lastPostBody: Record<string, unknown> | null = null;
 /** In-memory call rows, serialized exactly as the real `GET /calls` does (snake_case). */
-const rows: Array<{ id: string; meeting_url: string; status: string }> = [];
+const rows: Array<{
+  id: string;
+  meeting_url: string;
+  status: string;
+  status_reason?: string | null;
+}> = [];
 let counter = 0;
 
 const server = Bun.serve({
@@ -109,5 +114,24 @@ describe("createHttpAppApiClient — over-the-wire contract with app-api", () =>
     expect(calls.every((c) => c.status === "PENDING")).toBe(true);
     expect(calls.map((c) => c.provider)).toEqual(["zoom", "google_meet"]);
     expect(calls.map((c) => c.id)).toEqual(["call_2", "call_1"]);
+  });
+
+  it("listCalls maps a failed row's `status_reason` to `statusReason` (§5.16 error details)", async () => {
+    rows.unshift({
+      id: "call_failed",
+      meeting_url: MEET_URL,
+      status: "COULD_NOT_JOIN",
+      status_reason: "meeting_not_found",
+    });
+    try {
+      const calls = await client.listCalls();
+      const failed = calls.find((c) => c.id === "call_failed");
+      expect(failed?.status).toBe("COULD_NOT_JOIN");
+      expect(failed?.statusReason).toBe("meeting_not_found");
+      // A healthy row (no status_reason on the wire) has no statusReason.
+      expect(calls.find((c) => c.id === "call_1")?.statusReason).toBeUndefined();
+    } finally {
+      rows.shift();
+    }
   });
 });

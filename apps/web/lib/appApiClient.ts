@@ -32,6 +32,12 @@ export interface Call {
   meetingUrl: string;
   provider: MeetingProvider;
   status: CallStatus;
+  /**
+   * §5.16 error detail for a terminal failure (`COULD_NOT_JOIN` /
+   * `COULD_NOT_RECORD`), from the server's `status_reason`. Absent for healthy
+   * calls and when the server recorded no specific reason.
+   */
+  statusReason?: string;
 }
 
 export interface RequestMagicLinkInput {
@@ -79,12 +85,18 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
   }
 
   /** Map a server `calls` row (snake_case, no provider) to the web `Call` shape. */
-  function toCall(id: string, meetingUrl: string, status: CallStatus): Call {
+  function toCall(
+    id: string,
+    meetingUrl: string,
+    status: CallStatus,
+    statusReason?: string,
+  ): Call {
     return {
       id,
       meetingUrl,
       provider: meetingProviderForUrl(meetingUrl) ?? "google_meet",
       status,
+      ...(statusReason !== undefined ? { statusReason } : {}),
     };
   }
 
@@ -116,15 +128,33 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
       const res = await fetch(`${baseUrl}/calls`, { credentials: "same-origin" });
       if (!res.ok) await throwTyped(res, "SAMO-CALL-LIST");
       const data = (await res.json()) as {
-        calls?: Array<{ id?: unknown; meeting_url?: unknown; status?: unknown }>;
+        calls?: Array<{
+          id?: unknown;
+          meeting_url?: unknown;
+          status?: unknown;
+          status_reason?: unknown;
+        }>;
       };
       const rows = Array.isArray(data.calls) ? data.calls : [];
       return rows
         .filter(
-          (r): r is { id: string; meeting_url: string; status: CallStatus } =>
-            typeof r.id === "string" && typeof r.meeting_url === "string",
+          (
+            r,
+          ): r is {
+            id: string;
+            meeting_url: string;
+            status: CallStatus;
+            status_reason?: unknown;
+          } => typeof r.id === "string" && typeof r.meeting_url === "string",
         )
-        .map((r) => toCall(r.id, r.meeting_url, r.status));
+        .map((r) =>
+          toCall(
+            r.id,
+            r.meeting_url,
+            r.status,
+            typeof r.status_reason === "string" ? r.status_reason : undefined,
+          ),
+        );
     },
     async lastDevMagicLink(email) {
       if (process.env.NODE_ENV === "production") return null;
