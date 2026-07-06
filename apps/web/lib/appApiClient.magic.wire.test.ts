@@ -19,6 +19,7 @@ type Canned = { status: number; json?: unknown; text?: string };
 const canned: Record<string, Canned> = {
   "POST /auth/magic-link": { status: 200, json: { ok: true } },
   "GET /auth/callback": { status: 200, json: { ok: true } },
+  "POST /auth/logout": { status: 204 },
   "GET /__dev/last-magic-link": { status: 200, json: { link: "unset" } },
 };
 
@@ -38,6 +39,8 @@ const server = Bun.serve({
     last = { method: req.method, path: url.pathname, query: url.searchParams, body, contentType: req.headers.get("content-type") };
     const c = canned[key];
     if (!c) return new Response("not found", { status: 404 });
+    // 204/304 are null-body statuses — a JSON body would throw at construction.
+    if (c.status === 204 || c.status === 304) return new Response(null, { status: c.status });
     if (c.text !== undefined) return new Response(c.text, { status: c.status });
     return Response.json(c.json ?? {}, { status: c.status });
   },
@@ -108,6 +111,21 @@ describe("appApiClient magic-link wire", () => {
     expect(err).toBeInstanceOf(AppApiError);
     expect(err.code).toBe("SAMO-AUTH-001");
     expect(err.message).toBe("Request failed.");
+    expect(err.status).toBe(500);
+  });
+
+  it("logout POSTs /auth/logout and resolves void on 204", async () => {
+    canned["POST /auth/logout"] = { status: 204 };
+    await expect(client.logout()).resolves.toBeUndefined();
+    expect(last?.method).toBe("POST");
+    expect(last?.path).toBe("/auth/logout");
+  });
+
+  it("logout throws a typed AppApiError on a server failure", async () => {
+    canned["POST /auth/logout"] = { status: 500, json: {} };
+    const err = await client.logout().then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(AppApiError);
+    expect(err.code).toBe("SAMO-AUTH-LOGOUT");
     expect(err.status).toBe(500);
   });
 

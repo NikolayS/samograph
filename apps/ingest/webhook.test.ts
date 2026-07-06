@@ -233,13 +233,15 @@ describe("webhook reject ladder — bodyless 4xx + one WARN + counter (§5.3, §
     expect(h.warns[0].fields.reason).toBe("cross_tenant");
   });
 
-  it("authenticated-but-malformed body (no recall_event_id / not JSON) → 401, never dispatch (#6)", async () => {
+  it("authenticated-but-malformed body (not JSON / no data object / unknown event) → 401, never dispatch (#6)", async () => {
     const fake = createRecallFake({ seed: SEED });
     const secret = fake.webhookSecret;
     const { recallSignature } = await import("../../packages/shared/recall/signature.ts");
     const { RECALL_SIGNATURE_HEADER } = await import("../../packages/shared/recall/signature.ts");
 
-    for (const rawBody of ['not json at all', '{"event":"bot.status_change","data":{}}', '{"recall_event_id":"e","event":"nope"}']) {
+    // Post-#120 the malformed gate is: unparseable ‖ unknown event ‖ no `data` object.
+    // A missing body `recall_event_id` is NO LONGER malformed (real Recall omits it).
+    for (const rawBody of ['not json at all', '{"event":"bot.status_change"}', '{"recall_event_id":"e","event":"nope"}']) {
       const h = harness();
       const headers = { [RECALL_SIGNATURE_HEADER]: recallSignature(rawBody, secret), "content-type": "application/json" };
       const res = await h.handler(
@@ -410,6 +412,51 @@ d("webhook idempotency + dispatch (§5.3 step 4, §6.2 #7)", () => {
       tenantId,
       recallEventId: env.recallEventId,
     });
+  });
+
+  // #120: real Recall's real-time transcript webhooks carry the event id in the Svix
+  // `Webhook-Id` header (NOT a body `recall_event_id`) and use the shape
+  // {event, data:{data:{words,participant}}}. The old parser required a body id and
+  // 401'd every real transcript ("joins but deaf"). These pin the real shape.
+  it("real-Recall shape (Webhook-Id header, NO body recall_event_id) resolves + dispatches (200) — #120", async () => {
+    const h = dbHarness();
+    const rawBody = JSON.stringify({
+      event: "transcript.data",
+      data: { data: { words: [{ text: "hello", start_timestamp: { absolute: "2026-07-03T12:00:00.000Z" } }], participant: { name: "Alice" } } },
+    });
+    const res = await h.handler(
+      new Request(`https://ingest.local/webhook?t=${fake.ingestSecret}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "webhook-id": "msg_2abcDEF" }, // Svix id header, NO signature
+        body: rawBody,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]).toMatchObject({
+      kind: "transcript.data",
+      botId: fake.botId,
+      callId,
+      tenantId,
+      recallEventId: "msg_2abcDEF", // taken from the Webhook-Id header
+    });
+  });
+
+  it("real-Recall shape with NO Webhook-Id header → stable content-hash id, and an exact re-delivery dedupes — #120", async () => {
+    const h = dbHarness();
+    const rawBody = JSON.stringify({
+      event: "transcript.data",
+      data: { data: { words: [{ text: "second", start_timestamp: { absolute: "2026-07-03T12:00:01.000Z" } }], participant: { name: "Bob" } } },
+    });
+    const send = () => h.handler(new Request(`https://ingest.local/webhook?t=${fake.ingestSecret}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: rawBody,
+    }));
+    expect((await send()).status).toBe(200);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0].recallEventId).toBe(sha256Hex(rawBody)); // content-hash fallback (no id anywhere)
+    // Same bytes again → same synthesized id → ON CONFLICT DO NOTHING → no 2nd dispatch.
+    expect((await send()).status).toBe(200);
+    expect(h.dispatched).toHaveLength(1);
   });
 
   it("?t=-only (unsigned) with a WRONG ingest secret → 401, never dispatch", async () => {

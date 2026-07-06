@@ -32,8 +32,24 @@ const nextConfig = {
                 has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
                 destination: `${apiOrigin}/auth/callback`,
               },
+              {
+                // Logout is a client `fetch` only (there is no /auth/logout page),
+                // so gate it on dest `empty` just like /auth/callback — a stray
+                // document navigation to this path never proxies to the API.
+                source: "/auth/logout",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/auth/logout`,
+              },
               { source: "/calls", destination: `${apiOrigin}/calls` },
-              { source: "/calls/:id", destination: `${apiOrigin}/calls/:id` },
+              {
+                // Only the client's fetchCallDetail (dest `empty`), NOT the page
+                // navigation (dest `document`) — same collision as /auth/callback
+                // above. Without this, opening /calls/:id in the browser is proxied
+                // to the app-api and returns raw JSON instead of rendering the page.
+                source: "/calls/:id",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/calls/:id`,
+              },
               { source: "/__dev/:path*", destination: `${apiOrigin}/__dev/:path*` },
             ],
           };

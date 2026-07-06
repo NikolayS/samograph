@@ -5,6 +5,7 @@ import {
   signSession,
   verifySession,
   buildSessionCookie,
+  buildClearedSessionCookie,
   issueSessionCookie,
 } from "./session.ts";
 
@@ -42,6 +43,15 @@ describe("auth/session", () => {
         SESSION_TTL_MS / 1000,
       )}`,
     );
+  });
+
+  it("buildClearedSessionCookie clears the cookie (empty value, Max-Age=0, same security attrs)", () => {
+    const cookie = buildClearedSessionCookie();
+    expect(cookie).toBe(
+      `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
+    );
+    // The value is empty (unsets the cookie) and it can never verify as a session.
+    expect(verifySession("", SECRET)).toBeNull();
   });
 
   it("issueSessionCookie dates claims by the clock and emits a verifiable cookie", () => {
