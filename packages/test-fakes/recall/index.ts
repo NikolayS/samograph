@@ -265,3 +265,70 @@ function eventKind(event: RecallEvent): string {
 export function createRecallFake(options: RecallFakeOptions): RecallFake {
   return new RecallFake(options);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fake BotStatusSource — the POLLED status channel (issue #118).
+//
+// Real Recall rejects `bot.status_change` on realtime endpoints, so call status
+// is POLLED from `GET /api/v1/bot/<id>/` → `status_changes: [{code, sub_code,
+// created_at}]`. This fake stands in for that read: scripts a per-bot
+// `status_changes` history (append-only, like Recall's) with DETERMINISTIC
+// monotonically-increasing `created_at` timestamps derived from the same fixed
+// synthetic epoch — no wall clock, no network, no key (§6.1). `fail(botId, err)`
+// scripts a lookup failure so sweep-isolation is testable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One entry of the polled `status_changes` history (real Recall bot payload). */
+export interface PolledStatusChange {
+  code: string;
+  sub_code: string | null;
+  created_at?: string;
+}
+
+export interface PushStatusOptions {
+  /** Recall reason string carried in `sub_code` (e.g. `meeting_not_found`). */
+  subCode?: string;
+  /** Explicit ISO `created_at`; defaults to the next deterministic instant. */
+  at?: string;
+}
+
+export class FakeBotStatusSource {
+  private readonly changes = new Map<string, PolledStatusChange[]>();
+  private readonly failures = new Map<string, Error>();
+  /** Monotonic sequence → deterministic created_at, shared across all bots. */
+  private seq = 0;
+
+  /** Append one status change to a bot's history (Recall appends chronologically). */
+  push(botId: string, code: string, options: PushStatusOptions = {}): void {
+    this.seq += 1;
+    const list = this.changes.get(botId) ?? [];
+    list.push({
+      code,
+      sub_code: options.subCode ?? null,
+      created_at: options.at ?? isoAt(this.seq),
+    });
+    this.changes.set(botId, list);
+  }
+
+  /** Replace a bot's entire history (e.g. to script an out-of-order replay). */
+  set(botId: string, changes: PolledStatusChange[]): void {
+    this.changes.set(botId, [...changes]);
+    this.failures.delete(botId);
+  }
+
+  /** Script the NEXT lookups for this bot to reject with `err`. */
+  fail(botId: string, err: Error): void {
+    this.failures.set(botId, err);
+  }
+
+  /** The {@link BotStatusSource} read: a bot's full `status_changes` history. */
+  async getStatus(botId: string): Promise<PolledStatusChange[]> {
+    const err = this.failures.get(botId);
+    if (err) throw err;
+    return [...(this.changes.get(botId) ?? [])];
+  }
+}
+
+export function createFakeBotStatusSource(): FakeBotStatusSource {
+  return new FakeBotStatusSource();
+}

@@ -41,6 +41,11 @@ import {
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
 import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
+import {
+  startStatusPoller,
+  liveBotStatusSource,
+  STATUS_POLL_INTERVAL_MS,
+} from "../bot-orchestrator/statusPoller.ts";
 
 // ── DEV-ONLY config + secrets (clearly marked; NEVER use in production) ────────
 const PORT = Number(process.env.APP_API_PORT ?? 8787);
@@ -105,6 +110,20 @@ const WEBHOOK_BASE = publicWebhookBase();
 // Fail fast at STARTUP (not silently per-call) when the real Recall path is
 // requested without a key — issue #88: never silently fall back to the fake.
 if (isRecallLive()) liveRecallClient();
+
+// Recall bot-STATUS POLLER (issue #118): realtime endpoints carry transcript
+// events only (`bot.status_change` is rejected — see recallClient.ts), so with
+// real Recall the call status would stick at JOINING forever. Poll every ~10 s
+// on this process's PRIVILEGED connection (an infra sweep across tenants, like
+// the orchestrator's own `UPDATE calls` — bypasses RLS, never a tenant role).
+// Fake mode has no live bot to poll, so the poller starts only when live.
+if (isRecallLive()) {
+  startStatusPoller({ sql, source: liveBotStatusSource(), logger: console });
+  console.log(
+    `[status-poller] polling Recall bot status every ${STATUS_POLL_INTERVAL_MS / 1000}s ` +
+      `for non-terminal calls (issue #118)`,
+  );
+}
 
 /**
  * bot-orchestrator seam (§5.2): drive each new call through the createBot path,
