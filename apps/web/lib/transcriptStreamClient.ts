@@ -44,6 +44,12 @@ export interface CallDetail {
   status: CallStatus;
   /** `ingest_degraded` overlay (§5.10). */
   degraded: boolean;
+  /**
+   * §5.16 error detail for a terminal failure, from the server's
+   * `status_reason` (e.g. Recall's `sub_code` like `meeting_not_found`).
+   * Absent for healthy calls or when no specific reason was recorded.
+   */
+  statusReason?: string;
 }
 
 export type StreamEventHandler = (event: TranscriptStreamEvent) => void;
@@ -134,11 +140,15 @@ export function createHttpTranscriptStreamClient(
         id?: unknown;
         status?: unknown;
         ingest_degraded?: unknown;
+        status_reason?: unknown;
       };
       return {
         id: typeof data.id === "string" ? data.id : ref.callId,
         status: data.status as CallStatus,
         degraded: data.ingest_degraded === true,
+        ...(typeof data.status_reason === "string"
+          ? { statusReason: data.status_reason }
+          : {}),
       };
     },
     async backfill(ref, sinceSeq) {

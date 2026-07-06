@@ -168,6 +168,29 @@ describe("createHttpTranscriptStreamClient — fetchCallDetail (REST mapping + t
     expect(detail).toEqual({ id: "call_1", status: "IN_CALL", degraded: true });
   });
 
+  it("maps a failed call's `status_reason` to `statusReason` (§5.16 error details)", async () => {
+    fetchImpl = () =>
+      Response.json({
+        id: "call_1",
+        status: "COULD_NOT_JOIN",
+        ingest_degraded: false,
+        status_reason: "meeting_not_found",
+      });
+
+    const detail = await client.fetchCallDetail(sessionRef);
+
+    expect(detail.status).toBe("COULD_NOT_JOIN");
+    expect(detail.statusReason).toBe("meeting_not_found");
+  });
+
+  it("statusReason is absent when the server sends none (healthy call)", async () => {
+    fetchImpl = () => Response.json({ id: "call_1", status: "IN_CALL", ingest_degraded: false });
+
+    const detail = await client.fetchCallDetail(sessionRef);
+
+    expect(detail.statusReason).toBeUndefined();
+  });
+
   it("throws AppApiError carrying the body's SAMO-AUTHZ-001 code + status 403", async () => {
     fetchImpl = () =>
       Response.json({ code: "SAMO-AUTHZ-001", message: "Forbidden" }, { status: 403 });

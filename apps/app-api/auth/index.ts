@@ -30,6 +30,14 @@ export {
   InMemoryEmailSender,
 } from "./email.ts";
 export {
+  ResendEmailSender,
+  ResendEmailError,
+  emailSenderFromEnv,
+  RESEND_EMAILS_URL,
+  MAGIC_LINK_SUBJECT,
+  type ResendEmailSenderOptions,
+} from "./resend-email.ts";
+export {
   type MagicLinkStore,
   type UserStore,
   type ConsumeResult,

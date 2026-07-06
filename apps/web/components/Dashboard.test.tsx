@@ -76,6 +76,72 @@ describe("Dashboard — fetches and renders the tenant's calls (SPEC §3 Story 1
   });
 });
 
+describe("Dashboard — failed calls display their error reason (SPEC §5.16, Story 4)", () => {
+  const FAILED: Call[] = [
+    {
+      id: "call_9",
+      meetingUrl: "https://meet.google.com/bad-code-xxx",
+      provider: "google_meet",
+      status: "COULD_NOT_JOIN",
+      statusReason: "meeting_not_found",
+    },
+    {
+      id: "call_8",
+      meetingUrl: "https://zoom.us/j/8",
+      provider: "zoom",
+      status: "COULD_NOT_RECORD",
+      statusReason: "recording_permission_denied_by_host",
+    },
+    { id: "call_7", meetingUrl: "https://zoom.us/j/7", provider: "zoom", status: "IN_CALL" },
+  ];
+
+  it("shows the §5.16 reason next to a failed call's status", async () => {
+    const client = createFakeAppApiClient({ seedCalls: FAILED });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    // Exact §5.16 copy, reason included: "Couldn't join — <Recall reason>."
+    expect(await findByText("Couldn't join — meeting_not_found.")).toBeDefined();
+    expect(
+      await findByText("Couldn't start recording — recording_permission_denied_by_host."),
+    ).toBeDefined();
+  });
+
+  it("a COULD_NOT_JOIN call with no reason still gets the fallback copy (never silent)", async () => {
+    const client = createFakeAppApiClient({
+      seedCalls: [
+        {
+          id: "call_5",
+          meetingUrl: "https://zoom.us/j/5",
+          provider: "zoom",
+          status: "COULD_NOT_JOIN",
+        },
+      ],
+    });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    expect(await findByText("Couldn't join — the meeting couldn't be reached.")).toBeDefined();
+  });
+
+  it("shows NO error copy for a healthy call", async () => {
+    const client = createFakeAppApiClient({ seedCalls: FAILED });
+    const { findByText, queryByText } = render(
+      <Dashboard client={client} redirect={noopRedirect} />,
+    );
+    await findByText("https://zoom.us/j/7");
+    expect(queryByText(/Couldn't join.*zoom\.us\/j\/7/)).toBeNull();
+  });
+
+  it("links each call to its per-call page carrying ?url= (COULD_NOT_JOIN reaches Try-again, Story 4)", async () => {
+    const client = createFakeAppApiClient({ seedCalls: FAILED });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    const anchor = (await findByText("https://meet.google.com/bad-code-xxx")).closest("a");
+    expect(anchor).not.toBeNull();
+    // The per-call page (OwnerCallView) owns "Try again"; ?url= carries the
+    // original meeting URL so Try-again can pre-fill the dashboard input.
+    expect(anchor?.getAttribute("href")).toBe(
+      `/calls/call_9?url=${encodeURIComponent("https://meet.google.com/bad-code-xxx")}`,
+    );
+  });
+});
+
 describe("Dashboard — Story-4 URL pre-fill (SPEC §5.2, Story 4)", () => {
   const URL = "https://meet.google.com/abc-defg-hij";
 

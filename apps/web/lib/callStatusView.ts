@@ -25,12 +25,24 @@ export interface StatusView {
 }
 
 export interface StatusViewOptions {
-  /** The underlying Recall reason surfaced for `COULD_NOT_JOIN` (§5.16). */
+  /**
+   * The underlying failure reason (the server's `calls.status_reason`, e.g.
+   * Recall's `sub_code`) surfaced in the terminal-failure message for
+   * `COULD_NOT_JOIN` and `COULD_NOT_RECORD` (§5.16).
+   */
   recallReason?: string;
 }
 
 /** Default reason when Recall gives no specific `fatal` reason string. */
 export const COULD_NOT_JOIN_FALLBACK_REASON = "the meeting couldn't be reached";
+
+/** Default reason when no specific `COULD_NOT_RECORD` reason was recorded (§5.16). */
+export const COULD_NOT_RECORD_FALLBACK_REASON = "check meeting permissions";
+
+/** Normalize a §5.16 reason for the "… — <reason>." template (no doubled period). */
+function templateReason(reason: string): string {
+  return reason.trim().replace(/\.+$/, "");
+}
 
 /** Static label/kind/message for the non-failure statuses. */
 const BASE: Record<
@@ -50,11 +62,8 @@ export function statusView(
   const isTerminal = isTerminalStatus(status);
 
   if (status === "COULD_NOT_JOIN") {
-    // §5.16: "Couldn't join — <Recall reason>." Strip any trailing period from
-    // the reason so the template's own period is never doubled.
-    const reason = (opts.recallReason ?? COULD_NOT_JOIN_FALLBACK_REASON)
-      .trim()
-      .replace(/\.+$/, "");
+    // §5.16: "Couldn't join — <Recall reason>."
+    const reason = templateReason(opts.recallReason ?? COULD_NOT_JOIN_FALLBACK_REASON);
     return {
       status,
       label: "Couldn't join",
@@ -67,11 +76,14 @@ export function statusView(
   }
 
   if (status === "COULD_NOT_RECORD") {
+    // §5.16: "Couldn't start recording — <reason>." (fallback: "check meeting
+    // permissions"), same template discipline as COULD_NOT_JOIN.
+    const reason = templateReason(opts.recallReason ?? COULD_NOT_RECORD_FALLBACK_REASON);
     return {
       status,
       label: "Couldn't record",
       kind: "error",
-      message: "Couldn't start recording — check meeting permissions.",
+      message: `Couldn't start recording — ${reason}.`,
       code: "SAMO-CALL-NOREC",
       isTerminal,
       showTryAgain: false,

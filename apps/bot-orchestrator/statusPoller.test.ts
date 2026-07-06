@@ -326,6 +326,25 @@ d("startStatusPoller persistence (issue #118: JOINING → IN_CALL → ENDED, for
     expect(reason.status_reason).toBe("meeting_not_found");
   });
 
+  it("recording_permission_denied persists COULD_NOT_RECORD with status_reason from sub_code", async () => {
+    const callId = calls[3];
+    const { poller, source } = newPoller();
+
+    source.push(botFor(callId), "recording_permission_denied", {
+      subCode: "recording_permission_denied_by_host",
+    });
+    await poller.tick();
+
+    expect(await statusOf(callId)).toBe("COULD_NOT_RECORD");
+    const row = (await sql`
+      SELECT status_reason, ended_at FROM calls WHERE id = ${callId}`)[0] as {
+      status_reason: string | null;
+      ended_at: Date | null;
+    };
+    expect(row.status_reason).toBe("recording_permission_denied_by_host");
+    expect(row.ended_at).not.toBeNull();
+  });
+
   it("a failing bot lookup is isolated: other calls in the same sweep still advance", async () => {
     const okCall = calls[0];
     const downCall = calls[3];
