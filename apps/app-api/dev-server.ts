@@ -8,8 +8,10 @@
  * wires them together behind a single `Bun.serve` on :8787 so the owner can click
  * through the flow locally. It is intentionally NOT a production entrypoint:
  *
- *   - Magic-link email is the in-memory `EmailSender` fake; instead of sending,
- *     it PRINTS the sign-in URL to stdout and exposes it at `GET /__dev/last-magic-link`.
+ *   - Magic-link email defaults to the in-memory `EmailSender` fake; instead of
+ *     sending, it PRINTS the sign-in URL to stdout and exposes it at
+ *     `GET /__dev/last-magic-link`. Setting `RESEND_API_KEY` + `MAGIC_LINK_FROM`
+ *     flips it to the REAL `ResendEmailSender` so an actual email is delivered.
  *   - The bot-orchestrator is backed by the deterministic in-repo Recall FAKE
  *     (packages/test-fakes/recall) by default — no real bot joins. Setting
  *     `RECALL_LIVE=1` + `RECALL_API_KEY` (issue #88) flips it to the REAL client so
@@ -29,6 +31,7 @@ import {
   InMemoryMagicLinkStore,
   InMemoryRateLimiter,
   PostgresUserStore,
+  emailSenderFromEnv,
   type EmailSender,
   type MagicLinkEmail,
 } from "./auth/index.ts";
@@ -87,7 +90,12 @@ class DevEmailSender implements EmailSender {
 }
 
 const sql = connect();
-const sender = new DevEmailSender();
+const devSender = new DevEmailSender();
+// REAL transactional email (Resend) when RESEND_API_KEY is set — requires
+// MAGIC_LINK_FROM (verified sender), fails fast at startup if it is missing.
+// With no key, the DEV fake above keeps printing links (local/test mode).
+const sender = emailSenderFromEnv(process.env, devSender);
+const emailIsLive = sender !== devSender;
 
 const authService = new AuthService({
   keyring: new SigningKeyring(MAGIC_KID, { [MAGIC_KID]: MAGIC_SECRET }),
@@ -160,8 +168,14 @@ const callsHandler = createCallsHandler({
 
 /** DEV-ONLY: return the most recent magic link (optionally `?email=`). */
 function devLastMagicLink(url: URL): Response {
+  if (emailIsLive) {
+    return Response.json(
+      { error: "real email sending is enabled (RESEND_API_KEY set) — check the recipient inbox" },
+      { status: 404 },
+    );
+  }
   const q = url.searchParams.get("email");
-  const rec = q ? sender.lastByEmail.get(q.trim().toLowerCase()) : sender.last;
+  const rec = q ? devSender.lastByEmail.get(q.trim().toLowerCase()) : devSender.last;
   if (!rec) {
     return Response.json(
       { error: "no magic link issued yet — POST /auth/magic-link first" },
@@ -214,7 +228,11 @@ console.log(
     `          POST /auth/logout | POST/GET /calls | GET /calls/:id | GET /__dev/last-magic-link\n` +
     `  magic-link callbacks point at ${WEB_ORIGIN} (the web app)\n` +
     `  Recall: ${recallMode}\n` +
-    `  Email:  in-memory FAKE (link printed above + /__dev/last-magic-link)\n`,
+    `  Email:  ${
+      emailIsLive
+        ? `REAL via Resend (RESEND_API_KEY set) from ${process.env.MAGIC_LINK_FROM}`
+        : "in-memory FAKE (link printed above + /__dev/last-magic-link)"
+    }\n`,
 );
 if (usingDevSecrets) {
   console.warn(
