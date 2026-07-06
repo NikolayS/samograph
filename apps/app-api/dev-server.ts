@@ -41,6 +41,11 @@ import {
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
 import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
+import {
+  startStatusPoller,
+  liveBotStatusSource,
+  STATUS_POLL_INTERVAL_MS,
+} from "../bot-orchestrator/statusPoller.ts";
 
 // ── DEV-ONLY config + secrets (clearly marked; NEVER use in production) ────────
 const PORT = Number(process.env.APP_API_PORT ?? 8787);
@@ -51,6 +56,11 @@ const SESSION_SECRET =
 const MAGIC_KID = process.env.MAGIC_LINK_KID ?? "dev-kid-1";
 const MAGIC_SECRET =
   process.env.MAGIC_LINK_SECRET ?? "dev-only-magic-link-secret-change-me";
+// Share tokens are minted HERE but verified by the ws-hub — both must use the
+// same key. Match the ws-hub dev-live-server keyring (kid "dev-share" / TOKEN_SECRET),
+// same env + default, so a minted share token verifies at the stream gate.
+const TOKEN_SECRET =
+  process.env.TOKEN_SECRET ?? "dev-only-token-secret-change-me-abcd";
 
 const usingDevSecrets =
   !process.env.SESSION_SECRET || !process.env.MAGIC_LINK_SECRET;
@@ -101,6 +111,20 @@ const WEBHOOK_BASE = publicWebhookBase();
 // requested without a key — issue #88: never silently fall back to the fake.
 if (isRecallLive()) liveRecallClient();
 
+// Recall bot-STATUS POLLER (issue #118): realtime endpoints carry transcript
+// events only (`bot.status_change` is rejected — see recallClient.ts), so with
+// real Recall the call status would stick at JOINING forever. Poll every ~10 s
+// on this process's PRIVILEGED connection (an infra sweep across tenants, like
+// the orchestrator's own `UPDATE calls` — bypasses RLS, never a tenant role).
+// Fake mode has no live bot to poll, so the poller starts only when live.
+if (isRecallLive()) {
+  startStatusPoller({ sql, source: liveBotStatusSource(), logger: console });
+  console.log(
+    `[status-poller] polling Recall bot status every ${STATUS_POLL_INTERVAL_MS / 1000}s ` +
+      `for non-terminal calls (issue #118)`,
+  );
+}
+
 /**
  * bot-orchestrator seam (§5.2): drive each new call through the createBot path,
  * persisting region + ingest-secret hash and flipping the row PENDING→JOINING. The
@@ -127,7 +151,12 @@ async function enqueue(job: OrchestratorJob): Promise<void> {
   }
 }
 
-const callsHandler = createCallsHandler({ sql, sessionSecret: SESSION_SECRET, enqueue });
+const callsHandler = createCallsHandler({
+  sql,
+  sessionSecret: SESSION_SECRET,
+  enqueue,
+  keyring: { current: { kid: "dev-share", secret: TOKEN_SECRET } },
+});
 
 /** DEV-ONLY: return the most recent magic link (optionally `?email=`). */
 function devLastMagicLink(url: URL): Response {
@@ -161,7 +190,11 @@ const server = Bun.serve({
       res = new Response("ok", { status: 200 });
     } else if (req.method === "GET" && path === "/__dev/last-magic-link") {
       res = devLastMagicLink(url);
-    } else if (path === "/auth/magic-link" || path === "/auth/callback") {
+    } else if (
+      path === "/auth/magic-link" ||
+      path === "/auth/callback" ||
+      path === "/auth/logout"
+    ) {
       res = await authHandler(req);
     } else if (path === "/calls" || path.startsWith("/calls/")) {
       res = await callsHandler(req);
@@ -178,7 +211,7 @@ const recallMode = isRecallLive()
 console.log(
   `\n[app-api] composed dev server listening on http://localhost:${server.port}\n` +
     `  routes: GET /health | POST /auth/magic-link | GET /auth/callback |\n` +
-    `          POST/GET /calls | GET /calls/:id | GET /__dev/last-magic-link\n` +
+    `          POST /auth/logout | POST/GET /calls | GET /calls/:id | GET /__dev/last-magic-link\n` +
     `  magic-link callbacks point at ${WEB_ORIGIN} (the web app)\n` +
     `  Recall: ${recallMode}\n` +
     `  Email:  in-memory FAKE (link printed above + /__dev/last-magic-link)\n`,

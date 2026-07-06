@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { Dashboard } from "./Dashboard.tsx";
 import { createFakeAppApiClient } from "../lib/fakeAppApiClient.ts";
 import type { Call } from "../lib/appApiClient.ts";
@@ -48,6 +48,20 @@ describe("Dashboard — fetches and renders the tenant's calls (SPEC §3 Story 1
     fireEvent.submit(form);
     // The created call shows up in the persisted "Your calls" list.
     expect(await findByText("https://meet.google.com/abc-defg-hij")).toBeDefined();
+  });
+
+  it("renders a 'Log out' button that clears the session and redirects to /auth", async () => {
+    const client = createFakeAppApiClient({ seedCalls: SEED });
+    const seen: string[] = [];
+    const { findByRole } = render(
+      <Dashboard client={client} redirect={(p) => seen.push(p)} />,
+    );
+    const button = await findByRole("button", { name: /log out/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(seen).toEqual(["/auth"]);
+    expect(client.requests.some((r) => r.path === "/auth/logout" && r.method === "POST")).toBe(true);
   });
 
   it("redirects an anonymous visitor (401 on GET /calls) to /auth", async () => {

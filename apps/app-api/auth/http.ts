@@ -6,11 +6,13 @@
  *                                    429 + Retry-After + SAMO-AUTH-004 body.
  *   GET  /auth/callback?token=…    → 200 + Set-Cookie session on success;
  *                                    401 with NO body on any failure.
+ *   POST /auth/logout              → 204 + Set-Cookie clearing the session.
  * The client IP is taken from X-Forwarded-For's first hop (the edge/tunnel sets
  * it) for the per-IP rate limit.
  */
 import type { AuthService } from "./service.ts";
 import { AUTH_ERRORS } from "./errors.ts";
+import { buildClearedSessionCookie } from "./session.ts";
 
 /** Extract the caller IP for rate limiting (X-Forwarded-For first hop). */
 export function clientIp(req: Request): string {
@@ -71,6 +73,16 @@ export function createAuthHandler(
       return new Response(null, {
         status: 200,
         headers: { "set-cookie": result.setCookie! },
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/auth/logout") {
+      // Stateless HMAC sessions carry no server-side record to revoke, so logout
+      // is purely "clear the cookie". Unconditional (idempotent): a missing or
+      // already-invalid cookie still returns the same cleared Set-Cookie + 204.
+      return new Response(null, {
+        status: 204,
+        headers: { "set-cookie": buildClearedSessionCookie() },
       });
     }
 

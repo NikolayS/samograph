@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AddToCallForm } from "./AddToCallForm.tsx";
+import { LogoutButton } from "./LogoutButton.tsx";
 import { AppApiError, type AppApiClient, type Call } from "../lib/appApiClient.ts";
 
 export interface DashboardProps {
@@ -66,6 +67,9 @@ export function Dashboard({ client, redirect, initialUrl }: DashboardProps) {
 
   return (
     <>
+      <header>
+        <LogoutButton client={client} redirect={redirect} />
+      </header>
       <AddToCallForm client={client} initialUrl={initialUrl} onCreated={() => void load()} />
       <section aria-label="Your calls">
         <h2>Your calls</h2>

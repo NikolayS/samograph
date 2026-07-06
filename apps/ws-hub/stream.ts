@@ -292,7 +292,7 @@ export class StreamConnection {
     if (this.closed) return;
     for (const line of lines) {
       this.socket.send(
-        JSON.stringify({ type: "line", seq: line.seq, ts: line.ts, speaker: line.speaker, text: line.text }),
+        JSON.stringify({ type: "line", seq: line.seq, ts: line.ts, speaker: line.speaker, text: line.text, final: true }),
       );
       if (line.seq > this.lastSeq) this.lastSeq = line.seq;
     }
@@ -312,7 +312,11 @@ export class StreamConnection {
         continue;
       }
       if (frame.seq > this.lastSeq) {
-        this.socket.send(JSON.stringify(frame));
+        // The hub only carries finalized lines — mark `final` so the client
+        // appends it instead of holding it as a single replaceable partial.
+        this.socket.send(
+          JSON.stringify({ type: "line", seq: frame.seq, ts: frame.ts, speaker: frame.speaker, text: frame.text, final: true }),
+        );
         this.lastSeq = frame.seq;
       }
     }

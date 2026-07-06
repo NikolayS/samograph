@@ -105,6 +105,32 @@ describe("FakeAppApiClient — records request shape, no network", () => {
     expect((thrown as AppApiError).status).toBe(401);
   });
 
+  it("logout records an exact POST /auth/logout and resolves by default", async () => {
+    const client = createFakeAppApiClient();
+    await client.logout();
+    expect(client.requests).toEqual([
+      { path: "/auth/logout", method: "POST", body: {} },
+    ]);
+  });
+
+  it("logout rejects with the configured typed error (best-effort clients still redirect)", async () => {
+    const client = createFakeAppApiClient({
+      failLogoutWith: { code: "SAMO-AUTH-LOGOUT", message: "boom", status: 500 },
+    });
+    let thrown: unknown;
+    try {
+      await client.logout();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(AppApiError);
+    expect((thrown as AppApiError).code).toBe("SAMO-AUTH-LOGOUT");
+    // The request is still recorded before it rejects.
+    expect(client.requests).toEqual([
+      { path: "/auth/logout", method: "POST", body: {} },
+    ]);
+  });
+
   it("lastDevMagicLink returns the configured dev link or null", async () => {
     const withLink = createFakeAppApiClient({ devMagicLink: "http://x/auth/callback?token=t" });
     expect(await withLink.lastDevMagicLink("a@b.dev")).toBe("http://x/auth/callback?token=t");

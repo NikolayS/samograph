@@ -67,6 +67,17 @@ export function buildSessionCookie(
   return `${SESSION_COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSec}`;
 }
 
+/**
+ * Build the `Set-Cookie` header value that CLEARS the session cookie: an empty
+ * value with `Max-Age=0` unsets it in the browser, while keeping the same fixed
+ * security attributes (Path/HttpOnly/Secure/SameSite) so the clear targets the
+ * exact cookie that {@link buildSessionCookie} set. This IS logout: the session
+ * is a stateless HMAC with no server-side record to delete.
+ */
+export function buildClearedSessionCookie(): string {
+  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
 /** Convenience: sign claims dated by `clock` and return the Set-Cookie header. */
 export function issueSessionCookie(
   claims: Omit<SessionClaims, "iat">,
