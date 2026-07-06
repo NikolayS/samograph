@@ -35,9 +35,10 @@ import {
 import { createCallsHandler } from "./calls/http.ts";
 import { connect } from "../../packages/shared/db/index.ts";
 import {
-  orchestrateJoin,
   pgCallStore,
   publicWebhookBase,
+  runJoinJob,
+  sanitizeFailureReason,
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
 import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
@@ -136,18 +137,35 @@ if (isRecallLive()) {
 async function enqueue(job: OrchestratorJob): Promise<void> {
   const recall = getRecallClient({ seed: job.callId });
   try {
-    const result = await orchestrateJoin(job, {
+    // runJoinJob converts a createBot/join FAILURE into a persisted terminal
+    // state (COULD_NOT_JOIN + sanitized `status_reason`, §5.2/§5.16, Story 4)
+    // instead of the old silent console.error that left the call PENDING
+    // forever. The UPDATE runs on this privileged connection (infra write —
+    // bypasses RLS, like the orchestrator's other `UPDATE calls`).
+    const outcome = await runJoinJob(job, {
       recall,
       store: pgCallStore(sql),
       webhookBase: WEBHOOK_BASE,
       logger: { info: (event, fields) => console.log(`[orchestrator] ${event}`, fields ?? {}) },
     });
+    if (outcome.status === "COULD_NOT_JOIN") {
+      // The reason is already sanitized (key redacted) by runJoinJob.
+      console.error(
+        `[orchestrator] call ${outcome.callId} → COULD_NOT_JOIN (${outcome.reason})`,
+      );
+      return;
+    }
     console.log(
-      `[orchestrator] call ${result.callId} → ${result.status} ` +
-        `(fake bot ${result.recallBotId}, region ${result.region})`,
+      `[orchestrator] call ${outcome.callId} → ${outcome.status} ` +
+        `(bot ${outcome.recallBotId}, region ${outcome.region})`,
     );
   } catch (err) {
-    console.error(`[orchestrator] join failed for call ${job.callId}:`, err);
+    // Even persisting the failure failed (e.g. the DB is down) — log the
+    // SANITIZED reason only; the raw error could echo credential material.
+    console.error(
+      `[orchestrator] join failed for call ${job.callId} and the failure could not ` +
+        `be persisted: ${sanitizeFailureReason(err)}`,
+    );
   }
 }
 

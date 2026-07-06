@@ -208,8 +208,10 @@ async function applyForward(
   if (from.length === 0) return false; // target is PENDING — nothing is below it
 
   if (RANK[target] >= 3) {
-    // Terminal: stamp ended_at; `fatal`'s sub_code becomes the §5.16 reason.
-    const reason = target === "COULD_NOT_JOIN" ? subCode : null;
+    // Terminal: stamp ended_at; a FAILURE's sub_code becomes the §5.16 reason
+    // (`fatal` → COULD_NOT_JOIN, `recording_permission_denied` → COULD_NOT_RECORD).
+    const reason =
+      target === "COULD_NOT_JOIN" || target === "COULD_NOT_RECORD" ? subCode : null;
     const rows = (await sql`
       UPDATE calls
          SET status = ${target}::call_status,

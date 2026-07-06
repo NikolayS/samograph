@@ -53,6 +53,22 @@ describe("statusView — error codes (SPEC §5.16)", () => {
     expect(statusView("COULD_NOT_RECORD").code).toBe("SAMO-CALL-NOREC");
   });
 
+  it("COULD_NOT_RECORD surfaces the persisted reason when one exists (§5.16)", () => {
+    const v = statusView("COULD_NOT_RECORD", {
+      recallReason: "recording_permission_denied_by_host",
+    });
+    expect(v.kind).toBe("error");
+    expect(v.code).toBe("SAMO-CALL-NOREC");
+    expect(v.message).toBe("Couldn't start recording — recording_permission_denied_by_host.");
+    expect(v.showTryAgain).toBe(false);
+  });
+
+  it("COULD_NOT_RECORD keeps the §5.16 fallback copy when no reason is given", () => {
+    expect(statusView("COULD_NOT_RECORD").message).toBe(
+      "Couldn't start recording — check meeting permissions.",
+    );
+  });
+
   it("BOT_REMOVED → SAMO-CALL-REMOVED", () => {
     expect(statusView("BOT_REMOVED").code).toBe("SAMO-CALL-REMOVED");
   });

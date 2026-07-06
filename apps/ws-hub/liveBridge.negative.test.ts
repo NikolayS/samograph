@@ -128,7 +128,7 @@ d("liveBridge negative gate: a rejected webhook reaches neither the socket nor t
     expect(hasText(client.frames, REJECTED)).toBe(false);
     // …nor the DB. Exactly one row (the accepted line); none carrying the rejected text.
     const rows = await sql`SELECT text FROM transcripts WHERE call_id = ${callId} ORDER BY seq`;
-    expect(rows.map((r) => (r as { text: string }).text)).toEqual([ACCEPTED]);
+    expect(rows.map((r: unknown) => (r as { text: string }).text)).toEqual([ACCEPTED]);
 
     client.ws.close();
   });

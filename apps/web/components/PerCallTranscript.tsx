@@ -87,6 +87,9 @@ export function PerCallTranscript({
     initialTranscriptState(),
   );
   const [fatalError, setFatalError] = useState<AppApiError | null>(null);
+  // §5.16 error detail (`calls.status_reason`) from the /calls/:id header —
+  // stream frames never carry it, so the REST fetch is its only source.
+  const [fetchedReason, setFetchedReason] = useState<string | undefined>(undefined);
 
   // Latest props read inside the long-lived effect without re-subscribing on
   // every render (callers pass `auth` inline, so its identity churns).
@@ -219,7 +222,11 @@ export function PerCallTranscript({
     streamClient
       .fetchCallDetail(makeRef())
       .then((d) => {
-        if (cancelled || dead || streamEventArrived) return;
+        if (cancelled) return;
+        // The persisted §5.16 reason applies even when the stream spoke first
+        // (a terminal `status` frame carries no reason of its own).
+        if (d.statusReason) setFetchedReason(d.statusReason);
+        if (dead || streamEventArrived) return;
         if (stateRef.current.status !== d.status) {
           dispatch({ type: "status", status: d.status });
         }
@@ -242,7 +249,8 @@ export function PerCallTranscript({
     // eslint-disable-next-line react-hooks/exhaustive-deps — auth read via ref; key gates re-subscribe.
   }, [streamClient, callId, authKey]);
 
-  const view = statusView(state.status, { recallReason });
+  // An explicit prop wins; otherwise the reason fetched from /calls/:id applies.
+  const view = statusView(state.status, { recallReason: recallReason ?? fetchedReason });
 
   return (
     <section aria-live="polite" aria-label="Live transcript" className="samograph-percall">

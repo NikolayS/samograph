@@ -54,6 +54,7 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
   const tenantB = randomUUID();
   const callA = randomUUID(); // tenant A, pre-seeded for the read tests
   const callB = randomUUID(); // tenant B, pre-seeded for the isolation tests
+  const callFailed = randomUUID(); // tenant A, terminal COULD_NOT_JOIN with a status_reason
 
   const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: 1 }, SESSION_SECRET);
   const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: 1 }, SESSION_SECRET);
@@ -96,6 +97,8 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
     await sql`INSERT INTO calls (id, tenant_id, meeting_url, status) VALUES
       (${callA}, ${tenantA}, ${MEET_URL}, 'IN_CALL'),
       (${callB}, ${tenantB}, 'https://zoom.us/j/555', 'IN_CALL')`;
+    await sql`INSERT INTO calls (id, tenant_id, meeting_url, status, status_reason, ended_at) VALUES
+      (${callFailed}, ${tenantA}, ${ZOOM_URL}, 'COULD_NOT_JOIN', 'meeting_not_found', now())`;
   });
 
   afterAll(async () => {
@@ -181,6 +184,34 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
     expect(body.status).toBe("IN_CALL");
     expect(body.meeting_url).toBe(MEET_URL);
     expect(body.ingest_degraded).toBe(false);
+  });
+
+  it("GET /calls/:id: a failed call carries status_reason; a healthy call carries null (§5.16)", async () => {
+    const { handler } = makeHandler();
+
+    const failed = await handler(req("GET", `/calls/${callFailed}`, { cookie: cookieA }));
+    expect(failed.status).toBe(200);
+    const failedBody = (await failed.json()) as { status: string; status_reason: string | null };
+    expect(failedBody.status).toBe("COULD_NOT_JOIN");
+    expect(failedBody.status_reason).toBe("meeting_not_found");
+
+    const ok = await handler(req("GET", `/calls/${callA}`, { cookie: cookieA }));
+    const okBody = (await ok.json()) as { status_reason: string | null };
+    expect(okBody.status_reason).toBeNull();
+  });
+
+  it("GET /calls: list rows carry status_reason (§5.16 — the dashboard shows error details)", async () => {
+    const { handler } = makeHandler();
+    const res = await handler(req("GET", "/calls", { cookie: cookieA }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      calls: Array<{ id: string; status: string; status_reason: string | null }>;
+    };
+    const failed = body.calls.find((c) => c.id === callFailed);
+    expect(failed).toBeDefined();
+    expect(failed?.status).toBe("COULD_NOT_JOIN");
+    expect(failed?.status_reason).toBe("meeting_not_found");
+    expect(body.calls.find((c) => c.id === callA)?.status_reason).toBeNull();
   });
 
   it("GET /calls/:id: no session → 403 bodyless (gate DENY)", async () => {

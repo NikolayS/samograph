@@ -73,6 +73,13 @@ export interface CallStore {
   recordIngestSecret(callId: string, ingestSecretHash: string, region: string): Promise<void>;
   /** On Recall ack: flip PENDING→JOINING and record `recall_bot_id` (§5.2). */
   markJoining(callId: string, recallBotId: string): Promise<void>;
+  /**
+   * On a createBot/join FAILURE: flip the (non-terminal) call to terminal
+   * `COULD_NOT_JOIN` and persist the sanitized failure reason on
+   * `calls.status_reason` (§5.2, §5.16, Story 4) — never leave it PENDING.
+   * Forward-only: a row already terminal is untouched.
+   */
+  markCouldNotJoin(callId: string, reason: string): Promise<void>;
 }
 
 /** Minimal structured logger; the orchestrator NEVER logs the secret or the key. */
@@ -227,8 +234,77 @@ export async function orchestrateJoin(
   };
 }
 
+/** Cap for a persisted `status_reason` (§5.16 detail is a short human string). */
+const MAX_REASON_LENGTH = 300;
+
+/** Fallback reason when the thrown value carries no usable message. */
+const UNKNOWN_JOIN_FAILURE_REASON = "bot could not be created";
+
 /**
- * Postgres-backed {@link CallStore} over `@samograph/shared/db`. Two narrow
+ * Turn a createBot/join failure into a persistable `status_reason` (§5.16):
+ * the error message with whitespace collapsed, every provided secret REDACTED
+ * (the Recall API key must never reach the database/UI — §4.4), any
+ * `Token <value>` credential redacted as defense in depth, and the result
+ * capped at {@link MAX_REASON_LENGTH} chars. Never returns an empty string.
+ */
+export function sanitizeFailureReason(
+  err: unknown,
+  secrets: readonly (string | undefined)[] = [process.env.RECALL_API_KEY],
+): string {
+  let reason = err instanceof Error ? err.message : err === undefined || err === null ? "" : String(err);
+  for (const candidate of secrets) {
+    const secret = (candidate ?? "").trim();
+    // Ignore trivial values that would shred unrelated text if "redacted".
+    if (secret.length >= 4) reason = reason.split(secret).join("[redacted]");
+  }
+  // Defense in depth: an HTTP client error echoing an Authorization header.
+  reason = reason.replace(/\bToken\s+[A-Za-z0-9._-]{8,}/g, "Token [redacted]");
+  reason = reason.replace(/\s+/g, " ").trim();
+  if (!reason) return UNKNOWN_JOIN_FAILURE_REASON;
+  if (reason.length > MAX_REASON_LENGTH) {
+    reason = `${reason.slice(0, MAX_REASON_LENGTH - 1)}…`;
+  }
+  return reason;
+}
+
+/** The terminal outcome {@link runJoinJob} reports for a failed join (Story 4). */
+export interface JoinFailure {
+  callId: string;
+  status: "COULD_NOT_JOIN";
+  /** The sanitized §5.16 reason that was persisted on `calls.status_reason`. */
+  reason: string;
+}
+
+export type JoinOutcome = OrchestrateResult | JoinFailure;
+
+/**
+ * Drive one enqueued call through {@link orchestrateJoin}, converting a FAILURE
+ * into a persisted terminal state instead of a silent PENDING hang (Story 4,
+ * §5.2, §5.16): on any throw, the call is marked `COULD_NOT_JOIN` with the
+ * sanitized reason on `calls.status_reason`. Runs on the orchestrator's
+ * privileged connection (an infra write that bypasses RLS, like the other
+ * `UPDATE calls` here). Secrets for redaction are injectable; they default to
+ * the shared Recall API key (§4.4).
+ */
+export async function runJoinJob(
+  job: OrchestratorJob,
+  deps: OrchestrateDeps & { secrets?: readonly (string | undefined)[] },
+): Promise<JoinOutcome> {
+  const logger = deps.logger ?? noopLogger;
+  try {
+    return await orchestrateJoin(job, deps);
+  } catch (err) {
+    const reason = sanitizeFailureReason(err, deps.secrets);
+    // The reason is already sanitized — safe to log (never raw `err`, which
+    // could echo the Authorization header on an HTTP failure).
+    logger.info("orchestrate.join_failed", { callId: job.callId, reason });
+    await deps.store.markCouldNotJoin(job.callId, reason);
+    return { callId: job.callId, status: "COULD_NOT_JOIN", reason };
+  }
+}
+
+/**
+ * Postgres-backed {@link CallStore} over `@samograph/shared/db`. Three narrow
  * writes against the existing `calls` row (created PENDING by app-api, §5.2).
  */
 export function pgCallStore(sql: SQL): CallStore {
@@ -246,6 +322,18 @@ export function pgCallStore(sql: SQL): CallStore {
            SET status = 'JOINING',
                recall_bot_id = ${recallBotId}
          WHERE id = ${callId}`;
+    },
+    async markCouldNotJoin(callId, reason) {
+      // Forward-only (mirrors the status poller's conditional UPDATE): only a
+      // non-terminal call can fail to join; a terminal row is never regressed
+      // or relabeled. Stamps ended_at, keeps any earlier reason (COALESCE).
+      await sql`
+        UPDATE calls
+           SET status = 'COULD_NOT_JOIN',
+               ended_at = COALESCE(ended_at, now()),
+               status_reason = COALESCE(status_reason, ${reason})
+         WHERE id = ${callId}
+           AND status IN ('PENDING', 'JOINING', 'IN_CALL')`;
     },
   };
 }

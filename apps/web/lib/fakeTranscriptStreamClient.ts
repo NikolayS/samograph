@@ -43,6 +43,12 @@ export interface FakeTranscriptStreamClientOptions {
   failFetchDetailWith?: FailSpec;
   /** When set, `backfill` rejects with this typed error. */
   failBackfillWith?: FailSpec;
+  /**
+   * When true, `fetchCallDetail` records its request but does not settle until
+   * the test calls `releaseDetail()` — lets a test deterministically interleave
+   * stream frames with the REST detail response.
+   */
+  holdDetail?: boolean;
 }
 
 export class FakeTranscriptStreamClient implements TranscriptStreamClient {
@@ -123,12 +129,25 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
     this.deliver({ type: "closed", code, reason });
   }
 
+  /** Resolvers parked by `holdDetail`; `releaseDetail()` settles them all. */
+  private heldDetails: Array<() => void> = [];
+
+  /** Driver: settle every `fetchCallDetail` parked by the `holdDetail` option. */
+  releaseDetail(): void {
+    const held = this.heldDetails;
+    this.heldDetails = [];
+    for (const release of held) release();
+  }
+
   async fetchCallDetail(ref: CallRef): Promise<CallDetail> {
     this.requests.push({
       path: `/calls/${ref.callId}`,
       method: "GET",
       callId: ref.callId,
     });
+    if (this.options.holdDetail) {
+      await new Promise<void>((resolve) => this.heldDetails.push(resolve));
+    }
     const fail = this.options.failFetchDetailWith;
     if (fail) {
       throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
