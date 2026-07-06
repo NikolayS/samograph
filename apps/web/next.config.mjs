@@ -32,6 +32,14 @@ const nextConfig = {
                 has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
                 destination: `${apiOrigin}/auth/callback`,
               },
+              {
+                // Logout is a client `fetch` only (there is no /auth/logout page),
+                // so gate it on dest `empty` just like /auth/callback — a stray
+                // document navigation to this path never proxies to the API.
+                source: "/auth/logout",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/auth/logout`,
+              },
               { source: "/calls", destination: `${apiOrigin}/calls` },
               {
                 // Only the client's fetchCallDetail (dest `empty`), NOT the page

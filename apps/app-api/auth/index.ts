@@ -49,6 +49,7 @@ export {
   signSession,
   verifySession,
   buildSessionCookie,
+  buildClearedSessionCookie,
   issueSessionCookie,
 } from "./session.ts";
 export {
