@@ -41,6 +41,12 @@ a call can be `IN_CALL` **and** degraded at the same time. See
 |---|---|---|
 | `RECALL_LIVE` + `RECALL_API_KEY` | Flip the bot-orchestrator from the deterministic fake to the REAL Recall client so an actual bot joins (default = fake; never set in CI) | [real-recall-flag.md](./real-recall-flag.md) |
 
+## Deployment invariants
+
+| Invariant | Why it matters | Doc |
+|---|---|---|
+| app-api sits behind a trusted edge that **overwrites** `X-Forwarded-For`; never exposed directly | `clientIp()` trusts the first XFF hop — without a trusted proxy the 20/hr per-IP magic-link limit is spoofable and direct callers collapse into one `unknown` bucket (§5.1 / SPEC.amendments item 11) | [trusted-proxy.md](./trusted-proxy.md) |
+
 ## Conventions
 
 - All log lines are structured JSON carrying `call_id`, `tenant_id`, `region`
