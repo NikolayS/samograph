@@ -206,6 +206,120 @@ describe("PerCallTranscript — live read-along (SPEC §2, §5.2, §5.4, §5.5, 
   });
 });
 
+describe("PerCallTranscript — status poll fallback (#106: cross-process status liveness)", () => {
+  // The app-api status poller publishes status flips via pg_notify, but no
+  // process runs LISTEN (Bun SQL has none), so on a real call NO WS `status`
+  // frame ever reaches an open page. The page must still go live: while the
+  // status is non-terminal it re-polls GET /calls/:id and reflects the change.
+
+  it("reflects a status change via polling with NO WS status frame", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "JOINING" }),
+    });
+    const { findByText } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "session" }}
+        callId="call_1"
+        statusPollIntervalMs={10}
+      />,
+    );
+    expect(await findByText("Joining")).toBeDefined();
+    // The status flips server-side; the WS hub (fed only in-process) says nothing.
+    client.setCallDetail(detail({ status: "IN_CALL" }));
+    expect(await findByText("Live")).toBeDefined();
+    // …and again to a terminal state, still with no WS frame.
+    client.setCallDetail(detail({ status: "ENDED" }));
+    expect(await findByText("Ended")).toBeDefined();
+    // The change arrived through repeated GET /calls/:id polls, not the mount fetch.
+    expect(client.requests.filter((r) => r.path === "/calls/call_1").length).toBeGreaterThan(2);
+  });
+
+  it("stops polling once the status is terminal and closes the stream", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "IN_CALL" }),
+    });
+    const { findByText, queryByText } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "session" }}
+        callId="call_1"
+        statusPollIntervalMs={10}
+      />,
+    );
+    client.setCallDetail(detail({ status: "ENDED" }));
+    expect(await findByText("Ended")).toBeDefined();
+    // Polling stops: the request count settles and stays settled.
+    await new Promise((r) => setTimeout(r, 30));
+    const settled = client.requests.filter((r) => r.path === "/calls/call_1").length;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(client.requests.filter((r) => r.path === "/calls/call_1").length).toBe(settled);
+    // The stream was torn down too: a late line is NOT delivered.
+    act(() => client.emitLine(line({ seq: 9, text: "after poll-terminal" })));
+    expect(queryByText(/after poll-terminal/)).toBeNull();
+  });
+
+  it("the terminal poll result carries the §5.16 statusReason into the header", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "JOINING" }),
+    });
+    const { findByText } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "session" }}
+        callId="call_1"
+        statusPollIntervalMs={10}
+      />,
+    );
+    expect(await findByText("Joining")).toBeDefined();
+    client.setCallDetail(
+      detail({ status: "COULD_NOT_JOIN", statusReason: "meeting_not_found" }),
+    );
+    expect(await findByText("Couldn't join — meeting_not_found.")).toBeDefined();
+  });
+
+  it("share mode: every status poll carries the share token (§5.7)", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "IN_CALL" }),
+    });
+    render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "share", token: "shr_x" }}
+        callId="call_1"
+        statusPollIntervalMs={10}
+      />,
+    );
+    await waitFor(() => {
+      const polls = client.requests.filter((r) => r.path === "/calls/call_1");
+      expect(polls.length).toBeGreaterThan(2);
+    });
+    for (const r of client.requests.filter((r) => r.path === "/calls/call_1")) {
+      expect(r.query).toEqual({ token: "shr_x" });
+    }
+  });
+
+  it("a WS-delivered terminal status also stops the poll (single-process path)", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: detail({ status: "IN_CALL" }),
+    });
+    const { getByText } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "session" }}
+        callId="call_1"
+        statusPollIntervalMs={10}
+      />,
+    );
+    act(() => client.emitStatus("ENDED"));
+    expect(getByText("Ended")).toBeDefined();
+    await new Promise((r) => setTimeout(r, 30));
+    const settled = client.requests.filter((r) => r.path === "/calls/call_1").length;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(client.requests.filter((r) => r.path === "/calls/call_1").length).toBe(settled);
+  });
+});
+
 describe("PerCallTranscript — failed calls display the persisted error reason (SPEC §5.16)", () => {
   it("COULD_NOT_JOIN: the header message carries the statusReason from /calls/:id", async () => {
     const client = createFakeTranscriptStreamClient({
