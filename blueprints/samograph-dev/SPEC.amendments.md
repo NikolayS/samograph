@@ -500,6 +500,73 @@ ingest works. `apps/bot-orchestrator/recallClient.ts`, `apps/bot-orchestrator/re
 
 ---
 
+### S2-13. §3 Story 1 / §5.2 / §5.5 / §6.2 #8 — live call-status is surfaced by a client-side poll, not a cross-process WS status push — *Deviation (v1)*
+
+**Amends:** §3 Story 1 / §5.2 / §5.5 / §6.2 #8 (live status surfacing).
+
+**What differs:** The per-call page reflects status changes with a **client-side
+poll** — the page `GET`s `/calls/:id` roughly every **4.5 s** while the call is
+non-terminal — instead of the spec'd cross-process WebSocket status push. The
+server-side status-frame path still exists but works **only in-process**.
+
+**Why:** Bun's built-in SQL has no `LISTEN` consumer API (see S2-4), so a
+cross-process WS status push never reaches an open page — the push silently goes
+nowhere (a bug the samorev gate caught on the Sprint-2 consolidation). The client
+poll is the reliable surfacing path across the one-process bridge. Tracked under
+**#106**. `apps/web/components/PerCallTranscript.tsx`.
+
+---
+
+### S2-14. §5.9 / §6.2 #8 — in-call disclosure idempotency via a durable `calls.disclosure_posted_at` marker (send-then-stamp), not an in-transaction guard — *Deviation (v1)*
+
+**Amends:** §5.9 / §6.2 #8 (exactly-once in-call recording disclosure). Migration
+`0006_calls_disclosure_posted_at.sql`.
+
+**What differs:** The §5.9 in-call recording disclosure is made idempotent by a
+durable `calls.disclosure_posted_at` marker using a **send-then-stamp** sequence:
+the disclosure is sent **outside** the status-flip transaction, then the marker is
+stamped. This replaces an in-transaction guard. A duplicate disclosure is therefore
+possible but **bounded to the send↔stamp window**.
+
+**Why:** With the disclosure send inside the transaction, a post-send rollback
+re-posted the disclosure on every poller sweep (at-least-once — another bug the
+samorev gate caught). Sending outside the tx and persisting a durable marker makes
+the common path exactly-once and bounds any duplicate to the narrow send↔stamp
+window. `apps/bot-orchestrator/statusPoller.ts`.
+
+---
+
+### S2-15. §4.5 — the tunnel-outage watchdog probes a public `/health` route (Caddy → ingest) that returns the §4.5 health marker — *Extension*
+
+**Amends:** §4.5 (tunnel-health probe).
+
+**What differs:** The tunnel-outage watchdog probes a **public `/health` route**
+(added to Caddy, routed through to ingest) that returns the §4.5 health marker,
+rather than an internal-only check.
+
+**Why:** The watchdog must exercise the same public ingress path Recall's webhooks
+traverse to detect a broken tunnel; a reachable public `/health` route returning the
+§4.5 marker is what makes the probe meaningful end-to-end.
+`apps/ingest/tunnelWatchdog.ts`, `apps/ingest/server.ts`.
+
+---
+
+### S2-16. §5.2 / §5.9 — `COULD_NOT_RECORD` escalates ONLY from `PENDING`/`JOINING`; it can never regress a live `IN_CALL` row — *Clarification*
+
+**Amends:** §5.2 / §5.9 (status lifecycle on `in_call_not_recording`).
+
+**What differs:** `COULD_NOT_RECORD` is only reachable from `PENDING` or `JOINING`.
+A mid-call `in_call_not_recording` event no longer flips a live `IN_CALL` row to the
+terminal `COULD_NOT_RECORD` status (and so no longer ejects the bot from an
+in-progress call).
+
+**Why:** An aged/late `in_call_not_recording` event could destructively regress a
+LIVE `IN_CALL` call to terminal `COULD_NOT_RECORD` and eject the bot (a third bug the
+samorev gate caught). Scoping the escalation to `PENDING`/`JOINING` preserves the
+"terminal is sticky, forward-only" lifecycle invariant. `apps/ingest/botLifecycle.ts`.
+
+---
+
 ### Gaps tracked as issues (NOT amendments)
 
 Per this document's rule, genuine gaps/follow-ups are GitHub issues, not amendments:
