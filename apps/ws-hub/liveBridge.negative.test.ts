@@ -100,10 +100,10 @@ d("liveBridge negative gate: a rejected webhook reaches neither the socket nor t
     return fetch(`${stack.ingest.url}${u.pathname}${u.search}`, { method: "POST", headers: env.headers, body: env.rawBody });
   }
 
-  it("GET /health?nonce=abc echoes {ok:true,nonce:'abc'}", async () => {
+  it("GET /health?nonce=abc echoes the nonce + byte-exact §4.5 marker (a probeable target)", async () => {
     const res = await fetch(`${stack.ingest.url}/health?nonce=abc`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, nonce: "abc" });
+    expect(await res.json()).toEqual({ ok: true, nonce: "abc", marker: "samograph-health" });
   });
 
   it("a wrong-?t= webhook is 401'd and its line reaches neither the WS nor transcripts, but a valid one does", async () => {
