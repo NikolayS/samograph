@@ -279,6 +279,41 @@ As of this hand-off, all 5 deviations above are now recorded in `SPEC.amendments
 
 ---
 
+## 8.5 Delivering PRs → the samorev gate → deploy
+
+**1. Deliver the PR**
+- One logical change per PR, branched off `main` (`fix/<n>-slug`, `feat/<area>-slug`; agent branches `claude/<slug>-<hash>`).
+- **Red/green TDD:** failing test first — paste the RED failure *and* the GREEN pass in the PR body.
+- **CI green:** `bun test` + `bunx tsc --noEmit` clean; Postgres-backed tests green on the CI ephemeral `postgres:16`.
+- Conventional Commit with scope; co-authored trailer.
+
+**2. Run the samorev gate — the merge gate; no merge without it**
+- Two surfaces, both required:
+  - **Deterministic:** `bun run samorev review <PR-url> --fetch` → posts a PASS/FAIL comment (checks CI status + draft state only).
+  - **Code analysis:** `/review-mr`, or spawn the samorev **Security + Bug-Hunter** agents (both BLOCKING). In practice we run them as fable/medium reviewers over `git diff origin/main...HEAD`, and **adversarially verify each finding** before it counts (a second agent tries to *refute* it — kills false positives).
+- **Severity:** only a *confirmed BLOCKING* finding blocks (security hole, auth/tenancy bypass, secret leak, data corruption, or a correctness bug that breaks the feature or a guarantee). NON-BLOCKING / POTENTIAL / INFO = PASS. **Ignore SOC2 findings.**
+- Post the combined verdict as a PR comment; fix BLOCKING findings, then re-gate.
+
+**3. Re-review after ANY post-review commit — the rule that actually bites**
+- A samorev PASS is bound to the head SHA. **Any** later push — a fix, an amend, a rebase, a conflict-resolution merge, *even the commit that fixes the review's own findings* — **VOIDS the PASS.** Re-run the gate on the new HEAD.
+- Pre-merge, every single time: `gh pr view <n> --json headRefOid --jq .headRefOid` must equal the SHA the latest PASS ran against, and CI must be green on it.
+
+**4. Merge**
+- Squash-merge, delete branch: `gh pr merge <n> --squash --delete-branch`. Human owner approval required.
+- **Sprint/batch consolidation:** put the related PRs on one branch, run the gate **on the merged diff** (the analysis must see the merged code), then squash to `main`. That's how Sprint 2 shipped — and how the gate caught the 3 bugs.
+
+**5. Deploy to prod — the VM tracks `main`**
+SSH to the VM (`ssh -p 2223 dev@116.203.249.135`) and:
+1. `sudo git -C /opt/samograph/envs/samograph-main fetch origin main && sudo git -C … reset --hard origin/main`
+2. **Migrations:** `bun packages/shared/db/migrate.ts` (with the VM `DATABASE_URL`) — idempotent.
+3. **Rebuild web:** `sudo env APP_API_ORIGIN=<origin> bun run build` **inside `apps/web`** — omit `APP_API_ORIGIN` and the Next.js rewrites silently drop, the API stops routing.
+4. **Restart both units:** `samograph-web@samograph-main` + `samograph-live@samograph-main`.
+5. **Smoke-test live** on https://samograph-main.samo.cat — health, an authed endpoint, and the changed feature. The gate catches *code* bugs; only a live check catches *deploy/routing/config* bugs (the `/health` route, the `APP_API_ORIGIN` trap, a false-degraded watchdog).
+
+**SSH discipline:** don't hammer SSH, and don't run many parallel agents against the VM — fail2ban locks you out (~20 min). See section 5.
+
+---
+
 ## 9. Next work — Sprint 3 "harden + ship" (SPEC §8, final v1 sprint)
 
 By track:
