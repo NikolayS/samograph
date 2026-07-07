@@ -28,6 +28,7 @@ import { createTranscriptPipeline, inMemoryTranscriptMetrics } from "../ingest/t
 import type { ValidatedEvent } from "../ingest/webhook.ts";
 import { createRecallFake } from "../../packages/test-fakes/recall/index.ts";
 import { composeLiveStack } from "./liveBridge.ts";
+import { startLiveWatchdogBridge } from "./watchdogBridge.ts";
 
 // ── DEV-ONLY config + secrets (clearly marked; NEVER use in production) ────────
 const WS_HUB_PORT = Number(process.env.WS_HUB_PORT ?? 8788);
@@ -67,6 +68,24 @@ const stack = composeLiveStack({
   secretProvider: inMemoryWebhookSecretProvider(DEV_WEBHOOK_SECRET),
   wsPort: WS_HUB_PORT,
   ingestPort: INGEST_PORT,
+});
+
+// ── OUTAGE watchdog (Story 5, §4.5/§4.6): probe the public ingress /health ────
+// Probe target: PUBLIC_WEBHOOK_BASE + /health — the SAME public base Recall
+// posts webhooks to, fronting THIS process's ingest (which returns the byte-
+// exact §4.5 marker). A failing round-trip means webhooks are being lost, so on
+// 2 consecutive failures the watchdog sets `calls.ingest_degraded=true` for
+// every IN_CALL call in the region and lands ONE `SAMOGRAPH-WARNING: tunnel
+// unreachable …` line on each call's live stream (via the SAME in-process Hub);
+// recovery lands one recovered line and clears the flag. Without a public base
+// (pure-local demo) it probes the loopback ingest directly — same marker path.
+const REGION_ID = process.env.SAMOGRAPH_REGION ?? "us-east";
+const PROBE_BASE = (process.env.PUBLIC_WEBHOOK_BASE ?? stack.ingest.url).replace(/\/+$/, "");
+const watchdog = await startLiveWatchdogBridge({
+  sql,
+  fanIn: stack.fanIn,
+  regionId: REGION_ID,
+  probeBase: PROBE_BASE,
 });
 
 /** DEV-ONLY: inject a transcript line for an existing call (no webhook auth). */
@@ -133,6 +152,8 @@ console.log(
     `  ws-hub stream : ${stack.wsHub.url}/calls/:id/stream  (WS) + /calls/:id/transcript (REST)\n` +
     `  ingest webhook: ${stack.ingest.url}/webhook  (signed fake webhooks)\n` +
     `  dev control   : http://localhost:${ctrl.port}/__dev/say  (POST {call_id, speaker, text})\n` +
+    `  watchdog      : region '${REGION_ID}' probing ${PROBE_BASE}/health every 20s ` +
+    `(leader=${watchdog.isLeader() ? "yes" : "pending first tick"}; §4.5 outage → SAMOGRAPH-WARNING + degraded banner)\n` +
     `  Recall: in-repo deterministic FAKE — no real bot, no tunnel\n\n` +
     `  Watch a call live:\n` +
     `    1. create a call via the app-api dev-server, copy its <call_id>\n` +

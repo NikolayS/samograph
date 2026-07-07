@@ -21,6 +21,7 @@
  * SAME signal shape for the future split; only its LISTEN consumer is deferred.
  */
 import type { Server, SQL } from "bun";
+import { HEALTH_MARKER } from "../../src/server.ts";
 import {
   encodeSignal,
   type TranscriptFrame,
@@ -124,7 +125,13 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   async function ingestFetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/health") {
-      return Response.json({ ok: true, nonce: url.searchParams.get("nonce") ?? "" });
+      // Byte-exact §4.5 marker + nonce echo: this /health is the watchdog's
+      // probe target (through PUBLIC_WEBHOOK_BASE), same as apps/ingest/server.ts.
+      return Response.json({
+        ok: true,
+        nonce: url.searchParams.get("nonce") ?? "",
+        marker: HEALTH_MARKER,
+      });
     }
 
     // Per-request buffer so concurrent webhooks never interleave their signals.
