@@ -142,6 +142,91 @@ describe("Dashboard — failed calls display their error reason (SPEC §5.16, St
   });
 });
 
+describe("Dashboard — each call row is an obvious transcript link (affordance)", () => {
+  it("renders the whole row as a link to the per-call page with a clear 'View transcript' CTA", async () => {
+    const client = createFakeAppApiClient({
+      seedCalls: [
+        { id: "call_e", meetingUrl: "https://zoom.us/j/e", provider: "zoom", status: "ENDED" },
+      ],
+    });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    const row = (await findByText("https://zoom.us/j/e")).closest("a");
+    expect(row).not.toBeNull();
+    // Whole row is the link into the transcript page.
+    expect(row?.getAttribute("href")).toBe(
+      `/calls/call_e?url=${encodeURIComponent("https://zoom.us/j/e")}`,
+    );
+    // Explicit, inviting affordance so a first-time user knows to tap it.
+    expect(row?.textContent).toContain("View transcript");
+    // Accessible: the link carries its own name.
+    expect(row?.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  it("a LIVE call (IN_CALL) shows a prominent pulsing 'Live — watch transcript' cue", async () => {
+    const client = createFakeAppApiClient({
+      seedCalls: [
+        { id: "call_live", meetingUrl: "https://zoom.us/j/live", provider: "zoom", status: "IN_CALL" },
+      ],
+    });
+    const { findByText, container } = render(
+      <Dashboard client={client} redirect={noopRedirect} />,
+    );
+    // The live cue invites opening the transcript to watch in real time.
+    expect(await findByText(/live — watch transcript/i)).toBeDefined();
+    // A live indicator dot is present (styled as the pulsing "●").
+    expect(container.querySelector(".samograph-call-live-dot")).not.toBeNull();
+    // The row still links into the per-call page.
+    const row = (await findByText("https://zoom.us/j/live")).closest("a");
+    expect(row?.getAttribute("href")).toBe(
+      `/calls/call_live?url=${encodeURIComponent("https://zoom.us/j/live")}`,
+    );
+  });
+
+  it("a terminal-failure row keeps its reason and does NOT show a transcript invite", async () => {
+    const client = createFakeAppApiClient({
+      seedCalls: [
+        {
+          id: "call_f",
+          meetingUrl: "https://zoom.us/j/f",
+          provider: "zoom",
+          status: "COULD_NOT_RECORD",
+          statusReason: "recording_permission_denied_by_host",
+        },
+      ],
+    });
+    const { findByText, queryByText } = render(
+      <Dashboard client={client} redirect={noopRedirect} />,
+    );
+    // §5.16 reason is preserved.
+    expect(
+      await findByText("Couldn't start recording — recording_permission_denied_by_host."),
+    ).toBeDefined();
+    // A failure row must not be dressed up as a transcript invite.
+    expect(queryByText(/view transcript/i)).toBeNull();
+    expect(queryByText(/watch transcript/i)).toBeNull();
+  });
+
+  it("a COULD_NOT_JOIN row offers 'Try again' rather than a transcript invite", async () => {
+    const client = createFakeAppApiClient({
+      seedCalls: [
+        {
+          id: "call_j",
+          meetingUrl: "https://zoom.us/j/j",
+          provider: "zoom",
+          status: "COULD_NOT_JOIN",
+          statusReason: "meeting_not_found",
+        },
+      ],
+    });
+    const { findByText, queryByText } = render(
+      <Dashboard client={client} redirect={noopRedirect} />,
+    );
+    // Keeps the existing Story-4 "Try again" affordance (the per-call page owns it).
+    expect(await findByText(/try again/i)).toBeDefined();
+    expect(queryByText(/view transcript/i)).toBeNull();
+  });
+});
+
 describe("Dashboard — Story-4 URL pre-fill (SPEC §5.2, Story 4)", () => {
   const URL = "https://meet.google.com/abc-defg-hij";
 

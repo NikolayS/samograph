@@ -36,3 +36,135 @@ button {
 [role="alert"] {
   color: #b00020;
 }
+
+/* Dashboard — call list (SPEC §3 Story 1). Each row is a whole-row link into
+   its per-call transcript page; it must *read* as tappable, with an explicit
+   affordance so a first-time user knows to open it. Colors mix with
+   `currentColor` so the treatment adapts to the light/dark `color-scheme`. */
+.samograph-call-list {
+  list-style: none;
+  padding: 0;
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.samograph-call-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.samograph-call-row:hover,
+.samograph-call-row:focus-visible {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  border-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.samograph-call-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
+  outline-offset: 2px;
+}
+
+.samograph-call-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.samograph-call-url {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.samograph-call-status {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.samograph-call-error {
+  font-size: 0.85rem;
+  color: #b00020;
+}
+
+/* Explicit call-to-action: "View transcript →", "Try again →", or the live cue.
+   The arrow slides on hover to reinforce that the whole row is a link. */
+.samograph-call-cta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: color-mix(in srgb, currentColor 72%, transparent);
+}
+
+.samograph-call-row:hover .samograph-call-cta,
+.samograph-call-row:focus-visible .samograph-call-cta {
+  color: inherit;
+}
+
+.samograph-call-cta-arrow {
+  transition: transform 120ms ease;
+}
+
+.samograph-call-row:hover .samograph-call-cta-arrow,
+.samograph-call-row:focus-visible .samograph-call-cta-arrow {
+  transform: translateX(2px);
+}
+
+.samograph-call-cta-retry {
+  color: #b00020;
+}
+
+/* Live cue: a pulsing "●" + "Live — watch transcript", green so it's clearly an
+   active invitation (distinct from the red error/retry treatment). */
+.samograph-call-cta-live {
+  color: #12813f;
+}
+
+.samograph-call-live-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #16a34a;
+  animation: samograph-live-pulse 1.6s ease-out infinite;
+}
+
+@keyframes samograph-live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #16a34a 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 0.5rem color-mix(in srgb, #16a34a 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #16a34a 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .samograph-call-row {
+    transition: none;
+  }
+  .samograph-call-cta-arrow {
+    transition: none;
+  }
+  .samograph-call-live-dot {
+    animation: none;
+  }
+}
