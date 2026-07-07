@@ -62,3 +62,43 @@ export function normalizeTranscriptLine(payload: unknown): string | null {
   const ts = absolute.slice(0, 19).replace("T", " ");
   return `[${ts}] ${speaker}: ${text}`;
 }
+
+/** A stored transcript row rendered back to the canonical CLI line (Story 3). */
+export interface RenderableTranscriptLine {
+  /** Either the canonical `YYYY-MM-DD HH:MM:SS` or an ISO `…THH:MM:SS.sssZ`. */
+  ts: string;
+  speaker: string | null;
+  text: string;
+}
+
+/**
+ * Coerce a stored timestamp to the CLI's canonical `YYYY-MM-DD HH:MM:SS`. The
+ * ws-hub row mapper emits `new Date(ts).toISOString()` (`…THH:MM:SS.sssZ`); the
+ * CLI writes `absolute.slice(0,19).replace("T"," ")` — this collapses both to
+ * the same 19-char space form so the download is byte-identical (SPEC §5.4).
+ */
+function canonicalTs(ts: string): string {
+  return ts.slice(0, 19).replace("T", " ");
+}
+
+/**
+ * Render one stored transcript row to the canonical CLI line
+ *     [YYYY-MM-DD HH:MM:SS] Speaker: utterance
+ * byte-identical to {@link normalizeTranscriptLine}: the `T`/millis/`Z` are
+ * dropped from an ISO `ts`, and a null/blank speaker defaults to `"?"` exactly
+ * as the normalizer does. Persisted `speaker`/`text` are already sanitized at
+ * ingest, so no re-sanitization is applied (it would be a no-op).
+ */
+export function renderTranscriptLine(line: RenderableTranscriptLine): string {
+  const speaker = (line.speaker ?? "").trim() || "?";
+  return `[${canonicalTs(line.ts)}] ${speaker}: ${line.text}`;
+}
+
+/**
+ * Render a full transcript to plain text — one {@link renderTranscriptLine} per
+ * line, each terminated by `"\n"` exactly as the CLI writer does (`line + "\n"`).
+ * An empty transcript is the empty string (no stray trailing newline).
+ */
+export function renderTranscriptText(lines: readonly RenderableTranscriptLine[]): string {
+  return lines.map((l) => renderTranscriptLine(l) + "\n").join("");
+}

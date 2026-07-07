@@ -10,12 +10,13 @@ import {
 } from "../lib/transcriptView.ts";
 import { statusView, type StatusView } from "../lib/callStatusView.ts";
 import { AppApiError } from "../lib/appApiClient.ts";
-import type {
-  CallRef,
-  StreamAuth,
-  StreamHandle,
-  TranscriptStreamClient,
-  TranscriptStreamEvent,
+import {
+  transcriptDownloadHref,
+  type CallRef,
+  type StreamAuth,
+  type StreamHandle,
+  type TranscriptStreamClient,
+  type TranscriptStreamEvent,
 } from "../lib/transcriptStreamClient.ts";
 import { DegradedBanner, WarningLine } from "./DegradedBanner.tsx";
 
@@ -261,6 +262,19 @@ export function PerCallTranscript({
       </header>
 
       <DegradedBanner degraded={state.degraded} />
+
+      <div className="samograph-transcript-actions">
+        {/* Story 3: the full transcript as a plain-text download. In share mode
+            the href carries the `share` token so an anonymous viewer downloads
+            exactly what they can read. Same origin — Caddy routes it to ws-hub. */}
+        <a
+          className="samograph-download-transcript"
+          href={transcriptDownloadHref(callId, auth)}
+          download
+        >
+          Download transcript
+        </a>
+      </div>
 
       {fatalError ? (
         <div role="alert" className="samograph-stream-error">

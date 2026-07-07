@@ -44,12 +44,14 @@ export {
 export {
   replayTranscripts,
   backfillRecent,
+  fetchFullTranscript,
   DEFAULT_BACKFILL_LIMIT,
   type TranscriptLine,
 } from "./transcript.ts";
 
 export {
   createTranscriptHandler,
+  createTranscriptTextHandler,
   type TranscriptHandlerDeps,
   type TranscriptResponseBody,
 } from "./transcript-http.ts";

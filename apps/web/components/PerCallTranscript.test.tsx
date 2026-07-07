@@ -264,4 +264,28 @@ describe("PerCallTranscript — failed calls display the persisted error reason 
     await act(async () => client.releaseDetail());
     expect(await findByText("Couldn't join — meeting_not_found.")).toBeDefined();
   });
+
+  // Story 3 — the downloadable transcript link.
+  it("renders a Download-transcript link at /calls/:id/transcript.txt (session)", () => {
+    const client = createFakeTranscriptStreamClient({ callDetail: detail() });
+    const { getByRole } = render(
+      <PerCallTranscript streamClient={client} auth={{ kind: "session" }} callId="call_1" />,
+    );
+    const link = getByRole("link", { name: /download transcript/i }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/calls/call_1/transcript.txt");
+    expect(link.hasAttribute("download")).toBe(true);
+  });
+
+  it("carries the share ?token on the download link in share mode", () => {
+    const client = createFakeTranscriptStreamClient({ callDetail: detail() });
+    const { getByRole } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "share", token: "shr_abc" }}
+        callId="call_9"
+      />,
+    );
+    const link = getByRole("link", { name: /download transcript/i }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/calls/call_9/transcript.txt?token=shr_abc");
+  });
 });
