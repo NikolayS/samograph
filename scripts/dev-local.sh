@@ -33,8 +33,56 @@ WS_HUB_PORT="${WS_HUB_PORT:-8788}"
 INGEST_PORT="${INGEST_PORT:-8089}"
 DEV_CTRL_PORT="${DEV_CTRL_PORT:-8790}"
 APP_API_ORIGIN="http://localhost:${APP_API_PORT}"
-LOGDIR="$ROOT/.dev-local"
-mkdir -p "$LOGDIR"
+
+# ---------------------------------------------------------------------------
+# Runtime directory for PID files + logs.
+#
+# Bug: on preview VMs the initial samohost bootstrap runs as root, which
+# creates .dev-local/ with root ownership.  A subsequent restart (running as
+# the app user) cannot write PID files there → "Could not open pid file
+# samograph.pid: Permission denied" → crash under set -euo pipefail.
+#
+# Fix: honour SAMOGRAPH_LOGDIR when set (tests + operator override), then
+# try the canonical .dev-local/ dir.  If that dir is not writable by the
+# current user, fall back to an XDG/tmp path that is always user-owned.
+# ---------------------------------------------------------------------------
+_resolve_logdir() {
+  local candidate
+  if [[ -n "${SAMOGRAPH_LOGDIR:-}" ]]; then
+    candidate="$SAMOGRAPH_LOGDIR"
+  else
+    candidate="$ROOT/.dev-local"
+  fi
+
+  mkdir -p "$candidate" 2>/dev/null || true
+
+  # Test writability by attempting to create a probe file.
+  if touch "$candidate/.write-probe" 2>/dev/null; then
+    rm -f "$candidate/.write-probe"
+    echo "$candidate"
+    return
+  fi
+
+  # Fallback: per-user tmp dir — always writable, survives reboots of the
+  # XDG runtime dir on long-lived preview VMs.
+  local fallback="${XDG_RUNTIME_DIR:-/tmp}/samograph-$(id -u)"
+  mkdir -p "$fallback"
+  echo "$fallback"
+}
+
+LOGDIR="$(_resolve_logdir)"
+
+# Remove a stale samograph.pid whose process is no longer alive so a restart
+# is never blocked by a file we can no longer write (Permission denied).
+_cleanup_stale_pid() {
+  local pidfile="$LOGDIR/samograph.pid"
+  [[ -f "$pidfile" ]] || return 0
+  local old_pid
+  old_pid="$(cat "$pidfile" 2>/dev/null || echo "")"
+  if [[ -z "$old_pid" ]] || ! kill -0 "$old_pid" 2>/dev/null; then
+    rm -f "$pidfile" 2>/dev/null || true
+  fi
+}
 
 log()  { printf '\033[0;36m[dev-local]\033[0m %s\n' "$*"; }
 warn() { printf '\033[0;33m[dev-local]\033[0m %s\n' "$*"; }
@@ -45,6 +93,10 @@ web_healthy()    { curl -fsS -o /dev/null "http://localhost:${WEB_PORT}/" 2>/dev
 live_healthy()   { curl -fsS -o /dev/null "http://localhost:${DEV_CTRL_PORT}/health" 2>/dev/null; }
 
 ensure_postgres() {
+  # SAMOGRAPH_DEV_LOCAL_DRY_RUN=1 skips real service starts (used by tests).
+  if [[ "${SAMOGRAPH_DEV_LOCAL_DRY_RUN:-}" == "1" ]]; then
+    log "[dry-run] skipping ensure_postgres"; return 0
+  fi
   if ! docker info >/dev/null 2>&1; then
     warn "Docker daemon not reachable. On macOS: open -a Docker, then re-run."
     exit 1
@@ -76,11 +128,17 @@ ensure_postgres() {
 }
 
 run_migrations() {
+  if [[ "${SAMOGRAPH_DEV_LOCAL_DRY_RUN:-}" == "1" ]]; then
+    log "[dry-run] skipping migrations"; return 0
+  fi
   log "running DB migrations (schema + RLS + samograph_app role)…"
   bun "$ROOT/packages/shared/db/migrate.ts"
 }
 
 start_api() {
+  if [[ "${SAMOGRAPH_DEV_LOCAL_DRY_RUN:-}" == "1" ]]; then
+    log "[dry-run] skipping start_api"; return 0
+  fi
   if api_healthy; then log "app-api already healthy on :$APP_API_PORT — skipping"; return 0; fi
   log "starting app-api (composed dev server) on :$APP_API_PORT"
   APP_API_PORT="$APP_API_PORT" WEB_ORIGIN="http://localhost:${WEB_PORT}" \
@@ -91,6 +149,9 @@ start_api() {
 }
 
 start_live() {
+  if [[ "${SAMOGRAPH_DEV_LOCAL_DRY_RUN:-}" == "1" ]]; then
+    log "[dry-run] skipping start_live"; return 0
+  fi
   if live_healthy; then log "live (ingest+ws-hub) already healthy on :$DEV_CTRL_PORT — skipping"; return 0; fi
   log "starting live transport (ingest :$INGEST_PORT + ws-hub :$WS_HUB_PORT, dev-ctrl :$DEV_CTRL_PORT)"
   WS_HUB_PORT="$WS_HUB_PORT" INGEST_PORT="$INGEST_PORT" DEV_CTRL_PORT="$DEV_CTRL_PORT" \
@@ -101,6 +162,9 @@ start_live() {
 }
 
 start_web() {
+  if [[ "${SAMOGRAPH_DEV_LOCAL_DRY_RUN:-}" == "1" ]]; then
+    log "[dry-run] skipping start_web"; return 0
+  fi
   if web_healthy; then log "web already serving on :$WEB_PORT — skipping"; return 0; fi
   log "starting web (next dev, under bun) on :$WEB_PORT"
   ( cd "$ROOT/apps/web" && APP_API_ORIGIN="$APP_API_ORIGIN" PORT="$WEB_PORT" \
@@ -115,6 +179,11 @@ kill_by_port() {
 }
 
 do_start() {
+  # Remove any stale master PID file before attempting to write a new one;
+  # prevents "Permission denied" when restarting after a root-owned first run.
+  _cleanup_stale_pid
+  # Write the master PID (this script's own PID) so stop/status can gate on it.
+  echo $$ > "$LOGDIR/samograph.pid"
   ensure_postgres
   run_migrations
   start_api
@@ -150,7 +219,7 @@ EOF
 
 do_stop() {
   log "stopping web + live + app-api"
-  for name in web live app-api; do
+  for name in web live app-api samograph; do
     if [ -f "$LOGDIR/$name.pid" ]; then
       kill "$(cat "$LOGDIR/$name.pid")" 2>/dev/null || true
       rm -f "$LOGDIR/$name.pid"
