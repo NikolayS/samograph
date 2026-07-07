@@ -8,6 +8,8 @@
 import { describe, it, expect } from "bun:test";
 import { createHash } from "node:crypto";
 import { createRecallFake, type RecallFake } from "../../packages/test-fakes/recall/index.ts";
+import { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
+import { inMemoryBotJoinMetrics } from "./botJoinMetrics.ts";
 import {
   BOT_NAME,
   DEFAULT_REGION,
@@ -364,5 +366,57 @@ describe("runJoinJob — join failure persists COULD_NOT_JOIN + reason (Story 4)
     );
     expect(outcome.status).toBe("JOINING");
     expect(order).toEqual(["recordIngestSecret", "markJoining"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §5.11 bot_join_total{result} producer (issue #107): the orchestrator emits the
+// terminal join-outcome counter EXACTLY once per call, and never leaks the key.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("runJoinJob — bot_join_total{could_not_join} producer (§5.11, issue #107)", () => {
+  const failingRecall = (message: string): RecallClient => ({
+    async createBot() {
+      throw new Error(message);
+    },
+  });
+
+  it("a failed join increments bot_join_total{could_not_join} EXACTLY once", async () => {
+    const { store } = memStore();
+    const metrics = inMemoryBotJoinMetrics();
+    await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall("507 out of capacity"), store, secrets: [], metrics },
+    );
+    expect(metrics.get("could_not_join")).toBe(1);
+    // Only the failure result moved — no phantom in_call / could_not_record.
+    expect(metrics.get("in_call")).toBe(0);
+    expect(metrics.get("could_not_record")).toBe(0);
+  });
+
+  it("a successful join does NOT touch bot_join_total (JOINING is not terminal)", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store } = memStore();
+    const metrics = inMemoryBotJoinMetrics();
+    const outcome = await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store, secrets: [], metrics },
+    );
+    expect(outcome.status).toBe("JOINING");
+    expect(metrics.get("could_not_join")).toBe(0);
+    expect(metrics.counts.size).toBe(0);
+  });
+
+  it("the shared MetricsRegistry is a drop-in producer and renders the incremented line", async () => {
+    const registry = new MetricsRegistry();
+    const { store } = memStore();
+    await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall("507 out of capacity"), store, secrets: [], metrics: registry },
+    );
+    expect(registry.get("bot_join_total", "could_not_join")).toBe(1);
+    // Exposition (§5.11): the /metrics endpoint now shows a non-zero series.
+    expect(registry.renderPrometheus()).toContain(
+      'bot_join_total{result="could_not_join"} 1',
+    );
   });
 });

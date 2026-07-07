@@ -26,6 +26,8 @@ import { createFakeBotStatusSource } from "../../packages/test-fakes/recall/inde
 import { InMemoryTranscriptPublisher } from "../../packages/shared/transcript/publisher.ts";
 import { DISCLOSURE_TEXT } from "../ingest/botLifecycle.ts";
 import type { BotActions } from "./recallBotActions.ts";
+import { inMemoryBotJoinMetrics } from "./botJoinMetrics.ts";
+import { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
 import {
   mapPolledCode,
   latestChange,
@@ -431,6 +433,84 @@ d("startStatusPoller persistence (issue #118: JOINING → IN_CALL → ENDED, for
     };
     expect(row.status_reason).toBe("recording_permission_denied_by_host");
     expect(row.ended_at).not.toBeNull();
+  });
+
+  // ── §5.11 bot_join_total{result} producer (issue #107) ────────────────────
+  // The poller is the ONLY producer of the `in_call` outcome (the orchestrator
+  // stops at JOINING). Emit EXACTLY once per call on the forward-only terminal
+  // transition; a repeat poll (same history) matches 0 rows → never double-counts.
+
+  it("the JOINING → IN_CALL transition increments bot_join_total{in_call} EXACTLY once, and repeated polls keep it at 1", async () => {
+    const callId = calls[0];
+    const bot = botFor(callId);
+    const source = createFakeBotStatusSource();
+    const metrics = inMemoryBotJoinMetrics();
+    const poller = startStatusPoller({
+      sql,
+      source,
+      actions: spyActions(),
+      metrics,
+      schedule: () => ({ stop() {} }),
+    });
+
+    source.push(bot, "in_call_recording");
+    await poller.tick();
+    expect(await statusOf(callId)).toBe("IN_CALL");
+    expect(metrics.get("in_call")).toBe(1);
+
+    // Same Recall history on the next two sweeps → forward-only UPDATE matches
+    // 0 rows → the counter must STAY at 1 (no double-count from duplicate polls).
+    await poller.tick();
+    await poller.tick();
+    expect(metrics.get("in_call")).toBe(1);
+    expect(metrics.get("could_not_join")).toBe(0);
+    expect(metrics.get("could_not_record")).toBe(0);
+  });
+
+  it("a fatal transition increments bot_join_total{could_not_join} once; permission-denied increments {could_not_record} once", async () => {
+    const fatalCall = calls[1];
+    const denyCall = calls[2];
+    const source = createFakeBotStatusSource();
+    const metrics = inMemoryBotJoinMetrics();
+    const poller = startStatusPoller({
+      sql,
+      source,
+      actions: spyActions(),
+      metrics,
+      schedule: () => ({ stop() {} }),
+    });
+
+    source.push(botFor(fatalCall), "fatal", { subCode: "meeting_not_found" });
+    source.push(botFor(denyCall), "recording_permission_denied", {
+      subCode: "recording_permission_denied_by_host",
+    });
+    await poller.tick();
+    expect(await statusOf(fatalCall)).toBe("COULD_NOT_JOIN");
+    expect(await statusOf(denyCall)).toBe("COULD_NOT_RECORD");
+    expect(metrics.get("could_not_join")).toBe(1);
+    expect(metrics.get("could_not_record")).toBe(1);
+
+    // Sticky terminal rows: another sweep with the same history changes nothing.
+    await poller.tick();
+    expect(metrics.get("could_not_join")).toBe(1);
+    expect(metrics.get("could_not_record")).toBe(1);
+  });
+
+  it("the shared MetricsRegistry is a drop-in producer and renders the incremented bot_join_total line", async () => {
+    const callId = calls[3];
+    const registry = new MetricsRegistry();
+    const source = createFakeBotStatusSource();
+    const poller = startStatusPoller({
+      sql,
+      source,
+      actions: spyActions(),
+      metrics: registry,
+      schedule: () => ({ stop() {} }),
+    });
+    source.push(botFor(callId), "in_call_recording");
+    await poller.tick();
+    expect(registry.get("bot_join_total", "in_call")).toBe(1);
+    expect(registry.renderPrometheus()).toContain('bot_join_total{result="in_call"} 1');
   });
 
   it("a failing bot lookup is isolated: other calls in the same sweep still advance", async () => {
