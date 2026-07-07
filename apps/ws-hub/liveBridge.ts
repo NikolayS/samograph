@@ -10,8 +10,9 @@
  *   POST /webhook → §5.3 front door → composed dispatch (pipeline + lifecycle)
  *     writes the row + publishes the §98 SIGNAL into a per-request buffer,
  *   ── the dedup tx COMMITS ──
- *   → the buffered `{ call_id, seq }` signals are handed to the {@link FanIn},
- *     which re-hydrates each line by seq UNDER RLS and `hub.publish`es it,
+ *   → the buffered signals are handed to the {@link FanIn}: a `{ call_id, seq }`
+ *     line is re-hydrated by seq UNDER RLS and `hub.publish`ed; a `{type:"status"}`
+ *     control frame (#106) is `hub.publishControl`ed verbatim,
  *   → FLUSH-ON-PUBLISH pushes it to every subscribed WS connection live.
  *
  * Delivering AFTER commit (not inside the tx) is the in-process analog of

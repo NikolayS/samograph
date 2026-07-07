@@ -37,8 +37,19 @@ export interface GapFrame {
   until_seq: number;
 }
 
+/**
+ * A published control frame forwarded verbatim on a call's channel (#106) —
+ * e.g. the poller/lifecycle `{type:"status"}` change. Control frames have no
+ * `seq`, do NOT count toward the data caps, and are never dropped on overflow
+ * (they are rare, small, and bounded — one per real status transition).
+ */
+export interface ControlFrame {
+  type: string;
+  [key: string]: unknown;
+}
+
 /** Anything a subscriber can pull off its outbound queue. */
-export type OutboundFrame = DataFrame | GapFrame;
+export type OutboundFrame = DataFrame | GapFrame | ControlFrame;
 
 /** Outbound queue message cap (§5.5). */
 export const MAX_QUEUE_MESSAGES = 256;
@@ -52,10 +63,11 @@ export function frameBytes(frame: DataFrame): number {
   return ENCODER.encode(JSON.stringify(frame)).length;
 }
 
-/** Internal queue entry: a data frame (with cached size) or the gap control frame. */
+/** Internal queue entry: a data frame (with cached size), the gap, or a control frame. */
 type DataEntry = { kind: "data"; frame: DataFrame; bytes: number };
 type GapEntry = { kind: "gap"; frame: GapFrame };
-type Entry = DataEntry | GapEntry;
+type CtlEntry = { kind: "ctl"; frame: ControlFrame };
+type Entry = DataEntry | GapEntry | CtlEntry;
 
 /**
  * A single subscriber's bounded outbound queue. Pull frames with `next()` /
@@ -119,6 +131,7 @@ export class Subscriber {
       this.gap = null; // episode closed once the gap is delivered
       return entry.frame;
     }
+    if (entry.kind === "ctl") return entry.frame; // outside the data caps (#106)
     this.dataCount--;
     this.dataBytes -= entry.bytes;
     return entry.frame;
@@ -158,10 +171,20 @@ export class Subscriber {
     return dropped;
   }
 
+  /**
+   * Enqueue a control frame (#106): forwarded verbatim, never counted toward
+   * the data caps, never dropped. Internal: driven by `Hub.publishControl`.
+   */
+  _enqueueControl(frame: ControlFrame): void {
+    this.out.push({ kind: "ctl", frame });
+    this.ops++;
+  }
+
   /** Drop the oldest data frame and fold its seq into the head gap. */
   private dropOldest(): void {
-    // When a gap is pending it occupies index 0, so the oldest data is index 1.
-    const idx = this.gap ? 1 : 0;
+    // The oldest DATA entry: a pending gap sits at the head and control frames
+    // (#106) may be interleaved anywhere — neither is ever dropped.
+    const idx = this.out.findIndex((e) => e.kind === "data");
     const removed = this.out[idx] as DataEntry;
     this.out.splice(idx, 1);
     this.dataCount--;
@@ -226,6 +249,26 @@ export class Hub {
       }
       // Flush-on-publish: push the just-queued frame(s) to the connection's socket
       // (#99). A throwing/closed socket must not stall fan-out to other subscribers.
+      if (sub.onEnqueue) {
+        try {
+          sub.onEnqueue();
+        } catch {
+          /* a slow/closed socket never blocks the others in the channel (§5.5) */
+        }
+      }
+    }
+  }
+
+  /**
+   * Fan a CONTROL frame (#106 — e.g. `{type:"status"}`) out to every subscriber
+   * on `callId`, verbatim and outside the data caps. Same flush-on-publish
+   * contract as {@link publish}: a throwing socket never stalls the channel.
+   */
+  publishControl(callId: string, frame: ControlFrame): void {
+    const subs = this.channels.get(callId);
+    if (!subs) return;
+    for (const sub of subs) {
+      sub._enqueueControl(frame);
       if (sub.onEnqueue) {
         try {
           sub.onEnqueue();
