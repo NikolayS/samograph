@@ -30,7 +30,7 @@ import {
   type PrepareStreamResult,
   type StreamConnection,
 } from "./stream.ts";
-import { createTranscriptHandler } from "./transcript-http.ts";
+import { createTranscriptHandler, createTranscriptTextHandler } from "./transcript-http.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { stopServerBounded } from "../../packages/shared/serverLifecycle.ts";
 
@@ -70,6 +70,7 @@ export interface WsHubServerHandle {
 
 const STREAM_PATH = /^\/calls\/([^/]+)\/stream$/;
 const TRANSCRIPT_PATH = /^\/calls\/([^/]+)\/transcript$/;
+const TRANSCRIPT_TXT_PATH = /^\/calls\/([^/]+)\/transcript\.txt$/;
 
 /** Start the ws-hub HTTP+WS server. Returns the live server + its shared Hub. */
 export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
@@ -85,6 +86,11 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
     sessionCookieName: cookieName,
     backfillLimit: deps.backfillLimit,
   });
+  const transcriptTextHandler = createTranscriptTextHandler({
+    sql: deps.sql,
+    authDeps,
+    sessionCookieName: cookieName,
+  });
 
   const server = Bun.serve<StreamSocketData>({
     port: deps.port ?? 0,
@@ -97,6 +103,8 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
     async fetch(req, srv): Promise<Response | undefined> {
       const url = new URL(req.url);
       if (url.pathname === "/health") return new Response("ok", { status: 200 });
+      // The `.txt` download must be matched BEFORE the JSON `/transcript` route.
+      if (TRANSCRIPT_TXT_PATH.test(url.pathname)) return transcriptTextHandler(req);
       if (TRANSCRIPT_PATH.test(url.pathname)) return transcriptHandler(req);
 
       if (STREAM_PATH.test(url.pathname)) {

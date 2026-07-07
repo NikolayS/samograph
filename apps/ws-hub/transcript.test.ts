@@ -23,7 +23,11 @@ import type { Session } from "../../packages/shared/auth/index.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { Hub, type GapFrame } from "./hub.ts";
 import { replayTranscripts, backfillRecent, type TranscriptLine } from "./transcript.ts";
-import { createTranscriptHandler, type TranscriptResponseBody } from "./transcript-http.ts";
+import {
+  createTranscriptHandler,
+  createTranscriptTextHandler,
+  type TranscriptResponseBody,
+} from "./transcript-http.ts";
 import type { StreamAuthDeps } from "./stream.ts";
 
 const HAVE_DB = !!process.env.DATABASE_URL;
@@ -45,6 +49,7 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
   const tenantB = randomUUID();
   const callA = randomUUID(); // tenant A, seeded with seq 1..100
   const callB = randomUUID(); // tenant B, no transcripts
+  const callTxt = randomUUID(); // tenant A, fixed-ts rows for the .txt download
 
   const sessions = new Map<string, Session>([
     ["cookie-A", { userId: userA, tenantId: tenantA }],
@@ -85,6 +90,24 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
     return new Request(u.toString(), { headers });
   }
 
+  function transcriptTxtReq(
+    callId: string,
+    opts: { cookie?: string; token?: string } = {},
+  ): Request {
+    const u = new URL(`http://ws-hub.local/calls/${callId}/transcript.txt`);
+    if (opts.token) u.searchParams.set("token", opts.token);
+    const headers: Record<string, string> = {};
+    if (opts.cookie) headers.cookie = `${SESSION_COOKIE_NAME}=${opts.cookie}`;
+    return new Request(u.toString(), { headers });
+  }
+
+  // The EXACT bytes the .txt download must emit for `callTxt` (CLI framing,
+  // ISO→space ts, null speaker → "?", one line + "\n" each). SPEC §5.4.
+  const EXPECTED_TXT =
+    "[2026-01-01 00:00:01] Alice: hello world\n" +
+    "[2026-01-01 00:00:02] Bob: hi there\n" +
+    "[2026-01-01 00:00:03] ?: no speaker line\n";
+
   beforeAll(async () => {
     sql = connect();
     await migrate(sql);
@@ -94,11 +117,17 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
       (${tenantA}, ${userA}), (${tenantB}, ${userB})`;
     await sql`INSERT INTO calls (id, tenant_id, meeting_url, status) VALUES
       (${callA}, ${tenantA}, 'https://meet.google.com/aaa', 'IN_CALL'),
-      (${callB}, ${tenantB}, 'https://meet.google.com/bbb', 'IN_CALL')`;
+      (${callB}, ${tenantB}, 'https://meet.google.com/bbb', 'IN_CALL'),
+      (${callTxt}, ${tenantA}, 'https://meet.google.com/txt', 'IN_CALL')`;
     await sql`
       INSERT INTO transcripts (call_id, seq, ts, speaker, text)
       SELECT ${callA}, g, now() - (interval '1 second' * (100 - g)), 'Speaker ' || g, 'line ' || g
       FROM generate_series(1, 100) AS g`;
+    // Fixed instants so the rendered download is byte-exact and deterministic.
+    await sql`INSERT INTO transcripts (call_id, seq, ts, speaker, text) VALUES
+      (${callTxt}, 1, '2026-01-01T00:00:01Z', 'Alice', 'hello world'),
+      (${callTxt}, 2, '2026-01-01T00:00:02Z', 'Bob', 'hi there'),
+      (${callTxt}, 3, '2026-01-01T00:00:03Z', NULL, 'no speaker line')`;
   });
 
   afterAll(async () => {
@@ -197,5 +226,50 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
       .filter((l: TranscriptLine) => l.seq >= gap.since_seq && l.seq <= gap.until_seq)
       .map((l: TranscriptLine) => l.seq);
     expect(recovered).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]); // exactly the dropped range, contiguous
+  });
+
+  // ── GET /calls/:id/transcript.txt — the downloadable transcript (Story 3) ──
+  it("GET …/transcript.txt with an own-tenant session → 200 exact CLI-format text", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callTxt, { cookie: "cookie-A" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(res.headers.get("content-disposition")).toBe(
+      `attachment; filename="transcript-${callTxt}.txt"`,
+    );
+    expect(await res.text()).toBe(EXPECTED_TXT);
+  });
+
+  it("GET …/transcript.txt with a valid share token → 200 same exact bytes (scope `share`)", async () => {
+    const { token } = await mintShareToken(sql, {
+      callId: callTxt,
+      signingKey: KEY_CURRENT,
+      ttlSeconds: 3600,
+    });
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callTxt, { token }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(EXPECTED_TXT);
+  });
+
+  it("GET …/transcript.txt for a call with no transcript → 200 empty body", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callB, { cookie: "cookie-B" }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+  });
+
+  it("GET …/transcript.txt with no credential → bodyless 403 (gate DENY)", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callTxt));
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe("");
+  });
+
+  it("GET …/transcript.txt cross-tenant session → 403, never leaks tenant A's text", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callTxt, { cookie: "cookie-B" }));
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe("");
   });
 });

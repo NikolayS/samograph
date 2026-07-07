@@ -88,6 +88,20 @@ async function throwTyped(res: Response, fallbackCode: string): Promise<never> {
   throw new AppApiError(code, message, retryable, res.status);
 }
 
+/**
+ * Build the `GET /calls/:id/transcript.txt` DOWNLOAD URL (Story 3). Same-origin
+ * by default (`baseUrl=""`); Caddy routes `/calls/:id/transcript*` to ws-hub. In
+ * share mode the persisted `share` token rides as `?token=` so an anonymous
+ * viewer can download exactly what they can read (§5.7).
+ */
+export function transcriptDownloadHref(
+  callId: string,
+  auth: StreamAuth,
+  baseUrl = "",
+): string {
+  return `${baseUrl}/calls/${encodeURIComponent(callId)}/transcript.txt${queryFor(auth)}`;
+}
+
 /** Append the auth/replay query a request needs (share token, `?since_seq`). */
 function queryFor(auth: StreamAuth, sinceSeq?: number): string {
   const params = new URLSearchParams();
