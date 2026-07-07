@@ -343,8 +343,8 @@ d("startStatusPoller persistence (issue #118: JOINING → IN_CALL → ENDED, for
   });
 
   beforeEach(async () => {
-    await sql`UPDATE calls SET status = 'JOINING', ended_at = NULL, status_reason = NULL
-      WHERE tenant_id = ${tenantA}`;
+    await sql`UPDATE calls SET status = 'JOINING', ended_at = NULL, status_reason = NULL,
+      disclosure_posted_at = NULL WHERE tenant_id = ${tenantA}`;
   });
 
   const statusOf = async (callId: string) =>
@@ -470,16 +470,17 @@ d("startStatusPoller persistence (issue #118: JOINING → IN_CALL → ENDED, for
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Persistence — §5.9 disclosure chat + live status frames (#106/#117).
-// The transition itself is the idempotency guard: the forward-only conditional
-// UPDATE applies exactly once, and the disclosure/leave/audit/NOTIFY ride the
-// SAME transaction, so a repeat poll (changed=false) can never re-fire them and
-// a failed side effect rolls the transition back for a clean retry.
+// The status flip / leave / status-frame ride ONE forward-only tx (a repeat poll
+// matches zero rows). The recording disclosure is the exception: a non-idempotent
+// external POST, sent OUTSIDE the tx and guarded by the durable
+// `disclosure_posted_at` marker, so a post-send rollback never re-posts it every
+// sweep, and a live IN_CALL row can never be regressed to COULD_NOT_RECORD.
 // ─────────────────────────────────────────────────────────────────────────────
 d("statusPoller §5.9 disclosure + live status publish (#106/#117)", () => {
   let sql: ReturnType<typeof connect>;
   const userA = randomUUID();
   const tenantA = randomUUID();
-  const calls = Array.from({ length: 5 }, () => randomUUID());
+  const calls = Array.from({ length: 6 }, () => randomUUID());
   const botFor = (callId: string) => `bot_${callId.slice(0, 8)}`;
 
   // Deterministic wall clock for the in_call_not_recording grace (§5.9).
@@ -614,23 +615,47 @@ d("statusPoller §5.9 disclosure + live status publish (#106/#117)", () => {
     expect(actions.leaves).toEqual([]);
   });
 
-  it("a failed disclosure post rolls back the transition — clean retry, still exactly one chat", async () => {
+  it("a failed disclosure post does NOT roll back the committed IN_CALL status; it retries independently, exactly one chat", async () => {
     const callId = calls[4];
     const bot = botFor(callId);
     const { poller, source, actions, publisher } = newPoller();
 
     source.push(bot, "in_call_recording");
     actions.failNextChat = new Error("recall 500");
-    await poller.tick(); // chat throws → the whole transition rolls back
+    await poller.tick(); // status flip COMMITS; the disclosure send (outside the tx) throws
 
-    expect(await statusOf(callId)).toBe("JOINING");
-    expect(publisher.framesFor(callId)).toEqual([]);
-    expect(await auditCount(callId, "call.disclosure")).toBe(0);
-    expect(await auditCount(callId, "call.status.IN_CALL")).toBe(0);
-
-    await poller.tick(); // Recall history unchanged → retried, now succeeds
+    // The status is durable — a flaky disclosure never regresses the call to JOINING.
     expect(await statusOf(callId)).toBe("IN_CALL");
+    expect(publisher.framesFor(callId)).toEqual([
+      { type: "status", call_id: callId, status: "IN_CALL" },
+    ]);
+    expect(await auditCount(callId, "call.status.IN_CALL")).toBe(1);
+    expect(await auditCount(callId, "call.disclosure")).toBe(0); // not sent yet
+
+    await poller.tick(); // marker still unset → the disclosure retries and succeeds
     expect(actions.chats).toEqual([{ botId: bot, message: DISCLOSURE_TEXT }]);
     expect(await auditCount(callId, "call.disclosure")).toBe(1);
+    expect(await auditCount(callId, "call.status.IN_CALL")).toBe(1); // status flipped only once
+  });
+
+  it("an aged in_call_not_recording NEVER regresses a live IN_CALL call to COULD_NOT_RECORD or ejects the bot (gate regression fix)", async () => {
+    const callId = calls[5];
+    const bot = botFor(callId);
+    await sql`UPDATE calls SET status = 'IN_CALL' WHERE id = ${callId}`;
+    const { poller, source, actions, publisher } = newPoller();
+
+    // Recording stopped mid-call: Recall re-reports in_call_not_recording, aged past the grace.
+    source.set(bot, [
+      { code: "in_call_not_recording", sub_code: null, created_at: iso(NOW - 60_000) },
+    ]);
+    await poller.tick();
+
+    expect(await statusOf(callId)).toBe("IN_CALL"); // untouched — recording DID start
+    expect(actions.leaves).toEqual([]); // bot NOT kicked out of the live call
+    expect(publisher.framesFor(callId)).toEqual([]); // no bogus COULD_NOT_RECORD frame
+    const row = (await sql`SELECT ended_at FROM calls WHERE id = ${callId}`)[0] as {
+      ended_at: Date | null;
+    };
+    expect(row.ended_at).toBeNull(); // not terminated
   });
 });
