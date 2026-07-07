@@ -42,6 +42,21 @@ const nextConfig = {
               },
               { source: "/calls", destination: `${apiOrigin}/calls` },
               {
+                // ShareModal's mint/get/revoke fetches (§5.7, Story 2). Client
+                // `fetch` only (dest `empty`) — there is no /calls/:id/share
+                // page, but the gate keeps a stray document navigation out of
+                // the API, same as /calls/:id below.
+                source: "/calls/:id/share",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/calls/:id/share`,
+              },
+              {
+                // ShareModal's rotate fetch — new token, old one revoked (§5.7).
+                source: "/calls/:id/share/rotate",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/calls/:id/share/rotate`,
+              },
+              {
                 // Only the client's fetchCallDetail (dest `empty`), NOT the page
                 // navigation (dest `document`) — same collision as /auth/callback
                 // above. Without this, opening /calls/:id in the browser is proxied

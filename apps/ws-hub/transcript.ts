@@ -70,6 +70,24 @@ export async function replayTranscripts(
 }
 
 /**
+ * The WHOLE finalized transcript of a call, ascending by `seq` — every line,
+ * no window (Story 3: the downloadable transcript is the full call, not the
+ * ~200-line backfill tail). RLS-scoped like the other reads: a foreign call
+ * returns nothing. Runs after the tenancy gate has set `app.tenant_id`.
+ */
+export async function fetchFullTranscript(
+  tx: SQL,
+  callId: string,
+): Promise<TranscriptLine[]> {
+  const rows = (await tx`
+    SELECT seq, ts, speaker, text
+    FROM transcripts
+    WHERE call_id = ${callId}
+    ORDER BY seq ASC`) as unknown as TranscriptRow[];
+  return rows.map(mapRow);
+}
+
+/**
  * The last `limit` finalized lines of a call, returned ASCENDING (oldest first)
  * so they can be streamed in delivery order before live frames resume. Reads the
  * newest `limit` by `seq DESC` then re-sorts ascending. RLS-scoped.

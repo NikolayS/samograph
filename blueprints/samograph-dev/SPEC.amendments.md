@@ -342,6 +342,14 @@ The inline warning *line* doesn't appear in the live stream until reload.
 guarantee is preserved by the banner. Live control-frame forwarding tracked as
 **#106**.
 
+**Update (#106, partial):** `{type:"status"}` control frames ARE now
+live-forwarded — the fan-in publishes them onto the Hub's control lane
+(outside the data caps) and the stream serializes the client's
+`{type:"status", status}` event, so the per-call page reflects status changes
+(ingest lifecycle AND the #118 status poller, which NOTIFYs the same
+`{k:"ctl",frame}` signal on `transcript:<call_id>`) without a reload. The
+inline `SAMOGRAPH-WARNING` line + `degraded` live lanes remain the deviation.
+
 ---
 
 ### S2-7. §3 Story 2 / §5.7 — share viewers pass `callId={shareToken}`; the Hub resolves the call from the token — *Clarification*

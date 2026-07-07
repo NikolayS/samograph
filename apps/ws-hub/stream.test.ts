@@ -253,6 +253,60 @@ describe("StreamConnection backfill-then-live (no DB)", () => {
   });
 });
 
+describe("StreamConnection status control frames (#106, no DB)", () => {
+  function setup() {
+    const hub = new Hub();
+    const subscriber = hub.subscribe("call-1");
+    const socket = new FakeSocket();
+    const conn = new StreamConnection({
+      socket,
+      hub,
+      callId: "call-1",
+      scope: "read",
+      subscriber,
+      initialSeq: 0,
+      reauthorize: async () => true,
+    });
+    return { hub, socket, conn };
+  }
+
+  it("forwards a status control frame as the client's {type:'status'} event", () => {
+    const { hub, socket, conn } = setup();
+    hub.publishControl("call-1", { type: "status", call_id: "call-1", status: "IN_CALL" });
+    conn.flush();
+    // Exactly the reducer's wire shape — no call_id leak, no seq.
+    expect(socket.frames()).toEqual([{ type: "status", status: "IN_CALL" }]);
+  });
+
+  it("interleaves with lines in publish order and never disturbs the seq dedupe boundary", () => {
+    const { hub, socket, conn } = setup();
+    conn.sendBackfill([line(1)]);
+    hub.publish("call-1", liveFrame(2));
+    hub.publishControl("call-1", { type: "status", call_id: "call-1", status: "ENDED" });
+    hub.publish("call-1", liveFrame(3));
+    conn.flush();
+    expect(socket.frames().map((f) => f.type)).toEqual(["line", "line", "status", "line"]);
+    expect(socket.lineSeqs()).toEqual([1, 2, 3]);
+    expect(conn.highWaterSeq()).toBe(3);
+  });
+
+  it("is pushed live by flush-on-publish (#99) without a manual flush", () => {
+    const { hub, socket, conn } = setup();
+    conn.flush();
+    conn.enableAutoFlush();
+    hub.publishControl("call-1", { type: "status", call_id: "call-1", status: "COULD_NOT_RECORD" });
+    expect(socket.frames()).toEqual([{ type: "status", status: "COULD_NOT_RECORD" }]);
+  });
+
+  it("drops a malformed status frame (no string status) and unknown control types", () => {
+    const { hub, socket, conn } = setup();
+    hub.publishControl("call-1", { type: "status", call_id: "call-1" }); // no status
+    hub.publishControl("call-1", { type: "warning", call_id: "call-1", text: "x" }); // follow-up lane
+    conn.flush();
+    expect(socket.sent).toEqual([]);
+  });
+});
+
 describe("StreamConnection share caps wiring (no DB)", () => {
   function shareConn(caps: ShareCaps, capKey: string | undefined, scope: "read" | "share") {
     const hub = new Hub();

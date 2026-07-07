@@ -56,10 +56,17 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
   readonly connects: RecordedConnect[] = [];
   /** The wire query (`since_seq`, `token`) a real client would build per connect. */
   readonly streamQueries: Array<Record<string, string>> = [];
-  /** Every REST request, in order (path + method). */
-  readonly requests: Array<{ path: string; method: "GET"; callId: string }> = [];
+  /** Every REST request, in order (path + method + the wire query it carries). */
+  readonly requests: Array<{
+    path: string;
+    method: "GET";
+    callId: string;
+    query: Record<string, string>;
+  }> = [];
 
   private readonly options: FakeTranscriptStreamClientOptions;
+  /** Current `fetchCallDetail` response; `setCallDetail` mutates it mid-test. */
+  private currentDetail: CallDetail | undefined;
   /** Open subscribers; a handle's `close()` flips its entry's `open` to false. */
   private readonly subscribers: Array<{
     onEvent: StreamEventHandler;
@@ -68,6 +75,16 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
 
   constructor(options: FakeTranscriptStreamClientOptions = {}) {
     this.options = options;
+    this.currentDetail = options.callDetail;
+  }
+
+  /**
+   * Driver: change what `fetchCallDetail` serves from now on — models the
+   * server-side status poller flipping `calls.status` (JOINING → IN_CALL →
+   * ENDED) in another process, with NO WS frame reaching this page.
+   */
+  setCallDetail(detail: CallDetail): void {
+    this.currentDetail = detail;
   }
 
   connect(params: ConnectParams, onEvent: StreamEventHandler): StreamHandle {
@@ -139,11 +156,20 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
     for (const release of held) release();
   }
 
+  /** The wire query a real REST client would append (§5.7 share token). */
+  private static restQuery(auth: StreamAuth, sinceSeq?: number): Record<string, string> {
+    const query: Record<string, string> = {};
+    if (sinceSeq !== undefined) query.since_seq = String(sinceSeq);
+    if (auth.kind === "share") query.token = auth.token;
+    return query;
+  }
+
   async fetchCallDetail(ref: CallRef): Promise<CallDetail> {
     this.requests.push({
       path: `/calls/${ref.callId}`,
       method: "GET",
       callId: ref.callId,
+      query: FakeTranscriptStreamClient.restQuery(ref.auth),
     });
     if (this.options.holdDetail) {
       await new Promise<void>((resolve) => this.heldDetails.push(resolve));
@@ -153,7 +179,7 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
       throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
     }
     return (
-      this.options.callDetail ?? { id: ref.callId, status: "IN_CALL", degraded: false }
+      this.currentDetail ?? { id: ref.callId, status: "IN_CALL", degraded: false }
     );
   }
 
@@ -162,6 +188,7 @@ export class FakeTranscriptStreamClient implements TranscriptStreamClient {
       path: `/calls/${ref.callId}/transcript`,
       method: "GET",
       callId: ref.callId,
+      query: FakeTranscriptStreamClient.restQuery(ref.auth, sinceSeq),
     });
     const fail = this.options.failBackfillWith;
     if (fail) {

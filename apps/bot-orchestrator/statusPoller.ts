@@ -22,6 +22,29 @@
  *   - a terminal transition stamps `ended_at` and (for fatal) persists the
  *     Recall `sub_code` reason, mirroring the #79 lifecycle handler's UPDATE.
  *
+ * A transition that APPLIES additionally (all riding the SAME transaction as
+ * the conditional UPDATE, mirroring the #79 lifecycle handler):
+ *
+ *   - is audited (`audit_log`, actor `system`, sha of the polled entry);
+ *   - on `in_call_recording`: posts the §5.9 recording disclosure chat via the
+ *     real-Recall {@link BotActions} and audits it (actor `bot`) — a
+ *     NON-idempotent external POST, so it runs OUTSIDE the status-flip tx,
+ *     guarded by the durable `calls.disclosure_posted_at` marker (send-then-
+ *     stamp): sent at most once, retried only while unsent, never rolling back
+ *     the already-committed IN_CALL status (COULD_NOT_RECORD can never regress
+ *     a live IN_CALL row — §5.9);
+ *   - on an `in_call_not_recording` that outlived {@link NOT_RECORDING_GRACE_MS}
+ *     (i.e. recording never started): posts NOTHING (a "recording" disclosure
+ *     would be factually wrong, §5.9), transitions to COULD_NOT_RECORD, and
+ *     makes the bot LEAVE cleanly; a fresh `in_call_not_recording` is the
+ *     normal transient pre-recording hop and stays JOINING;
+ *   - publishes a `{type:"status"}` control frame on the SAME per-call
+ *     `TranscriptPublisher` channel the transcript path uses (§5.5 / #98 —
+ *     `pg_notify('transcript:<call_id>', '{"k":"ctl","frame":…}')` in prod), so
+ *     the ws-hub fan-in forwards it to the call's open WS subscribers and the
+ *     per-call page updates live without a reload (#106). Inside the tx the
+ *     NOTIFY is commit-gated: a rolled-back transition publishes nothing.
+ *
  * This is an INFRA sweep (like the bot-orchestrator's own `UPDATE calls` and the
  * #81 tunnel watchdog): it crosses tenants, so it runs on a privileged
  * connection that bypasses RLS — NEVER under a tenant role. The conditional
@@ -33,6 +56,13 @@
 import type { SQL } from "bun";
 import { RECALL_BASE } from "../../src/config.ts";
 import type { FetchFn } from "../../src/recall.ts";
+import { sha256Hex } from "../../packages/shared/crypto.ts";
+import type {
+  TranscriptControlFrame,
+  TranscriptPublisher,
+} from "../../packages/shared/transcript/publisher.ts";
+import { DISCLOSURE_TEXT } from "../ingest/botLifecycle.ts";
+import type { BotActions } from "./recallBotActions.ts";
 
 /** The `calls.status` enum values (§5.2). */
 export type PolledCallStatus =
@@ -71,9 +101,11 @@ export const STATUS_POLL_INTERVAL_MS = 10_000;
  * the single source of truth the poller and its table-driven tests share.
  *
  * NOTE this is the POLLED-history mapping (issue #118), not the #79 webhook
- * event mapping: here `in_call_not_recording` is a transient pre-recording hop
- * (→ JOINING) and the explicit `recording_permission_denied` code carries the
- * §5.9 COULD_NOT_RECORD outcome.
+ * event mapping: here `in_call_not_recording` is (initially) a transient
+ * pre-recording hop (→ JOINING) — {@link resolvePolledTransition} escalates it
+ * to the §5.9 COULD_NOT_RECORD + clean-leave outcome once it outlives
+ * {@link NOT_RECORDING_GRACE_MS} — and the explicit `recording_permission_denied`
+ * code carries the immediate COULD_NOT_RECORD outcome.
  */
 export function mapPolledCode(code: string): PolledCallStatus | null {
   switch (code) {
@@ -110,6 +142,53 @@ export function latestChange(changes: StatusChange[]): StatusChange | null {
     }
   }
   return latest;
+}
+
+/**
+ * How long `in_call_not_recording` may persist as the LATEST polled status
+ * before it means "recording never started" (§5.9 → COULD_NOT_RECORD + leave).
+ * On a healthy call the hop lasts seconds before `in_call_recording` follows;
+ * 30 s (three sweeps) cleanly separates the hop from a genuinely blocked
+ * recording without ever killing a call that was about to record.
+ */
+export const NOT_RECORDING_GRACE_MS = 30_000;
+
+/** One polled transition + its §5.9 side effects (the poller's #79 analog). */
+export interface PolledTransition {
+  /** Target `calls.status`. */
+  status: PolledCallStatus;
+  /** Post the §5.9 disclosure once on the first pickup (only `in_call_recording`). */
+  postDisclosure: boolean;
+  /** Make the bot leave cleanly (only an aged `in_call_not_recording`, §5.9). */
+  leave: boolean;
+}
+
+/**
+ * Resolve the latest polled entry into a transition + side effects. Pure — the
+ * single source of truth `tick()` and the table-driven tests share:
+ *
+ *   - `in_call_recording` → IN_CALL, posting the §5.9 disclosure;
+ *   - `in_call_not_recording` younger than {@link NOT_RECORDING_GRACE_MS} (or
+ *     with a missing/malformed `created_at` — never destroy a call on bad
+ *     data) → the transient JOINING hop, NO side effects;
+ *   - `in_call_not_recording` at/past the grace → COULD_NOT_RECORD + clean
+ *     leave, NO disclosure (§5.9 — claiming "recording" would be wrong);
+ *   - every other code → {@link mapPolledCode} with no side effects.
+ */
+export function resolvePolledTransition(
+  latest: StatusChange,
+  nowMs: number,
+): PolledTransition | null {
+  if (latest.code === "in_call_not_recording") {
+    const createdMs = latest.created_at ? Date.parse(latest.created_at) : Number.NaN;
+    const aged = Number.isFinite(createdMs) && nowMs - createdMs >= NOT_RECORDING_GRACE_MS;
+    return aged
+      ? { status: "COULD_NOT_RECORD", postDisclosure: false, leave: true }
+      : { status: "JOINING", postDisclosure: false, leave: false };
+  }
+  const status = mapPolledCode(latest.code);
+  if (!status) return null;
+  return { status, postDisclosure: latest.code === "in_call_recording", leave: false };
 }
 
 /** Injectable seams for {@link liveBotStatusSource} (recallClient.ts pattern). */
@@ -172,6 +251,20 @@ export interface StatusPollerDeps {
   sql: SQL;
   /** The polled status channel (fake in tests; {@link liveBotStatusSource} live). */
   source: BotStatusSource;
+  /**
+   * Bot act channel for the §5.9 side effects (disclosure chat / clean leave):
+   * a spy in tests; `liveRecallBotActions()` (the real Recall API) in prod.
+   */
+  actions: BotActions;
+  /**
+   * Per-call fan-out seam for the live `{type:"status"}` frame (#106): the
+   * `PgListenNotifyPublisher` in prod (same NOTIFY channel/payload as the
+   * transcript path), an in-memory fake in tests. Omitted ⇒ no live push
+   * (status still lands in Postgres and shows on reload).
+   */
+  publisher?: TranscriptPublisher;
+  /** Wall clock (ms) for the `in_call_not_recording` grace; injectable in tests. */
+  clock?: () => number;
   /** Sweep interval (defaults to {@link STATUS_POLL_INTERVAL_MS}). */
   intervalMs?: number;
   /** Scheduler seam (defaults to an unref'd `setInterval`); tests drive `tick()`. */
@@ -204,8 +297,13 @@ async function applyForward(
   target: PolledCallStatus,
   subCode: string | null,
 ): Promise<boolean> {
-  const from = NON_TERMINAL.filter((s) => RANK[s] < RANK[target]);
-  if (from.length === 0) return false; // target is PENDING — nothing is below it
+  let from = NON_TERMINAL.filter((s) => RANK[s] < RANK[target]);
+  // COULD_NOT_RECORD means recording NEVER started (§5.9): it must never regress a
+  // live IN_CALL call (recording DID start) to a terminal "couldn't record" and
+  // eject the bot — only a pre-recording PENDING/JOINING row may escalate.
+  // (samorev gate: destructive IN_CALL→COULD_NOT_RECORD regression.)
+  if (target === "COULD_NOT_RECORD") from = from.filter((s) => s !== "IN_CALL");
+  if (from.length === 0) return false; // nothing below the target is eligible
 
   if (RANK[target] >= 3) {
     // Terminal: stamp ended_at; a FAILURE's sub_code becomes the §5.16 reason
@@ -231,29 +329,136 @@ async function applyForward(
   return rows.length > 0;
 }
 
+/** One sweep row: a non-terminal call and its bot + owning tenant. */
+interface SweepRow {
+  id: string;
+  tenant_id: string;
+  recall_bot_id: string;
+}
+
+/** Append one `audit_log` row (privileged infra write — the #79 audit shape). */
+async function audit(
+  tx: SQL,
+  tenantId: string,
+  callId: string,
+  actor: string,
+  action: string,
+  payloadSha256: string | null,
+): Promise<void> {
+  await tx`
+    INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
+    VALUES (${tenantId}, ${callId}, ${actor}, ${action}, ${payloadSha256})`;
+}
+
 /**
  * Start the status-poller sweep (issue #118). Modeled on the #81 watchdog
  * scheduler: bounded, injectable interval/schedule, `tick()` as the testable
  * unit, `stop()` to halt. Each tick SELECTs the non-terminal calls that have a
- * `recall_bot_id`, polls each bot's status, and applies the mapped transition;
- * one bot's failed lookup is logged and skipped, never aborting the sweep.
+ * `recall_bot_id`, polls each bot's status, and applies the resolved transition
+ * with its §5.9 side effects + live status publish in ONE transaction; one
+ * bot's failed lookup (or failed apply) is logged and skipped, never aborting
+ * the sweep.
  */
 export function startStatusPoller(deps: StatusPollerDeps): StatusPollerHandle {
-  const { sql, source } = deps;
+  const { sql, source, actions } = deps;
+  const clock = deps.clock ?? Date.now;
   let inFlight = false;
+
+  /**
+   * Apply one resolved transition. The status flip, its audit, the clean leave,
+   * and the live status frame ride ONE transaction gated on `changed` (the
+   * forward-only UPDATE is the persisted idempotency guard: a repeat poll matches
+   * zero rows). The `pg_notify` is commit-gated and published LAST so an
+   * in-memory test publisher only records committed changes.
+   *
+   * The §5.9 recording disclosure is the exception: it is a NON-idempotent
+   * external POST, so it does NOT ride this tx (a post-send rollback would
+   * re-post it every sweep — the samorev-gate finding). It runs OUTSIDE the tx,
+   * driven by the durable `disclosure_posted_at` marker (see
+   * {@link postDisclosureOnce}).
+   */
+  async function applyResolved(row: SweepRow, transition: PolledTransition, latest: StatusChange) {
+    await sql.begin(async (tx) => {
+      const exec = tx as unknown as SQL;
+      const changed = await applyForward(exec, row.id, transition.status, latest.sub_code ?? null);
+      if (!changed) return;
+
+      await audit(
+        exec,
+        row.tenant_id,
+        row.id,
+        "system",
+        `call.status.${transition.status}`,
+        sha256Hex(JSON.stringify(latest)),
+      );
+
+      // The clean leave (§5.9) is idempotent — leaving an absent bot is a no-op —
+      // so it safely rides the status-flip tx, guarded by `changed`.
+      if (transition.leave) {
+        await actions.leave(row.recall_bot_id);
+        await audit(exec, row.tenant_id, row.id, "bot", "call.leave", null);
+      }
+
+      // Live status push (#106): the SAME per-call channel/payload the
+      // transcript path uses — `{k:"ctl",frame}` on `transcript:<call_id>`.
+      if (deps.publisher) {
+        const frame: TranscriptControlFrame = {
+          type: "status",
+          call_id: row.id,
+          status: transition.status,
+        };
+        if (
+          (transition.status === "COULD_NOT_JOIN" || transition.status === "COULD_NOT_RECORD") &&
+          latest.sub_code
+        ) {
+          frame.reason = latest.sub_code;
+        }
+        await deps.publisher.publish(frame, exec);
+      }
+    });
+
+    // §5.9 recording disclosure — OUTSIDE the status-flip tx, guarded by the
+    // durable marker (driven by the marker, not `changed`, so a failed send
+    // retries on a later sweep even though the status already committed).
+    if (transition.postDisclosure) {
+      await postDisclosureOnce(row);
+    }
+  }
+
+  /**
+   * Post the §5.9 recording disclosure at most once. Send-then-stamp: only send
+   * when `disclosure_posted_at` is unset, then stamp it (auditing on the stamp).
+   * A crash between send and stamp re-sends on the next sweep — a duplicate
+   * bounded to that narrow window, the right bias for a consent disclosure
+   * (never silently skipped). True exactly-once is impossible for a
+   * non-idempotent external POST without a Recall-side idempotency key.
+   */
+  async function postDisclosureOnce(row: SweepRow): Promise<void> {
+    const unposted = (await sql`
+      SELECT 1 FROM calls WHERE id = ${row.id} AND disclosure_posted_at IS NULL`) as unknown as unknown[];
+    if (unposted.length === 0) return; // already disclosed — never re-send
+    await actions.sendChat(row.recall_bot_id, DISCLOSURE_TEXT);
+    await sql.begin(async (tx) => {
+      const exec = tx as unknown as SQL;
+      const stamped = (await exec`
+        UPDATE calls SET disclosure_posted_at = now()
+         WHERE id = ${row.id} AND disclosure_posted_at IS NULL
+        RETURNING id`) as unknown as unknown[];
+      if (stamped.length > 0) {
+        await audit(exec, row.tenant_id, row.id, "bot", "call.disclosure", sha256Hex(DISCLOSURE_TEXT));
+      }
+    });
+  }
 
   async function tick(): Promise<void> {
     if (inFlight) return; // never overlap sweeps (a slow Recall can outlast 10 s)
     inFlight = true;
     try {
       const rows = (await sql`
-        SELECT id, recall_bot_id
+        SELECT id, tenant_id, recall_bot_id
           FROM calls
          WHERE status IN ${sql(NON_TERMINAL as unknown as string[])}
-           AND recall_bot_id IS NOT NULL`) as unknown as Array<{
-        id: string;
-        recall_bot_id: string;
-      }>;
+           AND recall_bot_id IS NOT NULL`) as unknown as SweepRow[];
 
       for (const row of rows) {
         let changes: StatusChange[];
@@ -268,9 +473,19 @@ export function startStatusPoller(deps: StatusPollerDeps): StatusPollerHandle {
         }
         const latest = latestChange(changes);
         if (!latest) continue;
-        const target = mapPolledCode(latest.code);
-        if (!target) continue;
-        await applyForward(sql, row.id, target, latest.sub_code ?? null);
+        const transition = resolvePolledTransition(latest, clock());
+        if (!transition) continue;
+        try {
+          await applyResolved(row, transition, latest);
+        } catch (err) {
+          // e.g. a failed §5.9 disclosure post — the tx rolled back; retry next
+          // sweep. Message carries ids + the error only, NEVER key material.
+          deps.logger?.warn(
+            `[status-poller] applying ${transition.status} to call ${row.id} failed: ` +
+              `${(err as Error).message} — rolled back, retrying next sweep`,
+          );
+          continue;
+        }
       }
     } finally {
       inFlight = false;

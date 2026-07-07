@@ -45,11 +45,13 @@ import {
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
 import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
+import { liveRecallBotActions } from "../bot-orchestrator/recallBotActions.ts";
 import {
   startStatusPoller,
   liveBotStatusSource,
   STATUS_POLL_INTERVAL_MS,
 } from "../bot-orchestrator/statusPoller.ts";
+import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
 
 // ── DEV-ONLY config + secrets (clearly marked; NEVER use in production) ────────
 const PORT = Number(process.env.APP_API_PORT ?? 8787);
@@ -126,11 +128,23 @@ if (isRecallLive()) liveRecallClient();
 // on this process's PRIVILEGED connection (an infra sweep across tenants, like
 // the orchestrator's own `UPDATE calls` — bypasses RLS, never a tenant role).
 // Fake mode has no live bot to poll, so the poller starts only when live.
+//   - actions (#117): the REAL Recall act adapter, so the first
+//     `in_call_recording` pickup posts the §5.9 disclosure chat exactly once
+//     and an aged `in_call_not_recording` makes the bot leave cleanly.
+//   - publisher (#106): each applied transition NOTIFYs a `{type:"status"}`
+//     control frame on the SAME per-call `transcript:<call_id>` channel the
+//     transcript path uses, for the ws-hub fan-in to push to open WS clients.
 if (isRecallLive()) {
-  startStatusPoller({ sql, source: liveBotStatusSource(), logger: console });
+  startStatusPoller({
+    sql,
+    source: liveBotStatusSource(),
+    actions: liveRecallBotActions(),
+    publisher: new PgListenNotifyPublisher(sql),
+    logger: console,
+  });
   console.log(
     `[status-poller] polling Recall bot status every ${STATUS_POLL_INTERVAL_MS / 1000}s ` +
-      `for non-terminal calls (issue #118)`,
+      `for non-terminal calls (issue #118; §5.9 disclosure + live status push)`,
   );
 }
 

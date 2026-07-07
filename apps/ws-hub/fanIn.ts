@@ -11,11 +11,12 @@
  *     lookup), then read the row by `(call_id, seq)` from `transcripts` UNDER
  *     RLS (`SET LOCAL ROLE samograph_app` + `app.tenant_id`, §5.10) — a foreign
  *     call returns zero rows — and `hub.publish` the full line frame.
- *   • a `ctl` signal (tunnel warning / status / degraded) carries its frame
- *     inline; LIVE forwarding of control frames onto the WS stream is a tracked
- *     FOLLOW-UP (the Hub's bounded queue is seq-keyed for line frames; the
- *     dashboard banner + status already read from Postgres). The fan-in records
- *     them so a future control lane can drain them, but does not drop a line.
+ *   • a `ctl` signal carries its frame inline. A `{type:"status"}` frame (#106)
+ *     is published verbatim onto the Hub's control lane so the per-call page
+ *     updates live without a reload — the poller/lifecycle emit it on the SAME
+ *     per-call NOTIFY channel as line signals. The remaining ctl types (tunnel
+ *     warning / degraded) are still a tracked FOLLOW-UP (the dashboard banner
+ *     reads `ingest_degraded` from Postgres).
  *
  * The LISTEN transport that delivers signals from ingest to this fan-in is NOT
  * here: Bun's built-in SQL has no `LISTEN`/`NOTIFY` consumer API, so v1 composes
@@ -31,7 +32,7 @@ import type {
   TranscriptLineFrame,
   TranscriptSignal,
 } from "../../packages/shared/transcript/publisher.ts";
-import type { DataFrame, Hub } from "./hub.ts";
+import type { ControlFrame, DataFrame, Hub } from "./hub.ts";
 
 /** Injected collaborators for {@link createFanIn}. */
 export interface FanInDeps {
@@ -104,7 +105,13 @@ export function createFanIn(deps: FanInDeps): FanIn {
   return {
     async deliver(signal) {
       if (signal.k === "ctl") {
-        // Control frames have no seq to fetch by; live forwarding is a follow-up.
+        // A status change is live-forwarded verbatim on the control lane (#106);
+        // warning/degraded live lanes remain a follow-up. Control frames carry
+        // no transcript content, so no RLS re-hydration is needed — the Hub only
+        // reaches subscribers already authorized for this call at upgrade (§5.6).
+        if (signal.frame.type === "status") {
+          deps.hub.publishControl(signal.frame.call_id, signal.frame as unknown as ControlFrame);
+        }
         return null;
       }
       const tenantId = await deps.lookupCallTenant(signal.call_id);

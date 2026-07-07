@@ -79,7 +79,24 @@ describe("FakeTranscriptStreamClient — seeded REST helpers + typed throws", ()
       path: "/calls/call_1",
       method: "GET",
       callId: "call_1",
+      query: {},
     });
+  });
+
+  it("records the share token on a REST request's wire query (§5.7)", async () => {
+    const client = createFakeTranscriptStreamClient();
+    await client.fetchCallDetail({ callId: "call_1", auth: { kind: "share", token: "shr_abc" } });
+    expect(client.requests[0]?.query).toEqual({ token: "shr_abc" });
+  });
+
+  it("setCallDetail changes what fetchCallDetail serves from then on", async () => {
+    const client = createFakeTranscriptStreamClient({
+      callDetail: { id: "call_1", status: "JOINING", degraded: false },
+    });
+    const ref = { callId: "call_1", auth: { kind: "session" } } as const;
+    expect((await client.fetchCallDetail(ref)).status).toBe("JOINING");
+    client.setCallDetail({ id: "call_1", status: "ENDED", degraded: false });
+    expect((await client.fetchCallDetail(ref)).status).toBe("ENDED");
   });
 
   it("returns the seeded backfill lines for the requested range", async () => {

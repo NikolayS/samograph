@@ -10,8 +10,9 @@
  *   POST /webhook → §5.3 front door → composed dispatch (pipeline + lifecycle)
  *     writes the row + publishes the §98 SIGNAL into a per-request buffer,
  *   ── the dedup tx COMMITS ──
- *   → the buffered `{ call_id, seq }` signals are handed to the {@link FanIn},
- *     which re-hydrates each line by seq UNDER RLS and `hub.publish`es it,
+ *   → the buffered signals are handed to the {@link FanIn}: a `{ call_id, seq }`
+ *     line is re-hydrated by seq UNDER RLS and `hub.publish`ed; a `{type:"status"}`
+ *     control frame (#106) is `hub.publishControl`ed verbatim,
  *   → FLUSH-ON-PUBLISH pushes it to every subscribed WS connection live.
  *
  * Delivering AFTER commit (not inside the tx) is the in-process analog of
@@ -21,6 +22,7 @@
  * SAME signal shape for the future split; only its LISTEN consumer is deferred.
  */
 import type { Server, SQL } from "bun";
+import { HEALTH_MARKER } from "../../src/server.ts";
 import {
   encodeSignal,
   type TranscriptFrame,
@@ -124,7 +126,13 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   async function ingestFetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/health") {
-      return Response.json({ ok: true, nonce: url.searchParams.get("nonce") ?? "" });
+      // Byte-exact §4.5 marker + nonce echo: this /health is the watchdog's
+      // probe target (through PUBLIC_WEBHOOK_BASE), same as apps/ingest/server.ts.
+      return Response.json({
+        ok: true,
+        nonce: url.searchParams.get("nonce") ?? "",
+        marker: HEALTH_MARKER,
+      });
     }
 
     // Per-request buffer so concurrent webhooks never interleave their signals.

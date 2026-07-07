@@ -152,7 +152,7 @@ describe("ws-hub head-of-line isolation (AC #4)", () => {
       // Healthy subscriber drains every tick; stalled one never does.
       let frame: OutboundFrame | undefined;
       while ((frame = healthy.next()) !== undefined) {
-        if (!isGap(frame)) received.push(frame.seq);
+        if (!isGap(frame)) received.push((frame as DataFrame).seq);
       }
     }
 
@@ -205,5 +205,63 @@ describe("ws-hub channel isolation (AC #5)", () => {
     hub.publish("call-A", f(1));
     expect(a.queueDepth()).toBe(0);
     expect(b.queueDepth()).toBe(1);
+  });
+});
+
+// --- control-frame lane (#106: live status forwarding) ---------------------
+
+describe("ws-hub control-frame lane (#106: publishControl)", () => {
+  const status = (s: string) => ({ type: "status", call_id: "call-A", status: s });
+
+  it("delivers a control frame to every subscriber on the channel, in publish order with data", () => {
+    const hub = new Hub();
+    const sub1 = hub.subscribe("call-A");
+    const sub2 = hub.subscribe("call-A");
+
+    hub.publish("call-A", f(1));
+    hub.publishControl("call-A", status("IN_CALL"));
+    hub.publish("call-A", f(2));
+
+    for (const sub of [sub1, sub2]) {
+      expect(sub.drain()).toEqual([f(1), status("IN_CALL"), f(2)]);
+    }
+  });
+
+  it("control frames do not count toward the data caps and are never dropped on overflow", () => {
+    const hub = new Hub();
+    const sub = hub.subscribe("call-A");
+
+    hub.publishControl("call-A", status("IN_CALL"));
+    // Overflow the 256-message data cap by one: seq 1 drops, the control survives.
+    for (let seq = 1; seq <= 257; seq++) hub.publish("call-A", f(seq));
+
+    expect(sub.queueDepth()).toBe(256); // data frames only
+    expect(sub.dropped()).toBe(1);
+    const out = sub.drain();
+    // The control frame is still there, and the gap describes exactly seq 1.
+    expect(out).toContainEqual(status("IN_CALL"));
+    expect(gaps(out)).toEqual([{ type: "gap", since_seq: 1, until_seq: 1 }]);
+    expect(dataSeqs(out.filter((x) => (x as { type?: unknown }).type !== "status"))).toEqual(
+      Array.from({ length: 256 }, (_, i) => i + 2),
+    );
+  });
+
+  it("is channel-isolated and a no-op with no subscribers", () => {
+    const hub = new Hub();
+    const subB = hub.subscribe("call-B");
+    hub.publishControl("call-A", status("ENDED")); // no call-A subscriber → no throw
+    hub.publishControl("call-B", { type: "status", call_id: "call-B", status: "ENDED" });
+    expect(subB.drain()).toEqual([{ type: "status", call_id: "call-B", status: "ENDED" }]);
+  });
+
+  it("fires the flush-on-publish hook so an auto-flushing connection pushes it live", () => {
+    const hub = new Hub();
+    const sub = hub.subscribe("call-A");
+    let flushes = 0;
+    sub.onEnqueue = () => {
+      flushes += 1;
+    };
+    hub.publishControl("call-A", status("IN_CALL"));
+    expect(flushes).toBe(1);
   });
 });

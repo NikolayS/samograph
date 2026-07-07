@@ -19,9 +19,11 @@ import type { SQL } from "bun";
 import type { AuthorizeDeps } from "../../packages/shared/auth/index.ts";
 import { authorizeCall } from "../../packages/shared/auth/index.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
+import { renderTranscriptText } from "../../packages/shared/transcript/index.ts";
 import { parseSinceSeq, readCallCredentials } from "./request.ts";
 import {
   backfillRecent,
+  fetchFullTranscript,
   replayTranscripts,
   DEFAULT_BACKFILL_LIMIT,
   type TranscriptLine,
@@ -90,5 +92,54 @@ export function createTranscriptHandler(
     if (lines === null) return denied();
     const body: TranscriptResponseBody = { call_id: callId, since_seq: sinceSeq, lines };
     return Response.json(body, { status: 200 });
+  };
+}
+
+/**
+ * Build the `GET /calls/:id/transcript.txt` DOWNLOAD handler (Story 3). Returns
+ * the call's FULL transcript as plain text, one line per utterance in the
+ * CLI-identical `[YYYY-MM-DD HH:MM:SS] Speaker: utterance` framing (byte-
+ * identical to the CLI writer / `renderTranscriptText`, SPEC §5.4), with a
+ * `Content-Disposition: attachment` filename so the browser saves a file.
+ *
+ * Authorization goes through the SAME single tenancy gate as the read/stream
+ * (`authorizeCall`, §5.6) behind the SAME session/share credentials, and the
+ * read is RLS-scoped to the call's tenant. DENY → the same bodyless 403.
+ * Returns 404/405 for non-matching paths/methods so it can be composed under
+ * one `Bun.serve` alongside `/stream` and `/transcript`.
+ */
+export function createTranscriptTextHandler(
+  deps: TranscriptHandlerDeps,
+): (req: Request) => Promise<Response> {
+  const cookieName = deps.sessionCookieName ?? SESSION_COOKIE_NAME;
+
+  return async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    const match = /^\/calls\/([^/]+)\/transcript\.txt$/.exec(url.pathname);
+    if (!match) return new Response("not found", { status: 404 });
+    if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
+
+    const callId = decodeURIComponent(match[1]);
+    const credentials = readCallCredentials(req, url, cookieName);
+
+    const lines = await deps.sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL ROLE samograph_app");
+      const authz = await authorizeCall(
+        tx as unknown as SQL,
+        { callId, sessionCookie: credentials.sessionCookie, shareToken: credentials.shareToken },
+        deps.authDeps,
+      );
+      if (!authz.authorized) return null;
+      return fetchFullTranscript(tx as unknown as SQL, callId);
+    });
+
+    if (lines === null) return denied();
+    return new Response(renderTranscriptText(lines), {
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "content-disposition": `attachment; filename="transcript-${callId}.txt"`,
+      },
+    });
   };
 }

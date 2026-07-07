@@ -31,7 +31,7 @@ import type { SQL } from "bun";
 import { setTenant } from "../../packages/shared/db/client.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../packages/shared/auth/index.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
-import { Hub, type GapFrame, type OutboundFrame } from "./hub.ts";
+import { Hub, type ControlFrame, type DataFrame, type GapFrame, type OutboundFrame } from "./hub.ts";
 import { parseSinceSeq, readCallCredentials, type CallCredentials } from "./request.ts";
 import { ShareCaps, shareCapKey, rateLimitedResponse, type CapDecision } from "./caps.ts";
 import {
@@ -197,6 +197,19 @@ function isGap(frame: OutboundFrame): frame is GapFrame {
   return (frame as GapFrame).type === "gap";
 }
 
+/** A live `{type:"status"}` control frame (#106) carrying a string status. */
+function isStatusControl(frame: OutboundFrame): frame is ControlFrame & { status: string } {
+  return (
+    (frame as { type?: unknown }).type === "status" &&
+    typeof (frame as { status?: unknown }).status === "string"
+  );
+}
+
+/** A data line frame — the only outbound kind carrying a numeric `seq`. */
+function isData(frame: OutboundFrame): frame is DataFrame {
+  return typeof (frame as { seq?: unknown }).seq === "number";
+}
+
 /** Construction inputs for a {@link StreamConnection} (see {@link openStream}). */
 export interface StreamConnectionInit {
   socket: StreamSocket;
@@ -300,7 +313,9 @@ export class StreamConnection {
 
   /**
    * Drain the subscriber's queue to the socket: gap control frames are forwarded
-   * verbatim (the client REST-backfills the dropped range); data frames are sent
+   * verbatim (the client REST-backfills the dropped range); a `{type:"status"}`
+   * control frame (#106) is serialized as the client's `{type:"status", status}`
+   * event (no seq — it never touches the dedupe boundary); data frames are sent
    * only when `seq > lastSeq`, so a frame already covered by the backfill/replay
    * — including the exact boundary `seq` — is never duplicated.
    */
@@ -311,6 +326,14 @@ export class StreamConnection {
         this.socket.send(JSON.stringify(frame));
         continue;
       }
+      if (isStatusControl(frame)) {
+        // Exactly the reducer's wire shape (§5.2/§5.5) — no internal fields.
+        this.socket.send(JSON.stringify({ type: "status", status: frame.status }));
+        continue;
+      }
+      // Remaining control lanes (warning/degraded) are a tracked follow-up (#106);
+      // a malformed control frame is dropped rather than crash the stream.
+      if (!isData(frame)) continue;
       if (frame.seq > this.lastSeq) {
         // The hub only carries finalized lines — mark `final` so the client
         // appends it instead of holding it as a single replaceable partial.
