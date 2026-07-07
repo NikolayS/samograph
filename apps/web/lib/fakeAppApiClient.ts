@@ -28,8 +28,17 @@ export interface FailSpec {
 }
 
 export interface FakeAppApiClientOptions {
-  /** When set, `verifyMagicLink` rejects with this typed error. */
-  failVerifyWith?: FailSpec;
+  /**
+   * When set, `verifyMagicLink` rejects with this typed error. Include `status`
+   * to simulate an infra/5xx response (whose body may lack a `code`).
+   */
+  failVerifyWith?: FailSpec & { status?: number };
+  /**
+   * When set, `verifyMagicLink` rejects with this raw (non-typed) error AFTER
+   * recording the request — simulates a network failure (fetch throws before
+   * any HTTP status is known).
+   */
+  failVerifyWithRaw?: Error;
   /**
    * When true, `verifyMagicLink` records its request but never settles, so a
    * test can deterministically observe the "verifying" state with no race.
@@ -86,9 +95,12 @@ export class FakeAppApiClient implements AppApiClient {
       // Never settle: lets a test observe the "verifying" state with no race.
       return new Promise<void>(() => {});
     }
+    if (this.options.failVerifyWithRaw) {
+      throw this.options.failVerifyWithRaw;
+    }
     const fail = this.options.failVerifyWith;
     if (fail) {
-      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false);
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
     }
   }
 

@@ -74,6 +74,57 @@ describe("MagicLinkCallback", () => {
     expect(verifyCalls).toHaveLength(1);
   });
 
+  it("shows the infra-error copy (not the invalid-link copy) on a 5xx whose body lacks a code", async () => {
+    // Infra 5xx: app-api's throwTyped falls the code back to SAMO-AUTH-001 when
+    // the body has no `code`, but it carries status=500. The page must branch on
+    // status, not code, and NOT claim the link itself is invalid.
+    const client = createFakeAppApiClient({
+      failVerifyWith: { code: "SAMO-AUTH-001", message: "Request failed.", status: 500 },
+    });
+    const { findByText, queryByText } = render(
+      <MagicLinkCallback token="valid-token" client={client} />,
+    );
+    expect(
+      await findByText("Something went wrong on our end — please try again."),
+    ).toBeDefined();
+    expect(queryByText("This sign-in link isn't valid.")).toBeNull();
+  });
+
+  it("shows the infra-error copy on a network error (no HTTP status)", async () => {
+    const client = createFakeAppApiClient({
+      failVerifyWithRaw: new TypeError("Failed to fetch"),
+    });
+    const { findByText } = render(
+      <MagicLinkCallback token="valid-token" client={client} />,
+    );
+    expect(
+      await findByText("Something went wrong on our end — please try again."),
+    ).toBeDefined();
+  });
+
+  it("keeps the invalid-link copy for a 401 token-invalid failure", async () => {
+    const client = createFakeAppApiClient({
+      failVerifyWith: { code: "SAMO-AUTH-001", message: "x", status: 401 },
+    });
+    const { findByText, queryByText } = render(
+      <MagicLinkCallback token="bad-token" client={client} />,
+    );
+    expect(await findByText("This sign-in link isn't valid.")).toBeDefined();
+    expect(
+      queryByText("Something went wrong on our end — please try again."),
+    ).toBeNull();
+  });
+
+  it("keeps the already-used copy for a 410 token failure", async () => {
+    const client = createFakeAppApiClient({
+      failVerifyWith: { code: "SAMO-AUTH-003", message: "x", status: 410 },
+    });
+    const { findByText } = render(
+      <MagicLinkCallback token="used-token" client={client} />,
+    );
+    expect(await findByText("This link was already used.")).toBeDefined();
+  });
+
   it("offers a 'Request a new link' affordance on failure", async () => {
     const client = createFakeAppApiClient({
       failVerifyWith: { code: "SAMO-AUTH-002", message: "x" },
