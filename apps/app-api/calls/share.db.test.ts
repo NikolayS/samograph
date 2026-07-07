@@ -183,6 +183,139 @@ d("/calls/:id/share mint+revoke (DB-backed, §5.7 / §6.2 #10)", () => {
     expect(rows[0].revoked_at).toBeNull(); // never revoked by the cross-tenant attempt
   });
 
+  // ── Sprint-2 share-flow fix: the owner routes the web ShareModal actually calls ──
+  // GET /calls/:id/share, POST /calls/:id/share/rotate, DELETE /calls/:id/share
+  // (SPEC §4.1, §5.7, Story 2). These run against callB/tenantB so the callA
+  // history above never interferes.
+
+  it("GET /calls/:id/share → 404 when the call has no active share link", async () => {
+    const res = await handler()(req("GET", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(res.status).toBe(404);
+  });
+
+  it("owner GET /calls/:id/share after mint → 200 active link that verifies for THIS call", async () => {
+    const mint = await handler()(req("POST", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(mint.status).toBe(201);
+    const minted = (await mint.json()) as { token: string; token_id: string };
+
+    const res = await handler()(req("GET", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      token: string;
+      token_id: string;
+      url: string;
+      active: boolean;
+    };
+    expect(body.active).toBe(true);
+    expect(body.token_id).toBe(minted.token_id); // the SAME persisted link (same jti)
+    expect(body.url).toBe(`/c/${body.token}`);
+
+    // The returned link is a working share credential bound to callB.
+    const v = await verifyToken(sql, body.token, keyring, { requireScope: "share" });
+    expect(v.ok).toBe(true);
+    if (!v.ok) throw new Error(v.reason);
+    expect(v.callId).toBe(callB);
+    expect(v.payload.jti).toBe(minted.token_id);
+  });
+
+  it("POST /calls/:id/share/rotate → 200 NEW token; the old link stops verifying (revoked)", async () => {
+    const before = await handler()(req("GET", `/calls/${callB}/share`, { cookie: cookieB }));
+    const old = (await before.json()) as { token: string; token_id: string };
+    const mintAuditBefore = await countAudit(callB, "share.mint");
+    const revokeAuditBefore = await countAudit(callB, "share.revoke");
+
+    const res = await handler()(req("POST", `/calls/${callB}/share/rotate`, { cookie: cookieB }));
+    expect(res.status).toBe(200);
+    const rotated = (await res.json()) as { token: string; token_id: string; url: string };
+    expect(rotated.token_id).not.toBe(old.token_id);
+    expect(rotated.url).toBe(`/c/${rotated.token}`);
+
+    // New token works, old token is REVOKED (not merely superseded client-side).
+    const vNew = await verifyToken(sql, rotated.token, keyring, { requireScope: "share" });
+    expect(vNew.ok).toBe(true);
+    const vOld = await verifyToken(sql, old.token, keyring, { requireScope: "share" });
+    expect(vOld.ok).toBe(false);
+    if (vOld.ok) throw new Error("old token must not verify");
+    expect(vOld.reason).toBe("revoked");
+
+    // Audit: one share.revoke (the old jti) + one share.mint (the new one).
+    expect(await countAudit(callB, "share.mint")).toBe(mintAuditBefore + 1);
+    expect(await countAudit(callB, "share.revoke")).toBe(revokeAuditBefore + 1);
+
+    // GET now serves the ROTATED link.
+    const got = await handler()(req("GET", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(((await got.json()) as { token_id: string }).token_id).toBe(rotated.token_id);
+  });
+
+  it("DELETE /calls/:id/share revokes the active link (≤1 s SLO path), idempotent; GET → 404", async () => {
+    const before = await handler()(req("GET", `/calls/${callB}/share`, { cookie: cookieB }));
+    const active = (await before.json()) as { token: string };
+    const revokeAuditBefore = await countAudit(callB, "share.revoke");
+
+    const del = await handler()(req("DELETE", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(del.status).toBe(204);
+    expect(await del.text()).toBe("");
+
+    // The token 403s at the verifier: the next verify sees `revoked`.
+    const v = await verifyToken(sql, active.token, keyring, { requireScope: "share" });
+    expect(v.ok).toBe(false);
+    if (v.ok) throw new Error("revoked token must not verify");
+    expect(v.reason).toBe("revoked");
+    expect(await countAudit(callB, "share.revoke")).toBe(revokeAuditBefore + 1);
+
+    // Idempotent: nothing active → still 204, NO extra audit row; GET → 404.
+    const del2 = await handler()(req("DELETE", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(del2.status).toBe(204);
+    expect(await countAudit(callB, "share.revoke")).toBe(revokeAuditBefore + 1);
+    const got = await handler()(req("GET", `/calls/${callB}/share`, { cookie: cookieB }));
+    expect(got.status).toBe(404);
+  });
+
+  it("get/rotate/delete are owner-only: anonymous → 401; cross-tenant session → 403", async () => {
+    await handler()(req("POST", `/calls/${callB}/share`, { cookie: cookieB })); // ensure one exists
+    for (const [method, path] of [
+      ["GET", `/calls/${callB}/share`],
+      ["POST", `/calls/${callB}/share/rotate`],
+      ["DELETE", `/calls/${callB}/share`],
+    ] as const) {
+      const anon = await handler()(req(method, path));
+      expect(anon.status).toBe(401);
+      const cross = await handler()(req(method, path, { cookie: cookieA }));
+      expect(cross.status).toBe(403);
+    }
+  });
+
+  // ── Bug 4: the share recipient's call-header fetch (§5.7 read path) ──────────
+  it("GET /calls/:id with a valid share token (NO session) → 200 header; revoked token → 403", async () => {
+    const mint = await handler()(req("POST", `/calls/${callB}/share`, { cookie: cookieB }));
+    const { token } = (await mint.json()) as { token: string };
+
+    const res = await handler()(
+      req("GET", `/calls/${callB}?token=${encodeURIComponent(token)}`),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.id).toBe(callB);
+    expect(body.status).toBe("IN_CALL");
+    expect(body.ingest_degraded).toBe(false);
+    // A share viewer never sees the owner's meeting coordinates.
+    expect(body.meeting_url).toBeUndefined();
+    expect(body.recall_bot_id).toBeUndefined();
+
+    // A token for callB never opens callA (call binding, §5.6).
+    const wrongCall = await handler()(
+      req("GET", `/calls/${callA}?token=${encodeURIComponent(token)}`),
+    );
+    expect(wrongCall.status).toBe(403);
+
+    // After revoke the SAME request 403s (≤ 1 s revoke SLO — no verifier cache).
+    await handler()(req("DELETE", `/calls/${callB}/share`, { cookie: cookieB }));
+    const revoked = await handler()(
+      req("GET", `/calls/${callB}?token=${encodeURIComponent(token)}`),
+    );
+    expect(revoked.status).toBe(403);
+  });
+
   it("revoke: missing session → 401; a SHARE-scope credential cannot revoke → 403", async () => {
     const mint = await handler()(req("POST", `/calls/${callA}/share`, { cookie: cookieA }));
     const { token, token_id } = (await mint.json()) as { token: string; token_id: string };

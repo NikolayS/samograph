@@ -15,7 +15,7 @@
  */
 import { sha256Hex } from "../../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
-import type { Keyring } from "../../../packages/shared/tokens/signing.ts";
+import { signToken, type Keyring, type TokenPayload } from "../../../packages/shared/tokens/signing.ts";
 import { mintShareToken, revokeToken } from "../../../packages/shared/tokens/store.ts";
 import { setTenant } from "../../../packages/shared/db/client.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../../packages/shared/auth/index.ts";
@@ -85,15 +85,22 @@ function readCookie(req: Request, name: string): string | null {
 }
 
 /**
- * Does the request present a `share` capability credential (a `?token=` query or
- * an `Authorization: Bearer …` header)? Owner-only routes use this to answer a
- * share-credential attempt with 403 (it must never mint/revoke) while a truly
- * anonymous request gets 401.
+ * The `share` capability credential a request presents (a `?token=` query or an
+ * `Authorization: Bearer …` header), or `null`. Owner-only routes use its mere
+ * PRESENCE to answer a share-credential attempt with 403 (it must never
+ * mint/revoke) while a truly anonymous request gets 401; the read route hands
+ * it to the tenancy gate for verification (§5.6/§5.7).
  */
-function hasShareCredential(req: Request, url: URL): boolean {
-  if ((url.searchParams.get("token") ?? "").length > 0) return true;
+function readShareCredential(req: Request, url: URL): string | null {
+  const query = url.searchParams.get("token");
+  if (query && query.length > 0) return query;
   const auth = req.headers.get("authorization");
-  return auth !== null && /^Bearer\s+.+/i.test(auth.trim());
+  const m = auth?.trim().match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
+}
+
+function hasShareCredential(req: Request, url: URL): boolean {
+  return readShareCredential(req, url) !== null;
 }
 
 /** The single bodyless 401 for an authentication failure (§5.1). */
@@ -223,6 +230,126 @@ export function createCallsHandler(
       );
     }
 
+    // Revoke EVERY live share token of a call (rotate + the callId-only DELETE).
+    // Audits one `share.revoke` row per flipped jti (hash of the id, never the
+    // secret) — an already-revoked/absent link flips nothing, keeping both
+    // callers idempotent. Runs inside the caller's authorized transaction.
+    const revokeActiveShares = async (
+      tx: SQL,
+      callId: string,
+      tenantId: string,
+      actor: string,
+    ): Promise<number> => {
+      const revokedAt = new Date((nowSec() ?? Math.floor(Date.now() / 1000)) * 1000);
+      const flipped = (await tx`
+        UPDATE tokens
+        SET revoked_at = ${revokedAt}
+        WHERE call_id = ${callId} AND revoked_at IS NULL
+        RETURNING jti`) as unknown as Array<{ jti: string }>;
+      for (const { jti } of flipped) {
+        await tx`
+          INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
+          VALUES (${tenantId}, ${callId}, ${actor}, 'share.revoke', ${sha256Hex(jti)})`;
+      }
+      return flipped.length;
+    };
+
+    // ── GET /calls/:id/share — the owner's active share link, or 404 (§5.7) ────
+    // Owner-only, like mint. The `tokens` table stores no token SECRET (only the
+    // jti/kid/scopes/expiry), so the link is RE-DERIVED: the same persisted jti
+    // is re-signed with the current key. Any validly-signed body naming that jti
+    // verifies against the same row, so the re-derived URL and the originally
+    // minted one are the SAME capability — one revoke kills both.
+    if (req.method === "GET" && shareMatch) {
+      const callId = decodeURIComponent(shareMatch[1]);
+      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
+
+      const found = await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        if (!authz.authorized || !authz.scopes.includes("read")) return { denied: true as const };
+        const rows = (await tx`
+          SELECT jti, scopes, expires_at
+          FROM tokens
+          WHERE call_id = ${callId} AND revoked_at IS NULL AND expires_at > now()
+          ORDER BY expires_at DESC, jti
+          LIMIT 1`) as unknown as Array<{ jti: string; scopes: string[]; expires_at: Date | string }>;
+        return { denied: false as const, row: rows[0] ?? null };
+      });
+      if (found.denied) return denied();
+      if (!found.row) return new Response(null, { status: 404 });
+
+      const now = nowSec() ?? Math.floor(Date.now() / 1000);
+      const payload: TokenPayload = {
+        kid: keyring.current.kid,
+        call_id: callId,
+        scopes: found.row.scopes,
+        iat: now,
+        exp: Math.floor(new Date(found.row.expires_at).getTime() / 1000),
+        jti: found.row.jti,
+      };
+      const token = signToken(payload, keyring.current);
+      return Response.json(
+        { token, token_id: found.row.jti, url: `/c/${token}`, active: true },
+        { status: 200 },
+      );
+    }
+
+    // ── POST /calls/:id/share/rotate — new link; the old one stops working (§5.7)
+    // Owner-only. One transaction: revoke every live share token (audited per
+    // jti), then mint the replacement (audited) — so there is never a window
+    // with two live links and never a window with none committed.
+    const rotateMatch = url.pathname.match(/^\/calls\/([^/]+)\/share\/rotate$/);
+    if (req.method === "POST" && rotateMatch) {
+      const callId = decodeURIComponent(rotateMatch[1]);
+      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
+
+      const rotated = await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        if (!authz.authorized || !authz.scopes.includes("read")) return null;
+        const actor = `user:${claims.userId}`;
+        await revokeActiveShares(tx as unknown as SQL, callId, authz.tenantId, actor);
+        const m = await mintShareToken(tx as unknown as SQL, {
+          callId,
+          signingKey: keyring.current,
+          ttlSeconds: shareTtlSeconds,
+          now: nowSec(),
+        });
+        await tx`
+          INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
+          VALUES (${authz.tenantId}, ${callId}, ${actor}, 'share.mint', ${sha256Hex(m.jti)})`;
+        return m;
+      });
+      if (!rotated) return denied();
+      return Response.json(
+        { token: rotated.token, token_id: rotated.jti, url: `/c/${rotated.token}` },
+        { status: 200 },
+      );
+    }
+
+    // ── DELETE /calls/:id/share — revoke the call's live share link(s) (§5.7) ──
+    // Owner-only; idempotent (nothing live → still 204, no audit row). The ≤ 1 s
+    // revoke SLO holds because the verifier is uncached — the very next verify
+    // sees `revoked_at`.
+    if (req.method === "DELETE" && shareMatch) {
+      const callId = decodeURIComponent(shareMatch[1]);
+      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
+
+      const outcome = await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        if (!authz.authorized || !authz.scopes.includes("read")) return { authorized: false as const };
+        await revokeActiveShares(tx as unknown as SQL, callId, authz.tenantId, `user:${claims.userId}`);
+        return { authorized: true as const };
+      });
+      if (!outcome.authorized) return denied();
+      return new Response(null, { status: 204 });
+    }
+
     // ── DELETE /calls/:id/share/:tokenId — owner revokes (idempotent; §5.7) ────
     // The ≤ 1 s revoke SLO is satisfied by the no-cache verifier on the WS path —
     // this route introduces NO caching; it only stamps `revoked_at`.
@@ -252,16 +379,30 @@ export function createCallsHandler(
     }
 
     // ── GET /calls/:id — read one call, authorized by the tenancy gate (§5.6) ─
+    // Two credentials reach this header: the owner's session (`read`) and a
+    // share viewer's `?token=` (`share`, §5.7) — the read-only page fetches the
+    // status/degraded header through the SAME route. A share grant gets a
+    // REDUCED view: never the owner's meeting coordinates or bot internals.
     const match = url.pathname.match(/^\/calls\/([^/]+)$/);
     if (req.method === "GET" && match) {
       const callId = decodeURIComponent(match[1]);
+      const shareToken = readShareCredential(req, url);
       const result = await sql.begin(async (tx) => {
         await tx.unsafe("SET LOCAL ROLE samograph_app");
-        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        const authz = await authorizeCall(
+          tx as unknown as SQL,
+          { callId, sessionCookie: cookie, shareToken },
+          gateDeps,
+        );
         if (!authz.authorized) return null;
         // The gate set app.tenant_id; this read is RLS-scoped to that tenant.
         const rows = (await tx`SELECT * FROM calls WHERE id = ${callId}`) as unknown as Record<string, unknown>[];
-        return rows.length ? serializeCall(rows[0]) : null;
+        if (!rows.length) return null;
+        const full = serializeCall(rows[0]);
+        if (authz.scopes.includes("read")) return full;
+        // `share` scope: status header only (id/status/reason/degraded/timeline).
+        const { meeting_url: _url, recall_bot_id: _bot, region: _region, ...shared } = full;
+        return shared;
       });
       if (!result) return denied();
       return Response.json(result, { status: 200 });

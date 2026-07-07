@@ -7,6 +7,7 @@ import {
 } from "./PerCallTranscript.tsx";
 import { createFakeTranscriptStreamClient } from "../lib/fakeTranscriptStreamClient.ts";
 import type { CallDetail } from "../lib/transcriptStreamClient.ts";
+import { signToken } from "../../../packages/shared/tokens/signing.ts";
 import { installDom } from "../test/setup.tsx";
 
 installDom();
@@ -45,6 +46,28 @@ describe("ShareCallView — read-only shared transcript (SPEC §4.1, §5.7, Stor
     render(<ShareCallView streamClient={stream} shareToken="shr_abc" />);
     expect(stream.connects[0]?.auth).toEqual({ kind: "share", token: "shr_abc" });
     expect(stream.streamQueries[0]?.token).toBe("shr_abc");
+  });
+
+  it("resolves the callId from the token's payload — NOT the token itself (Sprint-2 bug)", () => {
+    // A real minted-format token: base64url(JSON{call_id,…}) "." base64url(sig).
+    const callId = "44444444-4444-4444-8444-444444444444";
+    const token = signToken(
+      {
+        kid: "k1",
+        call_id: callId,
+        scopes: ["share"],
+        iat: 1_000,
+        exp: 2_000_000_000,
+        jti: "55555555-5555-4555-8555-555555555555",
+      },
+      { kid: "k1", secret: "share-view-test-secret-bbbbbbbbbbbbbbbb" },
+    );
+    const stream = createFakeTranscriptStreamClient({
+      callDetail: detail({ id: callId }),
+    });
+    render(<ShareCallView streamClient={stream} shareToken={token} />);
+    expect(stream.connects[0]?.callId).toBe(callId); // decoded call_id, not the token
+    expect(stream.connects[0]?.auth).toEqual({ kind: "share", token });
   });
 
   it("exposes NO owner controls (provably control-free, Story 2)", () => {

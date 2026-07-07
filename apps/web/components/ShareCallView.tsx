@@ -1,6 +1,7 @@
 "use client";
 
 import { PerCallTranscript } from "./PerCallTranscript.tsx";
+import { callIdFromShareToken } from "../lib/shareToken.ts";
 import type { TranscriptStreamClient } from "../lib/transcriptStreamClient.ts";
 
 /** Read-only page header (SPEC §5.7 — the share page hides all owner controls). */
@@ -19,15 +20,18 @@ export interface ShareCallViewProps {
  * leave the call, mint a token, or reveal other calls.
  *
  * The viewer authenticates with the share token only — no session/cookie. The
- * WS-hub resolves the call from the token (§5.6/§5.7), so the token is passed as
- * both the connect credential and the path key the seam expects; the path id is
- * advisory for a share connection.
+ * token's payload carries the `call_id` it is bound to (§5.7), so the view
+ * decodes it (`callIdFromShareToken`) and connects to `/calls/<call_id>/…`
+ * with the token as the `?token=` credential — the server-side gate (§5.6)
+ * re-verifies the binding. An undecodable string falls back to itself as the
+ * path id; the server rejects it either way.
  *
  * A typed `SAMO-TOKEN-002` (revoke/expiry) or `SAMO-RATE-001` (cap hit) surfaces
  * inside `PerCallTranscript` as a never-silent terminal card (§5.16), so a
  * revoked link shows "no longer active" within ≤ 1 s rather than hanging empty.
  */
 export function ShareCallView({ streamClient, shareToken }: ShareCallViewProps) {
+  const callId = callIdFromShareToken(shareToken) ?? shareToken;
   return (
     <section className="samograph-share-page" aria-label="Shared transcript">
       <header className="samograph-share-page-header">
@@ -41,7 +45,7 @@ export function ShareCallView({ streamClient, shareToken }: ShareCallViewProps) 
       <PerCallTranscript
         streamClient={streamClient}
         auth={{ kind: "share", token: shareToken }}
-        callId={shareToken}
+        callId={callId}
       />
     </section>
   );
