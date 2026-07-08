@@ -70,15 +70,25 @@ export class AuthService {
     const now = clock();
     const email = normalizeEmail(input.email);
 
-    // Independent limits, evaluated in order — whichever fires first blocks.
-    const byEmail = await rateLimiter.hit(`email:${email}`, PER_EMAIL_LIMIT, RATE_WINDOW_MS, now);
-    if (!byEmail.allowed) {
-      return { ok: false, code: "SAMO-AUTH-004", retryAfterSec: ceilSec(byEmail.retryAfterMs) };
+    // Two INDEPENDENT limits (per-email 5/hr, per-IP 20/hr). Check BOTH without
+    // committing, so a rejection on one never advances the other's counter
+    // (issue #63 — cross-limiter perturbation). Only commit both once both pass.
+    const emailKey = `email:${email}`;
+    const ipKey = `ip:${input.ip}`;
+    const emailOk = await rateLimiter.peek(emailKey, PER_EMAIL_LIMIT, RATE_WINDOW_MS, now);
+    const ipOk = await rateLimiter.peek(ipKey, PER_IP_LIMIT, RATE_WINDOW_MS, now);
+    if (!emailOk || !ipOk) {
+      // Derive Retry-After from the limit that tripped. A blocked hit() never
+      // consumes a slot (rate-limit.ts: "blocked attempts do NOT consume a
+      // slot"), so this read leaves both counters untouched.
+      const tripped = !emailOk
+        ? await rateLimiter.hit(emailKey, PER_EMAIL_LIMIT, RATE_WINDOW_MS, now)
+        : await rateLimiter.hit(ipKey, PER_IP_LIMIT, RATE_WINDOW_MS, now);
+      return { ok: false, code: "SAMO-AUTH-004", retryAfterSec: ceilSec(tripped.retryAfterMs) };
     }
-    const byIp = await rateLimiter.hit(`ip:${input.ip}`, PER_IP_LIMIT, RATE_WINDOW_MS, now);
-    if (!byIp.allowed) {
-      return { ok: false, code: "SAMO-AUTH-004", retryAfterSec: ceilSec(byIp.retryAfterMs) };
-    }
+    // Both within budget → commit both counters.
+    await rateLimiter.hit(emailKey, PER_EMAIL_LIMIT, RATE_WINDOW_MS, now);
+    await rateLimiter.hit(ipKey, PER_IP_LIMIT, RATE_WINDOW_MS, now);
 
     const jti = this.randomJti();
     const { token, claims } = issueMagicLinkToken({ email, keyring, now, jti, ttlMs });

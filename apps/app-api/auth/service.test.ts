@@ -9,18 +9,19 @@ import { AuthService } from "./service.ts";
 const SESSION_SECRET = "svc-session-secret";
 
 /** A service wired to in-memory fakes + a mutable clock; jti is deterministic. */
-function makeService() {
+function makeService(overrides: { rateLimiter?: InMemoryRateLimiter } = {}) {
   let now = Date.parse("2026-06-28T12:00:00.000Z");
   let n = 0;
   const emailSender = new InMemoryEmailSender();
   const linkStore = new InMemoryMagicLinkStore();
   const userStore = new InMemoryUserStore();
+  const rateLimiter = overrides.rateLimiter ?? new InMemoryRateLimiter();
   const service = new AuthService({
     keyring: new SigningKeyring("k2", { k1: "old", k2: "new" }),
     emailSender,
     linkStore,
     userStore,
-    rateLimiter: new InMemoryRateLimiter(),
+    rateLimiter,
     sessionSecret: SESSION_SECRET,
     clock: () => now,
     baseUrl: "https://samograph.dev",
@@ -31,6 +32,7 @@ function makeService() {
     emailSender,
     linkStore,
     userStore,
+    rateLimiter,
     advance: (ms: number) => {
       now += ms;
     },
@@ -86,6 +88,68 @@ describe("AuthService.requestMagicLink", () => {
     expect(blockedByIp.ok).toBe(false);
     if (!blockedByIp.ok) expect(blockedByIp.code).toBe("SAMO-AUTH-004");
     expect(b.emailSender.sent.length).toBe(20);
+  });
+
+  // Issue #63: check-both-then-commit. A rejection on ONE independent limit must
+  // NOT advance the OTHER limit's counter (no cross-limiter perturbation).
+  const HOUR = 60 * 60 * 1000;
+  const NOW = Date.parse("2026-06-28T12:00:00.000Z"); // == makeService clock
+
+  it("a per-IP rejection does NOT advance the per-email counter", async () => {
+    const rl = new InMemoryRateLimiter();
+    // Saturate the per-IP limit (20/hr) for this IP.
+    for (let i = 0; i < 20; i++) {
+      expect((await rl.hit("ip:5.5.5.5", 20, HOUR, NOW)).allowed).toBe(true);
+    }
+    const { service, emailSender } = makeService({ rateLimiter: rl });
+
+    // This request must be blocked by the IP limit...
+    const res = await service.requestMagicLink({ email: "victim@x.com", ip: "5.5.5.5" });
+    expect(res).toEqual({ ok: false, code: "SAMO-AUTH-004", retryAfterSec: 3600 });
+    expect(emailSender.sent.length).toBe(0);
+
+    // ...and it must leave victim's per-email counter UNTOUCHED. The first real
+    // hit therefore reports full budget minus one → remaining 4 (buggy: 3).
+    const afterEmail = await rl.hit("email:victim@x.com", 5, HOUR, NOW);
+    expect(afterEmail.remaining).toBe(4);
+  });
+
+  it("a per-email rejection does NOT advance the per-IP counter (symmetric)", async () => {
+    const rl = new InMemoryRateLimiter();
+    // Saturate the per-email limit (5/hr) for this email.
+    for (let i = 0; i < 5; i++) {
+      expect((await rl.hit("email:heavy@x.com", 5, HOUR, NOW)).allowed).toBe(true);
+    }
+    const { service, emailSender } = makeService({ rateLimiter: rl });
+
+    const res = await service.requestMagicLink({ email: "heavy@x.com", ip: "4.4.4.4" });
+    expect(res).toEqual({ ok: false, code: "SAMO-AUTH-004", retryAfterSec: 3600 });
+    expect(emailSender.sent.length).toBe(0);
+
+    // The per-IP counter must be UNTOUCHED: full 20 budget → first hit remaining 19.
+    const afterIp = await rl.hit("ip:4.4.4.4", 20, HOUR, NOW);
+    expect(afterIp.remaining).toBe(19);
+  });
+
+  it("after an IP-triggered rejection, the SAME email still has its FULL budget", async () => {
+    const rl = new InMemoryRateLimiter();
+    // Saturate the per-IP limit for one IP.
+    for (let i = 0; i < 20; i++) {
+      expect((await rl.hit("ip:3.3.3.3", 20, HOUR, NOW)).allowed).toBe(true);
+    }
+    const { service } = makeService({ rateLimiter: rl });
+
+    // Blocked by the IP limit — must not steal an email slot.
+    const blocked = await service.requestMagicLink({ email: "same@x.com", ip: "3.3.3.3" });
+    expect(blocked.ok).toBe(false);
+
+    // The SAME email, now from a clean IP, must get its full 5 successes.
+    let ok = 0;
+    for (let i = 0; i < 6; i++) {
+      const r = await service.requestMagicLink({ email: "same@x.com", ip: "2.2.2.2" });
+      if (r.ok) ok++;
+    }
+    expect(ok).toBe(5); // buggy: 4 (the blocked request already spent one slot)
   });
 });
 

@@ -16,6 +16,13 @@ export interface RateDecision {
 }
 
 export interface RateLimiter {
+  /**
+   * Non-committing check: would an attempt against `key` be within `limit` per
+   * `windowMs` right now? Reads only — never advances the counter. Lets a caller
+   * pre-check several INDEPENDENT limits and commit (`hit`) only if all pass, so
+   * a rejection on one limit never perturbs another's counter (issue #63).
+   */
+  peek(key: string, limit: number, windowMs: number, now: number): Promise<boolean>;
   /** Record an attempt against `key` and report whether it is within `limit` per `windowMs`. */
   hit(key: string, limit: number, windowMs: number, now: number): Promise<RateDecision>;
 }
@@ -23,6 +30,18 @@ export interface RateLimiter {
 /** In-memory sliding-window limiter (per-key timestamp list). */
 export class InMemoryRateLimiter implements RateLimiter {
   private readonly hits = new Map<string, number[]>();
+
+  /** Read-only would-this-be-allowed check; does NOT mutate the counter. */
+  async peek(
+    key: string,
+    limit: number,
+    windowMs: number,
+    now: number,
+  ): Promise<boolean> {
+    const cutoff = now - windowMs;
+    const live = (this.hits.get(key) ?? []).filter((ts) => ts > cutoff);
+    return live.length < limit;
+  }
 
   async hit(
     key: string,

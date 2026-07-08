@@ -56,4 +56,24 @@ describe("auth/rate-limit — InMemoryRateLimiter", () => {
     }
     expect((await rl.hit("ip:1.2.3.4", 20, HOUR, now)).allowed).toBe(false);
   });
+
+  it("peek reports would-be-allowed WITHOUT consuming a slot (issue #63)", async () => {
+    const rl = new InMemoryRateLimiter();
+    const now = 100;
+    // Peeking any number of times must never mutate the counter.
+    for (let i = 0; i < 10; i++) {
+      expect(await rl.peek("email:p@x.com", 5, HOUR, now)).toBe(true);
+    }
+    // Full 5 budget is still available after all those peeks.
+    for (let i = 1; i <= 5; i++) {
+      expect((await rl.hit("email:p@x.com", 5, HOUR, now)).remaining).toBe(5 - i);
+    }
+    // At the limit, peek reports false — still without mutating.
+    expect(await rl.peek("email:p@x.com", 5, HOUR, now)).toBe(false);
+    expect(await rl.peek("email:p@x.com", 5, HOUR, now)).toBe(false);
+    // A blocked hit after the peeks still reports the untouched window.
+    const blocked = await rl.hit("email:p@x.com", 5, HOUR, now);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterMs).toBe(HOUR);
+  });
 });
