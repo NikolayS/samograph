@@ -18,7 +18,7 @@ import { migrate } from "../../packages/shared/db/migrate.ts";
 import { mintShareToken } from "../../packages/shared/tokens/store.ts";
 import type { Keyring, SigningKey } from "../../packages/shared/tokens/signing.ts";
 import type { StreamAuthDeps } from "./stream.ts";
-import { ShareCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
+import { ShareCaps, RequestRateCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
 import { startWsHubServer, type WsHubServerHandle } from "./server.ts";
 
 const HAVE_DB = !!process.env.DATABASE_URL;
@@ -112,6 +112,49 @@ d("startWsHubServer health/404 + share-cap slot-leak guard", () => {
       expect(((await over.json()) as { code?: string }).code).toBe(RATE_LIMIT_ERROR_CODE); // SAMO-RATE-001
       expect(over.headers.get("retry-after")).not.toBeNull();
       a.ws.close();
+    } finally {
+      await h.stop();
+    }
+  });
+
+  // server.ts wires the REST request-rate cap through to BOTH transcript handlers.
+  // A leaked share link driving REST reads is now capped exactly like the WS path
+  // (before this fix the REST reads consulted NO cap → unbounded full-transcript DoS).
+  it("caps REST /transcript per share token → over-cap GET is 429 SAMO-RATE-001 + Retry-After", async () => {
+    const h = startWsHubServer({
+      sql,
+      authDeps,
+      restCaps: new RequestRateCaps({ perWindow: 2, windowMs: 60_000 }),
+      port: 0,
+    });
+    try {
+      const u = `${h.url}/calls/${callId}/transcript?token=${encodeURIComponent(token)}`;
+      expect((await fetch(u)).status).toBe(200); // 1
+      expect((await fetch(u)).status).toBe(200); // 2 — the last within the cap
+      const over = await fetch(u); // 3 — over-cap
+      expect(over.status).toBe(429);
+      expect(((await over.json()) as { code?: string }).code).toBe(RATE_LIMIT_ERROR_CODE);
+      expect(over.headers.get("retry-after")).not.toBeNull();
+    } finally {
+      await h.stop();
+    }
+  });
+
+  it("caps REST /transcript.txt per share token — shares the SAME budget as /transcript", async () => {
+    const h = startWsHubServer({
+      sql,
+      authDeps,
+      restCaps: new RequestRateCaps({ perWindow: 1, windowMs: 60_000 }),
+      port: 0,
+    });
+    try {
+      const tokenParam = `token=${encodeURIComponent(token)}`;
+      // Spend the single slot on the JSON route …
+      expect((await fetch(`${h.url}/calls/${callId}/transcript?${tokenParam}`)).status).toBe(200);
+      // … the .txt download on the SAME token is then over the shared cap → 429.
+      const over = await fetch(`${h.url}/calls/${callId}/transcript.txt?${tokenParam}`);
+      expect(over.status).toBe(429);
+      expect(((await over.json()) as { code?: string }).code).toBe(RATE_LIMIT_ERROR_CODE);
     } finally {
       await h.stop();
     }
