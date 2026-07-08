@@ -32,7 +32,26 @@ const post = (email: unknown, ip = "5.5.5.5") =>
   });
 
 describe("auth/http — clientIp", () => {
-  it("takes the first hop of X-Forwarded-For", () => {
+  it("prefers the trusted cf-connecting-ip over an attacker-controlled X-Forwarded-For", () => {
+    // Behind Cloudflare (which APPENDS to XFF), the leftmost XFF hop is
+    // fully attacker-supplied; cf-connecting-ip is Cloudflare's trusted client
+    // IP. clientIp() must key the per-IP limiter off the trusted header so a
+    // rotating spoofed XFF cannot mint fresh buckets (SPEC §5.1).
+    const req = new Request("https://x/", {
+      headers: { "x-forwarded-for": "1.2.3.4, 10.0.0.1", "cf-connecting-ip": "198.51.100.9" },
+    });
+    expect(clientIp(req)).toBe("198.51.100.9");
+  });
+  it("yields a STABLE key across rotating spoofed XFF when cf-connecting-ip is fixed", () => {
+    const key = (xff: string) =>
+      clientIp(new Request("https://x/", {
+        headers: { "x-forwarded-for": xff, "cf-connecting-ip": "203.0.113.50" },
+      }));
+    expect(key("1.1.1.1")).toBe("203.0.113.50");
+    expect(key("2.2.2.2")).toBe("203.0.113.50");
+    expect(key("3.3.3.3")).toBe("203.0.113.50");
+  });
+  it("falls back to the first X-Forwarded-For hop when cf-connecting-ip is absent", () => {
     const req = new Request("https://x/", { headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" } });
     expect(clientIp(req)).toBe("203.0.113.7");
   });

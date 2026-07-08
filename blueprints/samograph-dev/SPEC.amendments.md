@@ -199,19 +199,24 @@ completeness.
 
 ---
 
-## 11. §5.1 — `clientIp()` trusts the first `X-Forwarded-For` hop (trusted-proxy assumption) — *Clarification*
+## 11. §5.1 — `clientIp()` derives the client IP from a trusted header (trusted-proxy assumption) — *Clarification*
 
 **Amends:** §5.1 (per-IP rate limit).
 
-**What differs:** `clientIp()` derives the client IP from the first
-`X-Forwarded-For` hop (then `cf-connecting-ip`, else `'unknown'`).
+**What differs:** `clientIp()` derives the client IP from the trusted
+`cf-connecting-ip` header when present, falling back to the leftmost
+`X-Forwarded-For` hop only when it is absent (else `'unknown'`). The leftmost XFF
+hop is treated as **untrusted** — behind Cloudflare (the v1 edge), which *appends*
+to XFF, that hop is fully client-controlled.
 
-**Why:** Correct behind the edge/cloudflared tunnel that *overwrites* XFF, which is
-the v1 single-region-behind-tunnel topology. If a deployment ever exposes app-api
-without a trusted proxy that replaces (not appends) XFF, the per-IP limit could be
-spoofed and direct callers would collapse into one `'unknown'` bucket. Acceptable for
-v1; the **trusted-proxy assumption must be documented in ops docs** and enforced at
-the deployment boundary.
+**Why:** Preferring `cf-connecting-ip` (set by the trusted edge, unforgeable by the
+client) makes the per-IP limiter key STABLE under a rotating spoofed
+`X-Forwarded-For`, closing the email-bombing / send-amplification bypass of the
+20/hr per-IP cap. If a deployment ever exposes app-api without a trusted edge that
+sets `cf-connecting-ip` (or overwrites XFF), the XFF fallback could be spoofed and
+direct callers would collapse into one `'unknown'` bucket. The **trusted-proxy
+assumption must be documented in ops docs** (docs/runbooks/trusted-proxy.md) and
+enforced at the deployment boundary.
 
 ---
 
