@@ -24,6 +24,7 @@
 import { createAppApi } from "./app.ts";
 import {
   emailSenderFromEnv,
+  PostgresMagicLinkStore,
   type EmailSender,
   type MagicLinkEmail,
 } from "./auth/index.ts";
@@ -156,6 +157,11 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     webOrigin,
     enqueue,
     registry, // §5.11 GET /metrics scrape source (issue #108)
+    // PROD: restart/replica-safe magic-link store (issue #62). Migration 0007
+    // MUST be applied before this server boots. dev-server keeps the in-memory
+    // store. Auth is a privileged pre-tenant path, so `sql` is the privileged
+    // connection and `magic_links` carries no RLS / no samograph_app grant.
+    linkStore: new PostgresMagicLinkStore(sql),
     // PROD: no dev shortcuts — Secure is never stripped; no /__dev route exists.
     devShortcuts: undefined,
   });

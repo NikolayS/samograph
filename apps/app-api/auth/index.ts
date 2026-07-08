@@ -45,6 +45,7 @@ export {
   InMemoryUserStore,
 } from "./stores.ts";
 export { PostgresUserStore } from "./pg-user-store.ts";
+export { PostgresMagicLinkStore } from "./pg-magic-link-store.ts";
 export {
   type RateLimiter,
   type RateDecision,
