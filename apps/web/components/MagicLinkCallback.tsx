@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AppApiError, type AppApiClient } from "../lib/appApiClient.ts";
-import { authErrorMessage } from "../lib/authErrors.ts";
+import { authErrorMessage, AUTH_INFRA_MESSAGE } from "../lib/authErrors.ts";
 
 export interface MagicLinkCallbackProps {
   token: string | undefined;
@@ -40,8 +40,18 @@ export function MagicLinkCallback({ token, client }: MagicLinkCallbackProps) {
     client.verifyMagicLink(token).then(
       () => setState({ phase: "success" }),
       (err: unknown) => {
-        const code = err instanceof AppApiError ? err.code : "";
-        setState({ phase: "error", message: authErrorMessage(code) });
+        // Distinguish an infra failure (HTTP 5xx, or a network error that never
+        // reached a status) from a genuine token-invalid response (401/410). A
+        // 5xx body often has no `code`, so AppApiError.code falls back to
+        // SAMO-AUTH-001 — branching on `code` alone would wrongly tell the user
+        // their (valid) link is invalid. Branch on `status` instead.
+        const isAppErr = err instanceof AppApiError;
+        const status = isAppErr ? err.status : undefined;
+        const isInfra = !isAppErr || (status !== undefined && status >= 500);
+        const message = isInfra
+          ? AUTH_INFRA_MESSAGE
+          : authErrorMessage(err.code);
+        setState({ phase: "error", message });
       },
     );
   }, [token, client]);

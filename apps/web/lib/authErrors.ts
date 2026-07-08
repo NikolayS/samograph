@@ -25,6 +25,15 @@ const AUTH_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
 /** Shown when the server returns an unrecognized / non-auth error code. */
 export const AUTH_FALLBACK_MESSAGE = "Couldn't sign you in. Request a new link.";
 
+/**
+ * Shown for infra failures (HTTP 5xx or a network error) — NOT the token itself.
+ * A 5xx body often lacks a `code`, so the typed error's `code` falls back to
+ * `SAMO-AUTH-001`; the callback must branch on `status`, not `code`, so it does
+ * not mislead the user into thinking a valid link is invalid.
+ */
+export const AUTH_INFRA_MESSAGE =
+  "Something went wrong on our end — please try again.";
+
 export function isAuthErrorCode(code: string): code is AuthErrorCode {
   return (AUTH_ERROR_CODES as readonly string[]).includes(code);
 }
