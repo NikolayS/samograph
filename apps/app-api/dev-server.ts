@@ -28,6 +28,7 @@ import { connect } from "../../packages/shared/db/index.ts";
 import {
   resolveSamoEnv,
   usingDevDefaultSecrets,
+  APP_API_SIGNING_SECRETS,
   type EnvLike,
 } from "../../packages/shared/config/env.ts";
 import {
@@ -109,7 +110,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
 
   // #64: include TOKEN_SECRET in the dev warn (it too can silently fall back to
   // its public dev default). In dev this only WARNS; prod fail-closes in server.ts.
-  const devDefaults = usingDevDefaultSecrets(env);
+  const devDefaults = usingDevDefaultSecrets(env, APP_API_SIGNING_SECRETS);
 
   const sql = connect();
   const devSender = new DevEmailSender(PORT);

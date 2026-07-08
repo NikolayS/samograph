@@ -28,7 +28,11 @@ import {
   type MagicLinkEmail,
 } from "./auth/index.ts";
 import { connect } from "../../packages/shared/db/index.ts";
-import { assertNoDevDefaultSecrets, type EnvLike } from "../../packages/shared/config/env.ts";
+import {
+  assertNoDevDefaultSecrets,
+  APP_API_SIGNING_SECRETS,
+  type EnvLike,
+} from "../../packages/shared/config/env.ts";
 import {
   publicWebhookBase,
   runJoinJob,
@@ -66,8 +70,9 @@ function unconfiguredEmailSender(): EmailSender {
  * import it to exercise the fail-closed throw without binding a port.
  */
 export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof Bun.serve> {
-  // ── #64 fail-closed: hard-error BEFORE anything binds a port ──────────────
-  assertNoDevDefaultSecrets(env);
+  // ── #64 fail-closed: hard-error BEFORE anything binds a port. app-api uses
+  // all three signing secrets (magic links + sessions + share/capability tokens).
+  assertNoDevDefaultSecrets(env, APP_API_SIGNING_SECRETS);
 
   const port = Number(env.APP_API_PORT ?? 8787);
   const webOrigin = env.WEB_ORIGIN ?? "https://samograph.dev";

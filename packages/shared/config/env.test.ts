@@ -13,6 +13,8 @@ import {
   usingDevDefaultSecrets,
   resolveSamoEnv,
   DEV_DEFAULT_SECRETS,
+  APP_API_SIGNING_SECRETS,
+  WS_HUB_SIGNING_SECRETS,
 } from "./env.ts";
 
 const goodProd = (): Record<string, string | undefined> => ({
@@ -75,5 +77,63 @@ describe("usingDevDefaultSecrets — offending names", () => {
     const missing = goodProd();
     delete missing.SESSION_SECRET;
     expect(usingDevDefaultSecrets(missing)).toEqual(["SESSION_SECRET"]);
+  });
+});
+
+describe("per-service secret lists — each service checks only what it uses", () => {
+  it("APP_API list is all three; WS_HUB list is SESSION + TOKEN only (no MAGIC_LINK)", () => {
+    expect([...APP_API_SIGNING_SECRETS]).toEqual([
+      "SESSION_SECRET",
+      "MAGIC_LINK_SECRET",
+      "TOKEN_SECRET",
+    ]);
+    expect([...WS_HUB_SIGNING_SECRETS]).toEqual(["SESSION_SECRET", "TOKEN_SECRET"]);
+    expect(WS_HUB_SIGNING_SECRETS).not.toContain("MAGIC_LINK_SECRET");
+  });
+
+  describe("app-api guard (APP_API_SIGNING_SECRETS) — magic link IS required", () => {
+    it("THROWS on a dev-default MAGIC_LINK_SECRET", () => {
+      const env = { ...goodProd(), MAGIC_LINK_SECRET: DEV_DEFAULT_SECRETS.MAGIC_LINK_SECRET };
+      expect(() => assertNoDevDefaultSecrets(env, APP_API_SIGNING_SECRETS)).toThrow(
+        /MAGIC_LINK_SECRET/,
+      );
+    });
+    it("THROWS on a MISSING MAGIC_LINK_SECRET", () => {
+      const env = goodProd();
+      delete env.MAGIC_LINK_SECRET;
+      expect(() => assertNoDevDefaultSecrets(env, APP_API_SIGNING_SECRETS)).toThrow(
+        /MAGIC_LINK_SECRET/,
+      );
+    });
+  });
+
+  describe("ws-hub guard (WS_HUB_SIGNING_SECRETS) — magic link is IGNORED", () => {
+    it("does NOT throw on a dev-default MAGIC_LINK_SECRET (ws-hub never uses it)", () => {
+      const env = { ...goodProd(), MAGIC_LINK_SECRET: DEV_DEFAULT_SECRETS.MAGIC_LINK_SECRET };
+      expect(() => assertNoDevDefaultSecrets(env, WS_HUB_SIGNING_SECRETS)).not.toThrow();
+    });
+    it("does NOT throw on a MISSING MAGIC_LINK_SECRET", () => {
+      const env = goodProd();
+      delete env.MAGIC_LINK_SECRET;
+      expect(() => assertNoDevDefaultSecrets(env, WS_HUB_SIGNING_SECRETS)).not.toThrow();
+    });
+    it("STILL throws on a dev-default SESSION_SECRET", () => {
+      const env = { ...goodProd(), SESSION_SECRET: DEV_DEFAULT_SECRETS.SESSION_SECRET };
+      expect(() => assertNoDevDefaultSecrets(env, WS_HUB_SIGNING_SECRETS)).toThrow(
+        /SESSION_SECRET/,
+      );
+    });
+    it("STILL throws on a MISSING TOKEN_SECRET", () => {
+      const env = goodProd();
+      delete env.TOKEN_SECRET;
+      expect(() => assertNoDevDefaultSecrets(env, WS_HUB_SIGNING_SECRETS)).toThrow(/TOKEN_SECRET/);
+    });
+    it("reports ONLY the ws-hub secrets, never MAGIC_LINK_SECRET, even when all three are bad", () => {
+      const env = { ...goodProd(), ...DEV_DEFAULT_SECRETS };
+      expect(usingDevDefaultSecrets(env, WS_HUB_SIGNING_SECRETS)).toEqual([
+        "SESSION_SECRET",
+        "TOKEN_SECRET",
+      ]);
+    });
   });
 });

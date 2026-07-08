@@ -37,6 +37,21 @@ const SIGNING_SECRET_NAMES: readonly SigningSecretName[] = [
   "TOKEN_SECRET",
 ];
 
+/**
+ * The signing secrets each live prod service actually USES — the guard checks
+ * only these so a service never crash-loops over a secret it never reads.
+ *
+ * - `app-api` (`apps/app-api/server.ts`) mints magic links AND verifies
+ *   sessions AND mints share/capability tokens → all three.
+ * - `ws-hub` (`apps/ws-hub/dev-live-server.ts`) verifies the session cookie and
+ *   verifies share/capability tokens, but does NOT touch magic links →
+ *   `SESSION_SECRET` + `TOKEN_SECRET` only. Requiring `MAGIC_LINK_SECRET` in the
+ *   ws-hub (samograph-live) env would be an over-reach that crash-loops ws-hub
+ *   on deploy when that secret is absent from its env.
+ */
+export const APP_API_SIGNING_SECRETS: readonly SigningSecretName[] = SIGNING_SECRET_NAMES;
+export const WS_HUB_SIGNING_SECRETS: readonly SigningSecretName[] = ["SESSION_SECRET", "TOKEN_SECRET"];
+
 /** Minimal env shape (a subset of `process.env`). */
 export type EnvLike = Record<string, string | undefined>;
 
@@ -49,10 +64,18 @@ export function resolveSamoEnv(env: EnvLike): SamoEnv {
  * Names of the signing secrets that are MISSING or still equal to their
  * committed dev-default literal, in a stable order. `[]` means all are real.
  * Used by BOTH the prod fail-closed throw and the dev `usingDevSecrets` warn.
+ *
+ * `secretNames` scopes the check to the secrets the calling service actually
+ * uses (see {@link APP_API_SIGNING_SECRETS} / {@link WS_HUB_SIGNING_SECRETS});
+ * it defaults to all three (fail-safe: a caller that forgets checks MORE, never
+ * fewer). Order follows `secretNames` so the message is deterministic.
  */
-export function usingDevDefaultSecrets(env: EnvLike): SigningSecretName[] {
+export function usingDevDefaultSecrets(
+  env: EnvLike,
+  secretNames: readonly SigningSecretName[] = SIGNING_SECRET_NAMES,
+): SigningSecretName[] {
   const offending: SigningSecretName[] = [];
-  for (const name of SIGNING_SECRET_NAMES) {
+  for (const name of secretNames) {
     const value = env[name];
     if (!value || value === DEV_DEFAULT_SECRETS[name]) offending.push(name);
   }
@@ -61,13 +84,21 @@ export function usingDevDefaultSecrets(env: EnvLike): SigningSecretName[] {
 
 /**
  * Prod fail-closed guard: in prod, THROW (→ non-zero exit) when any signing
- * secret is missing or a committed dev default. In dev, a no-op (the caller
- * warns instead), so `scripts/dev-local.sh` — which intentionally uses the dev
- * defaults — still runs.
+ * secret the service USES is missing or a committed dev default. In dev, a
+ * no-op (the caller warns instead), so `scripts/dev-local.sh` — which
+ * intentionally uses the dev defaults — still runs.
+ *
+ * `secretNames` is the explicit list of secrets the caller depends on; each
+ * service passes only the ones it reads (see {@link APP_API_SIGNING_SECRETS} /
+ * {@link WS_HUB_SIGNING_SECRETS}) so, e.g., the ws-hub never crash-loops over a
+ * `MAGIC_LINK_SECRET` it never uses. Defaults to all three (fail-safe).
  */
-export function assertNoDevDefaultSecrets(env: EnvLike): void {
+export function assertNoDevDefaultSecrets(
+  env: EnvLike,
+  secretNames: readonly SigningSecretName[] = SIGNING_SECRET_NAMES,
+): void {
   if (resolveSamoEnv(env) !== "prod") return;
-  const offending = usingDevDefaultSecrets(env);
+  const offending = usingDevDefaultSecrets(env, secretNames);
   if (offending.length > 0) {
     throw new Error(
       `[fail-closed] refusing to boot with SAMO_ENV=prod: ${offending.join(", ")} ` +
