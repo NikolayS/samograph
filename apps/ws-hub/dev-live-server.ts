@@ -24,7 +24,8 @@ import type { Keyring } from "../../packages/shared/tokens/signing.ts";
 import type { AuthorizeDeps } from "../../packages/shared/auth/index.ts";
 import { verifySession } from "../app-api/auth/session.ts";
 import { inMemoryWebhookSecretProvider } from "../ingest/webhook.ts";
-import { createTranscriptPipeline, inMemoryTranscriptMetrics } from "../ingest/transcriptPipeline.ts";
+import { createTranscriptPipeline } from "../ingest/transcriptPipeline.ts";
+import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
 import type { ValidatedEvent } from "../ingest/webhook.ts";
 import { createRecallFake } from "../../packages/test-fakes/recall/index.ts";
 import { composeLiveStack } from "./liveBridge.ts";
@@ -79,10 +80,15 @@ const authDeps: AuthorizeDeps = {
   },
 };
 
+// ONE shared §5.11 registry per process (issue #108): every counter port writes
+// it and it is scraped at GET /metrics on the ingest server below.
+const registry = new MetricsRegistry();
+
 const stack = composeLiveStack({
   sql,
   authDeps,
   secretProvider: inMemoryWebhookSecretProvider(DEV_WEBHOOK_SECRET),
+  registry,
   wsPort: WS_HUB_PORT,
   ingestPort: INGEST_PORT,
 });
@@ -116,7 +122,7 @@ async function devSay(callId: string, speaker: string, text: string): Promise<vo
       captured.push(f);
     },
   };
-  const pipeline = createTranscriptPipeline({ publisher: capturing, metrics: inMemoryTranscriptMetrics() });
+  const pipeline = createTranscriptPipeline({ publisher: capturing, metrics: registry });
   const event: ValidatedEvent = {
     kind: "transcript.data",
     botId: "dev",
@@ -168,6 +174,7 @@ console.log(
   `\n[live] composed ingest + ws-hub on a shared Hub (LOCAL-ONLY, fake)\n` +
     `  ws-hub stream : ${stack.wsHub.url}/calls/:id/stream  (WS) + /calls/:id/transcript (REST)\n` +
     `  ingest webhook: ${stack.ingest.url}/webhook  (signed fake webhooks)\n` +
+    `  metrics       : ${stack.ingest.url}/metrics  (§5.11 Prometheus exposition)\n` +
     `  dev control   : http://localhost:${ctrl.port}/__dev/say  (POST {call_id, speaker, text})\n` +
     `  watchdog      : region '${REGION_ID}' probing ${PROBE_BASE}/health every 20s ` +
     `(leader=${watchdog.isLeader() ? "yes" : "pending first tick"}; §4.5 outage → SAMOGRAPH-WARNING + degraded banner)\n` +

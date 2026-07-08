@@ -48,6 +48,7 @@ import {
   STATUS_POLL_INTERVAL_MS,
 } from "../bot-orchestrator/statusPoller.ts";
 import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
+import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
 
 /**
  * Prod email fallback: if `RESEND_API_KEY` is not configured there is NO dev
@@ -86,6 +87,9 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
   const tokenKid = env.TOKEN_KID ?? "dev-share";
 
   const sql = connect();
+  // ONE shared §5.11 registry per process (issue #108): the bot-join producer
+  // (poller + runJoinJob) increments it and it is scraped at GET /metrics.
+  const registry = new MetricsRegistry();
   // REAL transactional email (Resend) when RESEND_API_KEY is set; otherwise the
   // prod fallback throws on send (no silent drop, no dev fake in prod).
   const sender = emailSenderFromEnv(env, unconfiguredEmailSender());
@@ -105,6 +109,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
         recall,
         store: pgCallStore(sql),
         webhookBase,
+        metrics: registry, // §5.11 bot_join_total{could_not_join} (issue #108/#107)
         logger: { info: (event, fields) => console.log(`[orchestrator] ${event}`, fields ?? {}) },
       });
       if (outcome.status === "COULD_NOT_JOIN") {
@@ -132,6 +137,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
       source: liveBotStatusSource(),
       actions: liveRecallBotActions(),
       publisher: new PgListenNotifyPublisher(sql),
+      metrics: registry, // §5.11 bot_join_total{in_call|could_not_join|could_not_record} (#108/#107)
       logger: console,
     });
     console.log(
@@ -149,6 +155,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     emailSender: sender,
     webOrigin,
     enqueue,
+    registry, // §5.11 GET /metrics scrape source (issue #108)
     // PROD: no dev shortcuts — Secure is never stripped; no /__dev route exists.
     devShortcuts: undefined,
   });
