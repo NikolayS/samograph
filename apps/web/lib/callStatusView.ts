@@ -19,6 +19,13 @@ export interface StatusView {
   message: string;
   /** Stable `SAMO-CALL-*` code (SPEC §5.16), only for terminal failures. */
   code?: string;
+  /**
+   * Bespoke, human-readable guidance for a terminal failure the user can act on
+   * (`COULD_NOT_RECORD`, `BOT_REMOVED`). Rendered under the §5.16 message so the
+   * failure never reads as a dead end. `COULD_NOT_JOIN` deliberately has none —
+   * its recovery is the Story-4 "Try again" affordance, not a hint.
+   */
+  hint?: string;
   isTerminal: boolean;
   /** Story 4: "Try again" → dashboard with URL pre-filled — only `COULD_NOT_JOIN`. */
   showTryAgain: boolean;
@@ -85,6 +92,7 @@ export function statusView(
       kind: "error",
       message: `Couldn't start recording — ${reason}.`,
       code: "SAMO-CALL-NOREC",
+      hint: "Check the meeting's recording permissions, then add the call again.",
       isTerminal,
       showTryAgain: false,
     };
@@ -97,6 +105,7 @@ export function statusView(
       kind: "error",
       message: "The bot was removed from the call.",
       code: "SAMO-CALL-REMOVED",
+      hint: "A host removed samograph from the meeting.",
       isTerminal,
       showTryAgain: false,
     };

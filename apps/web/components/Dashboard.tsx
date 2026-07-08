@@ -45,6 +45,54 @@ function rowAriaLabel(url: string, view: StatusView, cta: RowCta | null): string
   return `${view.message} ${url} — open call`;
 }
 
+/** Render one call as a whole-row transcript link with its status/error copy. */
+function CallRow({ call }: { call: Call }) {
+  // §5.16 view: for a terminal failure the message carries the persisted
+  // status_reason ("Couldn't join — <reason>.") plus a bespoke, actionable hint.
+  const view = statusView(call.status, { recallReason: call.statusReason });
+  const cta = rowCta(view);
+  return (
+    <li className="samograph-call-item">
+      {/* Whole-row link into the per-call transcript page; ?url= lets that page's
+          Story-4 "Try again" (COULD_NOT_JOIN) pre-fill the paste input. The
+          explicit CTA below makes the row read as an obvious, tappable way in. */}
+      <a
+        className="samograph-call-row"
+        data-status-kind={view.kind}
+        href={`/calls/${encodeURIComponent(call.id)}?url=${encodeURIComponent(call.meetingUrl)}`}
+        aria-label={rowAriaLabel(call.meetingUrl, view, cta)}
+      >
+        <span className="samograph-call-body">
+          <span className="samograph-call-url">{call.meetingUrl}</span>
+          {view.kind === "error" ? (
+            <>
+              <span className="samograph-call-error">{view.message}</span>
+              {view.hint ? (
+                <span className="samograph-call-hint">{view.hint}</span>
+              ) : null}
+            </>
+          ) : view.kind === "live" ? null : (
+            <span className="samograph-call-status">{view.label}</span>
+          )}
+        </span>
+        {cta ? (
+          <span className={`samograph-call-cta samograph-call-cta-${cta.kind}`}>
+            {cta.kind === "live" ? (
+              <span className="samograph-call-live-dot" aria-hidden="true" />
+            ) : null}
+            <span className="samograph-call-cta-text">{cta.text}</span>
+            {cta.kind === "live" ? null : (
+              <span className="samograph-call-cta-arrow" aria-hidden="true">
+                →
+              </span>
+            )}
+          </span>
+        ) : null}
+      </a>
+    </li>
+  );
+}
+
 /**
  * Dashboard shell (SPEC §3 Story 1). On load it fetches the tenant's calls via
  * `GET /calls` and renders them, so the list persists across reload (the create
@@ -81,8 +129,8 @@ export function Dashboard({ client, redirect, initialUrl }: DashboardProps) {
 
   if (status === "loading") {
     return (
-      <section aria-live="polite">
-        <p>Loading your dashboard…</p>
+      <section aria-live="polite" aria-busy="true">
+        <p role="status">Loading your dashboard…</p>
       </section>
     );
   }
@@ -95,63 +143,52 @@ export function Dashboard({ client, redirect, initialUrl }: DashboardProps) {
     );
   }
 
+  // Split into two clearly-labelled groups: still-running calls the user might
+  // want to open live vs. finished/failed ones. Terminal = ENDED plus every
+  // COULD_NOT_* / BOT_REMOVED failure (`isTerminalStatus`, SPEC §5.2).
+  const active = calls.filter((c) => !statusView(c.status).isTerminal);
+  const past = calls.filter((c) => statusView(c.status).isTerminal);
+
   return (
     <>
       <header>
         <LogoutButton client={client} redirect={redirect} />
       </header>
       <AddToCallForm client={client} initialUrl={initialUrl} onCreated={() => void load()} />
-      <section aria-label="Your calls">
-        <h2>Your calls</h2>
-        {calls.length === 0 ? (
-          <p>No calls yet. Paste a meeting link above to add samograph.</p>
-        ) : (
-          <ul className="samograph-call-list">
-            {calls.map((c) => {
-              // §5.16 view: for a terminal failure the message carries the
-              // persisted status_reason ("Couldn't join — <reason>.").
-              const view = statusView(c.status, { recallReason: c.statusReason });
-              const cta = rowCta(view);
-              return (
-                <li key={c.id} className="samograph-call-item">
-                  {/* Whole-row link into the per-call transcript page; ?url= lets
-                      that page's Story-4 "Try again" (COULD_NOT_JOIN) pre-fill the
-                      paste input. The explicit CTA below makes the row read as an
-                      obvious, tappable way into the transcript. */}
-                  <a
-                    className="samograph-call-row"
-                    data-status-kind={view.kind}
-                    href={`/calls/${encodeURIComponent(c.id)}?url=${encodeURIComponent(c.meetingUrl)}`}
-                    aria-label={rowAriaLabel(c.meetingUrl, view, cta)}
-                  >
-                    <span className="samograph-call-body">
-                      <span className="samograph-call-url">{c.meetingUrl}</span>
-                      {view.kind === "error" ? (
-                        <span className="samograph-call-error">{view.message}</span>
-                      ) : view.kind === "live" ? null : (
-                        <span className="samograph-call-status">{view.label}</span>
-                      )}
-                    </span>
-                    {cta ? (
-                      <span className={`samograph-call-cta samograph-call-cta-${cta.kind}`}>
-                        {cta.kind === "live" ? (
-                          <span className="samograph-call-live-dot" aria-hidden="true" />
-                        ) : null}
-                        <span className="samograph-call-cta-text">{cta.text}</span>
-                        {cta.kind === "live" ? null : (
-                          <span className="samograph-call-cta-arrow" aria-hidden="true">
-                            →
-                          </span>
-                        )}
-                      </span>
-                    ) : null}
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+      {calls.length === 0 ? (
+        <section aria-label="Your calls" className="samograph-empty-state">
+          <h2>Your calls</h2>
+          <p className="samograph-empty-title">No calls yet.</p>
+          <p>Paste a Zoom or Google Meet link above to add samograph to your first call.</p>
+          <p className="samograph-empty-hint">
+            samograph joins the meeting and streams a live transcript you can watch,
+            share read-only, and download.
+          </p>
+        </section>
+      ) : (
+        <>
+          {active.length > 0 ? (
+            <section aria-label="Active calls">
+              <h2>Active calls</h2>
+              <ul className="samograph-call-list">
+                {active.map((c) => (
+                  <CallRow key={c.id} call={c} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {past.length > 0 ? (
+            <section aria-label="Past calls">
+              <h2>Past calls</h2>
+              <ul className="samograph-call-list">
+                {past.map((c) => (
+                  <CallRow key={c.id} call={c} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </>
+      )}
     </>
   );
 }
