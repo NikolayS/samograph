@@ -80,6 +80,25 @@ describe("statusView — error codes (SPEC §5.16)", () => {
   });
 });
 
+describe("statusView — bespoke terminal-failure hints (§5.16, Sprint-3 polish)", () => {
+  it("COULD_NOT_RECORD carries an actionable hint alongside its message", () => {
+    const v = statusView("COULD_NOT_RECORD", {
+      recallReason: "recording_permission_denied_by_host",
+    });
+    expect(v.hint).toBe("Check the meeting's recording permissions, then add the call again.");
+  });
+
+  it("BOT_REMOVED carries a bespoke hint explaining who ended it", () => {
+    expect(statusView("BOT_REMOVED").hint).toBe("A host removed samograph from the meeting.");
+  });
+
+  it("non-record/removed statuses carry NO hint (COULD_NOT_JOIN owns Try again)", () => {
+    for (const s of ["PENDING", "JOINING", "IN_CALL", "ENDED", "COULD_NOT_JOIN"] as CallStatus[]) {
+      expect(statusView(s).hint).toBeUndefined();
+    }
+  });
+});
+
 describe("statusView — showTryAgain is true ONLY for COULD_NOT_JOIN (Story 4)", () => {
   const all: CallStatus[] = [
     "PENDING",

@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "samograph — live transcripts for your calls",
   description:
-    "Add samograph to a Zoom or Google Meet call and watch the transcript stream live.",
+    "Zero-setup live transcripts for your Zoom and Google Meet calls. Sign in, add a meeting link, watch it stream live, then share read-only or download.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

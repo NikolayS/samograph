@@ -227,6 +227,94 @@ describe("Dashboard — each call row is an obvious transcript link (affordance)
   });
 });
 
+describe("Dashboard — Active vs Past grouping (Sprint-3 polish, SPEC §3)", () => {
+  const MIXED: Call[] = [
+    { id: "c_live", meetingUrl: "https://zoom.us/j/live", provider: "zoom", status: "IN_CALL" },
+    { id: "c_pending", meetingUrl: "https://zoom.us/j/pending", provider: "zoom", status: "PENDING" },
+    { id: "c_ended", meetingUrl: "https://zoom.us/j/ended", provider: "zoom", status: "ENDED" },
+    {
+      id: "c_norec",
+      meetingUrl: "https://zoom.us/j/norec",
+      provider: "zoom",
+      status: "COULD_NOT_RECORD",
+      statusReason: "recording_permission_denied_by_host",
+    },
+    { id: "c_removed", meetingUrl: "https://zoom.us/j/removed", provider: "zoom", status: "BOT_REMOVED" },
+  ];
+
+  it("renders two clearly-labelled groups: 'Active calls' and 'Past calls'", async () => {
+    const client = createFakeAppApiClient({ seedCalls: MIXED });
+    const { findByRole } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    expect(await findByRole("heading", { name: "Active calls" })).toBeDefined();
+    expect(await findByRole("heading", { name: "Past calls" })).toBeDefined();
+  });
+
+  it("places PENDING/JOINING/IN_CALL under Active and terminal calls under Past", async () => {
+    const client = createFakeAppApiClient({ seedCalls: MIXED });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    const active = (await findByText("Active calls")).closest("section");
+    const past = (await findByText("Past calls")).closest("section");
+    if (!active || !past) throw new Error("missing group sections");
+    // Active group: live + pending only.
+    expect(active.textContent).toContain("https://zoom.us/j/live");
+    expect(active.textContent).toContain("https://zoom.us/j/pending");
+    expect(active.textContent).not.toContain("https://zoom.us/j/ended");
+    expect(active.textContent).not.toContain("https://zoom.us/j/norec");
+    // Past group: ended + terminal failures only.
+    expect(past.textContent).toContain("https://zoom.us/j/ended");
+    expect(past.textContent).toContain("https://zoom.us/j/norec");
+    expect(past.textContent).toContain("https://zoom.us/j/removed");
+    expect(past.textContent).not.toContain("https://zoom.us/j/live");
+  });
+
+  it("omits the 'Past calls' heading entirely when every call is active", async () => {
+    const client = createFakeAppApiClient({
+      seedCalls: [{ id: "c1", meetingUrl: "https://zoom.us/j/a", provider: "zoom", status: "IN_CALL" }],
+    });
+    const { findByRole, queryByRole } = render(
+      <Dashboard client={client} redirect={noopRedirect} />,
+    );
+    expect(await findByRole("heading", { name: "Active calls" })).toBeDefined();
+    expect(queryByRole("heading", { name: "Past calls" })).toBeNull();
+  });
+
+  it("renders the bespoke COULD_NOT_RECORD hint in the Past group", async () => {
+    const client = createFakeAppApiClient({ seedCalls: MIXED });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    expect(
+      await findByText("Check the meeting's recording permissions, then add the call again."),
+    ).toBeDefined();
+  });
+
+  it("renders the bespoke BOT_REMOVED hint in the Past group", async () => {
+    const client = createFakeAppApiClient({ seedCalls: MIXED });
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    expect(await findByText("A host removed samograph from the meeting.")).toBeDefined();
+  });
+});
+
+describe("Dashboard — first-run empty & loading states (Sprint-3 polish)", () => {
+  it("shows an accessible loading state on first paint", () => {
+    const client = createFakeAppApiClient({ seedCalls: SEED });
+    const { getByRole } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    // Before the GET /calls promise settles, a status region announces loading.
+    const status = getByRole("status");
+    expect(status.textContent).toBe("Loading your dashboard…");
+  });
+
+  it("gives first-run guidance (not just 'No calls yet') when there are no calls", async () => {
+    const client = createFakeAppApiClient();
+    const { findByText } = render(<Dashboard client={client} redirect={noopRedirect} />);
+    expect(await findByText(/No calls yet/)).toBeDefined();
+    // Concrete first-call guidance, so a new user knows exactly what to do.
+    expect(
+      await findByText(
+        "Paste a Zoom or Google Meet link above to add samograph to your first call.",
+      ),
+    ).toBeDefined();
+  });
+});
+
 describe("Dashboard — Story-4 URL pre-fill (SPEC §5.2, Story 4)", () => {
   const URL = "https://meet.google.com/abc-defg-hij";
 
