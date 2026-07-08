@@ -27,7 +27,7 @@ import {
   type OrchestratorJob,
 } from "../../bot-orchestrator/index.ts";
 import { signSession, SESSION_COOKIE_NAME } from "../auth/session.ts";
-import { createCallsHandler } from "./http.ts";
+import { createCallsHandler, BOT_CREATE_PER_TENANT_LIMIT } from "./http.ts";
 
 const HAVE_DB = !!process.env.DATABASE_URL;
 const d = HAVE_DB ? describe : describe.skip;
@@ -145,6 +145,39 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
 
     // The orchestrator seam was enqueued with exactly this call + url.
     expect(jobs).toEqual([{ callId: body.id, meetingUrl: MEET_URL }]);
+  });
+
+  // ── §8 / §5.16: per-tenant bot-creation guardrail against the REAL create path ──
+  it("POST /calls: the (cap+1)th create in the window → 429 SAMO-RECALL-COST; the rejected create writes NO row; another tenant is unaffected", async () => {
+    // One handler → one shared per-tenant limiter across the whole loop.
+    const { handler, jobs } = makeHandler();
+    const before = await countCalls(tenantA);
+
+    // The first BOT_CREATE_PER_TENANT_LIMIT creates for tenant A all succeed (201).
+    for (let i = 0; i < BOT_CREATE_PER_TENANT_LIMIT; i++) {
+      const res = await handler(req("POST", "/calls", { cookie: cookieA, body: { meeting_url: MEET_URL } }));
+      expect(res.status).toBe(201);
+    }
+    expect(await countCalls(tenantA)).toBe(before + BOT_CREATE_PER_TENANT_LIMIT);
+    expect(jobs.length).toBe(BOT_CREATE_PER_TENANT_LIMIT); // one enqueue per successful create
+
+    // The (cap+1)th create is rejected: 429 SAMO-RECALL-COST + Retry-After …
+    const over = await handler(req("POST", "/calls", { cookie: cookieA, body: { meeting_url: MEET_URL } }));
+    expect(over.status).toBe(429);
+    expect(Number(over.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    const overBody = (await over.json()) as { code: string; retryable: boolean };
+    expect(overBody.code).toBe("SAMO-RECALL-COST"); // per-tenant guardrail, NOT SAMO-RATE-001
+    expect(overBody.retryable).toBe(true);
+
+    // … and it committed NOTHING (check-before-commit): row count + enqueue unchanged.
+    expect(await countCalls(tenantA)).toBe(before + BOT_CREATE_PER_TENANT_LIMIT);
+    expect(jobs.length).toBe(BOT_CREATE_PER_TENANT_LIMIT);
+
+    // A DIFFERENT tenant (B) on the SAME handler is unaffected — its budget is fresh.
+    const bBefore = await countCalls(tenantB);
+    const bRes = await handler(req("POST", "/calls", { cookie: cookieB, body: { meeting_url: ZOOM_URL } }));
+    expect(bRes.status).toBe(201);
+    expect(await countCalls(tenantB)).toBe(bBefore + 1);
   });
 
   it("POST /calls: valid Zoom URL is also accepted → 201 PENDING", async () => {

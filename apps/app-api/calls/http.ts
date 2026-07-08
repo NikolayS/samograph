@@ -29,9 +29,43 @@ import { AUTH_ERRORS } from "../auth/errors.ts";
 import type { OrchestratorJob } from "../../bot-orchestrator/index.ts";
 import { validateMeetingUrl } from "./validate.ts";
 import { errorResponse, CALL_URL_INVALID } from "./errors.ts";
+import { InMemoryRateLimiter, type RateLimiter } from "../auth/rate-limit.ts";
 
 /** Default TTL for a minted share token's `expires_at` (§5.7): 30 days. */
 const DEFAULT_SHARE_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Per-tenant bot-creation cap (SPEC §5.16 `SAMO-RECALL-COST`, §8 "rate-limit bot
+ * creation per tenant"): at most this many `POST /calls` creates per tenant per
+ * {@link BOT_CREATE_WINDOW_MS}. This is the PER-TENANT usage guardrail — distinct
+ * from the share-scoped connection cap `SAMO-RATE-001` (§5.7), which this route
+ * must NOT overload. A sensible v1 value: 30 bot creates per hour per tenant.
+ */
+export const BOT_CREATE_PER_TENANT_LIMIT = 30;
+/** Bot-creation rate window: 1 hour. */
+export const BOT_CREATE_WINDOW_MS = 60 * 60 * 1000;
+/** §5.16 code for the per-tenant active-call / minutes guardrail (429, retryable). */
+export const RECALL_COST_CODE = "SAMO-RECALL-COST" as const;
+
+/**
+ * The 429 the per-tenant bot-creation guardrail returns (§5.16 `SAMO-RECALL-COST`).
+ * Carries a `Retry-After` in WHOLE seconds (≥ 1) so a rejected client backs off,
+ * and the typed `{ code, message, retryable }` envelope — never a silent failure.
+ */
+function recallCostResponse(retryAfterMs: number): Response {
+  const retryAfterSec = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  return new Response(
+    JSON.stringify({
+      code: RECALL_COST_CODE,
+      message: "You've reached your usage limit for now.",
+      retryable: true,
+    }),
+    {
+      status: 429,
+      headers: { "content-type": "application/json", "Retry-After": String(retryAfterSec) },
+    },
+  );
+}
 
 /** SQLSTATE for a foreign-key violation — `calls.tenant_id → tenants` (§5.14 / #114). */
 const FK_VIOLATION = "23503";
@@ -76,6 +110,12 @@ export interface CallsHandlerDeps {
   keyring?: Keyring;
   /** TTL (seconds) for a minted share token's `expires_at`; defaults to 30 days. */
   shareTtlSeconds?: number;
+  /**
+   * Per-tenant bot-creation limiter (§8, `SAMO-RECALL-COST`). Reuses the #63
+   * {@link RateLimiter} port (peek/hit); defaults to a process-local
+   * {@link InMemoryRateLimiter}. A shared-state impl can replace it across replicas.
+   */
+  rateLimiter?: RateLimiter;
   /** Epoch-ms clock; defaults to the wall clock. */
   now?: () => number;
 }
@@ -98,6 +138,43 @@ function serializeCall(row: Record<string, unknown>) {
     ended_at: row.ended_at,
     first_line_at: row.first_line_at,
   };
+}
+
+/**
+ * The EXPLICIT ALLOWLIST of {@link serializeCall} fields a `share`-scope viewer
+ * may see (SPEC §5.7 "REDUCED view", §5.16, §8 "share-view allowlist"). This is an
+ * ALLOWLIST, not a denylist: any field NOT named here is hidden from `share` scope
+ * BY DEFAULT, so a newly-added `calls` column (or `serializeCall` field) never
+ * leaks to an anonymous share link unless a human deliberately adds it here.
+ *
+ * Share sees ONLY the status header + timeline — never the owner's meeting
+ * coordinates (`meeting_url`), bot internals (`recall_bot_id`), or routing
+ * (`region`). Flipping this from the previous omit-these-fields denylist closes
+ * the "add a sensitive column, forget to add it to the denylist → it leaks"
+ * failure mode (§8).
+ */
+export const SHARE_VIEW_FIELDS = [
+  "id",
+  "status",
+  "status_reason",
+  "ingest_degraded",
+  "created_at",
+  "ended_at",
+  "first_line_at",
+] as const;
+
+/**
+ * Project the full owner view down to the {@link SHARE_VIEW_FIELDS} allowlist.
+ * Default-hide: only allowlisted keys survive, so a field added to
+ * {@link serializeCall} later is invisible to `share` scope until it is
+ * deliberately allowlisted here.
+ */
+export function shareView(full: Record<string, unknown>): Record<string, unknown> {
+  const reduced: Record<string, unknown> = {};
+  for (const key of SHARE_VIEW_FIELDS) {
+    if (key in full) reduced[key] = full[key];
+  }
+  return reduced;
 }
 
 /** Unused placeholder when no real keyring is wired (the session path never reads it). */
@@ -153,6 +230,7 @@ export function createCallsHandler(
   const { sql, sessionSecret, enqueue } = deps;
   const keyring = deps.keyring ?? PLACEHOLDER_KEYRING;
   const shareTtlSeconds = deps.shareTtlSeconds ?? DEFAULT_SHARE_TTL_SECONDS;
+  const rateLimiter = deps.rateLimiter ?? new InMemoryRateLimiter();
   const nowSec = (): number | undefined => (deps.now ? Math.floor(deps.now() / 1000) : undefined);
   // Epoch-MILLISECONDS clock for the session TTL. `deps.now` is already ms (unlike
   // `nowSec`, which the TOKEN path floors to seconds). NEVER feed `nowSec()` to
@@ -236,6 +314,26 @@ export function createCallsHandler(
       //    tenant → 401 clear-cookie, never the uncaught FK 500 it used to throw.
       if (!(await tenantExists(claims.tenantId))) return sessionInvalidResponse();
 
+      // 3.5) Per-tenant bot-creation guardrail (§5.16 `SAMO-RECALL-COST`, §8). The
+      //    (cap+1)th create within the window → 429 + `Retry-After`. CHECK-before-
+      //    COMMIT: `peek` is non-committing, so a rejected create never consumes a
+      //    slot; the slot is only recorded (`hit`) AFTER the create commits (step 4).
+      //    Keyed strictly by tenant, so one tenant hitting the cap never blocks
+      //    another. This is the per-tenant guardrail — NOT the share-scoped
+      //    `SAMO-RATE-001` cap (§5.7), which is intentionally not overloaded here.
+      const rateKey = `bot-create:${claims.tenantId}`;
+      const rateNow = nowMs();
+      if (!(await rateLimiter.peek(rateKey, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, rateNow))) {
+        // A blocked `hit` reports the back-off WITHOUT consuming a slot.
+        const blocked = await rateLimiter.hit(
+          rateKey,
+          BOT_CREATE_PER_TENANT_LIMIT,
+          BOT_CREATE_WINDOW_MS,
+          rateNow,
+        );
+        return recallCostResponse(blocked.retryAfterMs);
+      }
+
       // 4) Create the PENDING call + audit entry under the tenant, as samograph_app.
       //    If the tenant is deleted in the race between (3) and here, the FK
       //    violation (calls.tenant_id → tenants, SQLSTATE 23503) maps to the SAME
@@ -259,6 +357,12 @@ export function createCallsHandler(
         if ((err as { errno?: string }).errno === FK_VIOLATION) return sessionInvalidResponse();
         throw err;
       }
+
+      // 4.5) Record the SUCCESSFUL create against the per-tenant guardrail. Done
+      //    AFTER the commit so a create that threw (e.g. FK on a raced tenant
+      //    delete → 401 above) never consumes a slot — the check-before-commit
+      //    discipline, so the counter tracks real creates, not attempts (§8).
+      await rateLimiter.hit(rateKey, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, rateNow);
 
       // 5) Enqueue the bot-orchestrator join job (§5.2). Return id + status.
       await enqueue({ callId: created.id, meetingUrl: valid.url });
@@ -506,9 +610,10 @@ export function createCallsHandler(
         if (!rows.length) return null;
         const full = serializeCall(rows[0]);
         if (authz.scopes.includes("read")) return full;
-        // `share` scope: status header only (id/status/reason/degraded/timeline).
-        const { meeting_url: _url, recall_bot_id: _bot, region: _region, ...shared } = full;
-        return shared;
+        // `share` scope: an explicit ALLOWLIST (§5.7, §8) — status header +
+        // timeline only. A newly-added call field is hidden by default; never
+        // the owner's meeting_url / recall_bot_id / region.
+        return shareView(full as unknown as Record<string, unknown>);
       });
       if (!result) return denied();
       return Response.json(result, { status: 200 });

@@ -49,7 +49,7 @@ import {
   type BotWorkerPort,
 } from "../ingest/botLifecycle.ts";
 import { Hub } from "./hub.ts";
-import { ShareCaps } from "./caps.ts";
+import { ShareCaps, ReadCaps } from "./caps.ts";
 import { createFanIn, type FanIn } from "./fanIn.ts";
 import type { StreamAuthDeps } from "./stream.ts";
 import { startWsHubServer, stopServerBounded, type WsHubServerHandle } from "./server.ts";
@@ -66,6 +66,8 @@ export interface LiveStackDeps {
   worker?: BotWorkerPort;
   /** Share-scope caps; defaults to spec values. */
   caps?: ShareCaps;
+  /** Read-scope per-(session, call) concurrent cap (§5.7, §8); defaults to spec values. */
+  readCaps?: ReadCaps;
   /** Shared Hub; defaults to a fresh one. */
   hub?: Hub;
   /** `?bot=` → call resolver; defaults to the privileged Postgres lookup. */
@@ -97,6 +99,7 @@ export interface LiveStackHandle {
 export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   const hub = deps.hub ?? new Hub();
   const caps = deps.caps ?? new ShareCaps();
+  const readCaps = deps.readCaps ?? new ReadCaps();
   const worker = (deps.worker as ReturnType<typeof inMemoryBotWorker>) ?? inMemoryBotWorker();
   const transcriptMetrics = deps.transcriptMetrics ?? inMemoryTranscriptMetrics();
   const lifecycleMetrics = deps.lifecycleMetrics ?? inMemoryBotLifecycleMetrics();
@@ -114,9 +117,10 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   // ── ws-hub: serves /calls/:id/stream + /transcript off the shared Hub. ───────
   const wsHub = startWsHubServer({
     sql: deps.sql,
-    authDeps: { ...deps.authDeps, caps },
+    authDeps: { ...deps.authDeps, caps, readCaps },
     hub,
     caps,
+    readCaps,
     port: deps.wsPort,
     hostname: deps.hostname,
     recheckIntervalMs: deps.recheckIntervalMs,

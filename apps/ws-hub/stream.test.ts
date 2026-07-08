@@ -33,7 +33,7 @@ import {
   type StreamSocket,
   type PrepareStreamResult,
 } from "./stream.ts";
-import { ShareCaps } from "./caps.ts";
+import { ShareCaps, ReadCaps } from "./caps.ts";
 
 // ─── fakes / helpers ────────────────────────────────────────────────────────
 
@@ -469,6 +469,21 @@ d("GET /calls/:id/stream — DB-backed (§5.5 / §5.6 / §6.2 #3/#4)", () => {
     return { opened: true as const, conn, scope: prepared.scope };
   }
 
+  /** Same wiring, but with the READ caps (and optionally share caps) threaded through. */
+  async function upgradeWithReadCaps(
+    socket: FakeSocket,
+    hub: Hub,
+    req: Request,
+    readCaps: ReadCaps,
+    caps?: ShareCaps,
+  ) {
+    const deps = { ...authDeps, readCaps, caps };
+    const prepared = await prepareStream(sql, req, deps);
+    if (!prepared.ok) return { opened: false as const, response: prepared.response };
+    const conn = await openStream(socket, prepared, { sql, hub, authDeps: deps, readCaps, caps });
+    return { opened: true as const, conn, scope: prepared.scope };
+  }
+
   /**
    * Wrap `sql` so every `… FROM tokens …` read inside a `begin` is counted —
    * proves the gate does ONE token DB lookup per upgrade (no verifier cache).
@@ -701,6 +716,72 @@ d("GET /calls/:id/stream — DB-backed (§5.5 / §5.6 / §6.2 #3/#4)", () => {
     const rShare = await upgradeWithCaps(sShare, new Hub(), streamReq(callA, { token, since: 100 }), caps);
     expect(rShare.opened).toBe(false);
     if (!rShare.opened) expect(rShare.response.status).toBe(429);
+  });
+
+  // ── §8: DISTINCT per-call READ-scope concurrent cap (read was UNCAPPED) ──────
+  it("a read upgrade over the per-(session, call) cap → 429 SAMO-RATE-001 + Retry-After; closing frees a slot", async () => {
+    const READ_CAP = 2;
+    const readCaps = new ReadCaps(READ_CAP);
+
+    // Exactly READ_CAP read connections on the same (session, call) are admitted.
+    const opened: StreamConnection[] = [];
+    for (let i = 0; i < READ_CAP; i++) {
+      const s = new FakeSocket();
+      const r = await upgradeWithReadCaps(s, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), readCaps);
+      expect(r.opened).toBe(true);
+      if (r.opened) opened.push(r.conn);
+    }
+
+    // The (READ_CAP+1)th read connection on the SAME session+call exceeds the cap → 429, no socket.
+    const sOver = new FakeSocket();
+    const rOver = await upgradeWithReadCaps(sOver, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), readCaps);
+    expect(rOver.opened).toBe(false);
+    if (!rOver.opened) {
+      expect(rOver.response.status).toBe(429);
+      expect(rOver.response.headers.get("Retry-After")).not.toBeNull();
+      expect(((await rOver.response.json()) as { code: string }).code).toBe("SAMO-RATE-001");
+    }
+    expect(sOver.sent.length).toBe(0); // nothing streamed to a rejected upgrade
+
+    // Closing one frees exactly one slot → a new read connection is admitted again.
+    opened[0].close();
+    const sAfter = new FakeSocket();
+    const rAfter = await upgradeWithReadCaps(sAfter, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), readCaps);
+    expect(rAfter.opened).toBe(true);
+  });
+
+  it("the read cap is per-CALL: a session capped on callA still opens a read connection on callX", async () => {
+    const readCaps = new ReadCaps(1);
+    // callA read is now full for cookie-A.
+    const sA = new FakeSocket();
+    const rA = await upgradeWithReadCaps(sA, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), readCaps);
+    expect(rA.opened).toBe(true);
+    const sA2 = new FakeSocket();
+    const rA2 = await upgradeWithReadCaps(sA2, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), readCaps);
+    expect(rA2.opened).toBe(false); // callA is full
+
+    // A DIFFERENT call (callX, same tenant/session) has its own budget → admitted.
+    const sX = new FakeSocket();
+    const rX = await upgradeWithReadCaps(sX, new Hub(), streamReq(callX, { cookie: "cookie-A", since: 0 }), readCaps);
+    expect(rX.opened).toBe(true);
+  });
+
+  it("read and share caps are INDEPENDENT: a 0-slot READ cap rejects read but never touches share", async () => {
+    const readCaps = new ReadCaps(0); // zero read slots
+    const shareCaps = new ShareCaps(); // generous share caps
+
+    // A read upgrade is rejected by the read cap.
+    const sRead = new FakeSocket();
+    const rRead = await upgradeWithReadCaps(sRead, new Hub(), streamReq(callA, { cookie: "cookie-A", since: 100 }), readCaps, shareCaps);
+    expect(rRead.opened).toBe(false);
+    if (!rRead.opened) expect(rRead.response.status).toBe(429);
+
+    // A share upgrade under the SAME 0-slot read cap still opens — read cap is not on the share path.
+    const { token } = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    const sShare = new FakeSocket();
+    const rShare = await upgradeWithReadCaps(sShare, new Hub(), streamReq(callA, { token, since: 100 }), readCaps, shareCaps);
+    expect(rShare.opened).toBe(true);
+    if (rShare.opened) expect(rShare.scope).toBe("share");
   });
 
   // ── §6.2 #10 AC#5: revoke kills the token's share sockets only ──────────────
