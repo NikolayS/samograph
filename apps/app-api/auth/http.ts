@@ -7,22 +7,42 @@
  *   GET  /auth/callback?token=…    → 200 + Set-Cookie session on success;
  *                                    401 with NO body on any failure.
  *   POST /auth/logout              → 204 + Set-Cookie clearing the session.
- * The client IP is taken from X-Forwarded-For's first hop (the edge/tunnel sets
- * it) for the per-IP rate limit.
+ * The client IP for the per-IP rate limit is derived from a TRUSTED source:
+ * Cloudflare's `cf-connecting-ip` when present (it is set by the edge and cannot
+ * be forged by the client), falling back to the leftmost `X-Forwarded-For` hop
+ * only when it is absent. See docs/runbooks/trusted-proxy.md for the deployment
+ * invariant this depends on.
  */
 import type { AuthService } from "./service.ts";
 import { AUTH_ERRORS } from "./errors.ts";
 import { buildClearedSessionCookie } from "./session.ts";
 
-/** Extract the caller IP for rate limiting (X-Forwarded-For first hop). */
+/**
+ * Extract the caller IP for the per-IP magic-link rate limit (SPEC §5.1).
+ *
+ * SECURITY: derive the key from a TRUSTED source. Cloudflare (the v1 edge)
+ * APPENDS to `X-Forwarded-For`, so the leftmost XFF hop is fully
+ * client-controlled — an attacker rotating a forged `X-Forwarded-For` per
+ * request would mint a distinct limiter bucket each time and bypass the 20/hr
+ * per-IP cap (email-bombing / Resend cost abuse). `cf-connecting-ip` is set by
+ * the trusted edge and cannot be forged by the client, so it is preferred; the
+ * leftmost XFF hop is treated as UNTRUSTED and used only as a fallback when
+ * `cf-connecting-ip` is absent. Prod MUST sit behind a trusted edge that sets
+ * `cf-connecting-ip` (or overwrites XFF) — see docs/runbooks/trusted-proxy.md.
+ */
 export function clientIp(req: Request): string {
+  const direct = req.headers.get("cf-connecting-ip");
+  if (direct) {
+    const trimmed = direct.trim();
+    if (trimmed) return trimmed;
+  }
+  // Fallback only: the leftmost X-Forwarded-For hop is UNTRUSTED behind an
+  // appending edge (docs/runbooks/trusted-proxy.md).
   const xff = req.headers.get("x-forwarded-for");
   if (xff) {
     const first = xff.split(",")[0]?.trim();
     if (first) return first;
   }
-  const direct = req.headers.get("cf-connecting-ip");
-  if (direct) return direct.trim();
   return "unknown";
 }
 
