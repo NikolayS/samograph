@@ -16,11 +16,18 @@
  * the gate were bypassed (defence in depth).
  */
 import type { SQL } from "bun";
-import type { AuthorizeDeps } from "../../packages/shared/auth/index.ts";
+import type { AuthorizeDeps, AuthorizeResult } from "../../packages/shared/auth/index.ts";
 import { authorizeCall } from "../../packages/shared/auth/index.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { renderTranscriptText } from "../../packages/shared/transcript/index.ts";
-import { parseSinceSeq, readCallCredentials } from "./request.ts";
+import { parseSinceSeq, readCallCredentials, type CallCredentials } from "./request.ts";
+import {
+  RequestRateCaps,
+  shareCapKey,
+  readCapKey,
+  rateLimitedResponse,
+  type CapDecision,
+} from "./caps.ts";
 import {
   backfillRecent,
   fetchFullTranscript,
@@ -39,6 +46,17 @@ export interface TranscriptHandlerDeps {
   sessionCookieName?: string;
   /** Cold-backfill window; defaults to {@link DEFAULT_BACKFILL_LIMIT}. */
   backfillLimit?: number;
+  /**
+   * Per-token REST request-rate cap (§5.7, §5.16). When present, an authorized
+   * read is admitted through {@link RequestRateCaps.tryRequest} keyed EXACTLY like
+   * the WS caps — {@link shareCapKey}`(token)` for `share`, {@link readCapKey}`(cookie,
+   * callId)` for `read` — so a leaked share link cannot drive unbounded
+   * full-transcript reads (the WS surface is capped; this closes the REST hole).
+   * Over-cap → 429 `SAMO-RATE-001` + `Retry-After`. Omitted ⇒ no cap (pre-fix behaviour).
+   */
+  restCaps?: RequestRateCaps;
+  /** Epoch-ms clock the request-rate cap reads; defaults to the wall clock. */
+  clockMs?: () => number;
 }
 
 /** Shape of a successful transcript response body. */
@@ -52,6 +70,42 @@ export interface TranscriptResponseBody {
 /** The single bodyless 403 a denied read renders (§5.6 / `SAMO-AUTHZ-001`). */
 function denied(): Response {
   return new Response(null, { status: 403 });
+}
+
+/**
+ * The three terminal states of the authorize→cap→read pipeline, decided inside
+ * the tx so the DB read runs only on GRANT + within-cap: DENY → bodyless 403,
+ * over-cap → 429 `SAMO-RATE-001`, GRANT → the read lines.
+ */
+type ReadOutcome =
+  | { kind: "denied" }
+  | { kind: "rate_limited"; retryAfterMs: number }
+  | { kind: "ok"; lines: TranscriptLine[] };
+
+/**
+ * Consult the per-token REST request-rate cap for an AUTHORIZED read, keyed
+ * exactly like the WS caps (§5.7): the share token for `share`, the (session,
+ * call) pair for `read`. Runs only when {@link TranscriptHandlerDeps.restCaps} is
+ * configured and the matching credential is present; otherwise admits (a denied
+ * request never reaches here, so an invalid credential is not charged). Returns a
+ * `CapDecision` — a DENY carries the `Retry-After` back-off.
+ */
+function checkRestRate(
+  deps: TranscriptHandlerDeps,
+  authz: Extract<AuthorizeResult, { authorized: true }>,
+  credentials: CallCredentials,
+): CapDecision {
+  const caps = deps.restCaps;
+  if (!caps) return { allowed: true, retryAfterMs: 0 };
+  const isRead = authz.scopes.includes("read");
+  let key: string | null = null;
+  if (isRead && credentials.sessionCookie) {
+    key = readCapKey(credentials.sessionCookie, authz.callId);
+  } else if (!isRead && credentials.shareToken) {
+    key = shareCapKey(credentials.shareToken);
+  }
+  if (key === null) return { allowed: true, retryAfterMs: 0 };
+  return caps.tryRequest(key, (deps.clockMs ?? Date.now)());
 }
 
 /**
@@ -76,21 +130,29 @@ export function createTranscriptHandler(
 
     // Authorize + read inside ONE tx as the non-super app role: the gate sets
     // app.tenant_id, then the read is RLS-scoped to that tenant (§5.6 / §5.10).
-    const lines = await deps.sql.begin(async (tx) => {
+    // The per-token request-rate cap is consulted AFTER authorization (so the
+    // scope/key is known) but BEFORE the full-transcript read, so an over-cap
+    // share link is rejected without doing the expensive RLS-scoped read (§5.7).
+    const outcome = await deps.sql.begin(async (tx): Promise<ReadOutcome> => {
       await tx.unsafe("SET LOCAL ROLE samograph_app");
       const authz = await authorizeCall(
         tx as unknown as SQL,
         { callId, sessionCookie: credentials.sessionCookie, shareToken: credentials.shareToken },
         deps.authDeps,
       );
-      if (!authz.authorized) return null;
-      return sinceSeq !== null
-        ? replayTranscripts(tx as unknown as SQL, callId, sinceSeq)
-        : backfillRecent(tx as unknown as SQL, callId, limit);
+      if (!authz.authorized) return { kind: "denied" };
+      const rate = checkRestRate(deps, authz, credentials);
+      if (!rate.allowed) return { kind: "rate_limited", retryAfterMs: rate.retryAfterMs };
+      const lines =
+        sinceSeq !== null
+          ? await replayTranscripts(tx as unknown as SQL, callId, sinceSeq)
+          : await backfillRecent(tx as unknown as SQL, callId, limit);
+      return { kind: "ok", lines };
     });
 
-    if (lines === null) return denied();
-    const body: TranscriptResponseBody = { call_id: callId, since_seq: sinceSeq, lines };
+    if (outcome.kind === "denied") return denied();
+    if (outcome.kind === "rate_limited") return rateLimitedResponse(outcome.retryAfterMs);
+    const body: TranscriptResponseBody = { call_id: callId, since_seq: sinceSeq, lines: outcome.lines };
     return Response.json(body, { status: 200 });
   };
 }
@@ -122,19 +184,22 @@ export function createTranscriptTextHandler(
     const callId = decodeURIComponent(match[1]);
     const credentials = readCallCredentials(req, url, cookieName);
 
-    const lines = await deps.sql.begin(async (tx) => {
+    const outcome = await deps.sql.begin(async (tx): Promise<ReadOutcome> => {
       await tx.unsafe("SET LOCAL ROLE samograph_app");
       const authz = await authorizeCall(
         tx as unknown as SQL,
         { callId, sessionCookie: credentials.sessionCookie, shareToken: credentials.shareToken },
         deps.authDeps,
       );
-      if (!authz.authorized) return null;
-      return fetchFullTranscript(tx as unknown as SQL, callId);
+      if (!authz.authorized) return { kind: "denied" };
+      const rate = checkRestRate(deps, authz, credentials);
+      if (!rate.allowed) return { kind: "rate_limited", retryAfterMs: rate.retryAfterMs };
+      return { kind: "ok", lines: await fetchFullTranscript(tx as unknown as SQL, callId) };
     });
 
-    if (lines === null) return denied();
-    return new Response(renderTranscriptText(lines), {
+    if (outcome.kind === "denied") return denied();
+    if (outcome.kind === "rate_limited") return rateLimitedResponse(outcome.retryAfterMs);
+    return new Response(renderTranscriptText(outcome.lines), {
       status: 200,
       headers: {
         "content-type": "text/plain; charset=utf-8",

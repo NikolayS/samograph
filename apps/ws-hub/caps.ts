@@ -168,6 +168,67 @@ export function shareCapKey(shareToken: string): string {
   return sha256Hex(shareToken);
 }
 
+// ── REST request-rate cap (§5.7, §5.16) — the REST-surface analogue of the WS caps ──
+/**
+ * Per-key REST request budget per {@link REST_REQUEST_WINDOW_MS}. The WS upgrade
+ * carries per-token establishment + command caps, but the `GET .../transcript`
+ * and `.../transcript.txt` reads authorize with the SAME credential and — before
+ * this cap — consulted NEITHER, so one leaked share link could drive UNBOUNDED
+ * full-transcript reads (each an RLS-scoped DB read + full egress) while the WS
+ * surface stayed capped. This is a deliberately generous default: normal gap
+ * resync and downloads are a handful of requests; abuse is orders of magnitude more.
+ */
+export const REST_REQUESTS_PER_WINDOW = 120;
+/** REST request-rate sliding window: 60 seconds. */
+export const REST_REQUEST_WINDOW_MS = 60_000;
+
+/** Knobs for {@link RequestRateCaps}; omitted fields fall back to the spec defaults. */
+export interface RequestRateCapsConfig {
+  perWindow: number;
+  windowMs: number;
+}
+
+/**
+ * In-memory per-key REQUEST-rate sliding-window limiter for the REST transcript
+ * surfaces (SPEC §5.7). One instance per ws-hub process, shared by BOTH the JSON
+ * `/transcript` and the `.txt` download handlers, and keyed EXACTLY like the WS
+ * caps so read and share never contend for a slot:
+ *   • `share` scope → {@link shareCapKey}`(token)`   (per share token)
+ *   • `read`  scope → {@link readCapKey}`(cookie, callId)` (per session, per call)
+ *
+ * Over the cap → `SAMO-RATE-001` (429, retryable, honor `Retry-After`; §5.16). A
+ * DENIED request records nothing, so a counter is never inflated past its cap and
+ * the window frees as the oldest request ages out — same discipline as
+ * {@link ShareCaps.tryCommand}.
+ */
+export class RequestRateCaps {
+  private readonly perWindow: number;
+  private readonly windowMs: number;
+  /** key → request timestamps still inside the window. */
+  private readonly hitsByKey = new Map<string, number[]>();
+
+  constructor(config: Partial<RequestRateCapsConfig> = {}) {
+    this.perWindow = config.perWindow ?? REST_REQUESTS_PER_WINDOW;
+    this.windowMs = config.windowMs ?? REST_REQUEST_WINDOW_MS;
+  }
+
+  /**
+   * Admit a REST request for `key`, or deny it. A DENY does not consume a slot,
+   * so the window frees as the oldest request ages out of it.
+   */
+  tryRequest(key: string, now: number): CapDecision {
+    const cutoff = now - this.windowMs;
+    const live = (this.hitsByKey.get(key) ?? []).filter((ts) => ts > cutoff);
+    if (live.length >= this.perWindow) {
+      this.hitsByKey.set(key, live); // prune; do not consume a slot
+      return { allowed: false, retryAfterMs: live[0] + this.windowMs - now };
+    }
+    live.push(now);
+    this.hitsByKey.set(key, live);
+    return ALLOWED;
+  }
+}
+
 // ── Read-scope concurrent-connection cap (§5.7, §8 "distinct caps for read vs share") ──
 /**
  * Per-(session, call) concurrent WS cap for the SESSION-DERIVED `read` scope

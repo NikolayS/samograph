@@ -28,6 +28,7 @@ import {
   createTranscriptTextHandler,
   type TranscriptResponseBody,
 } from "./transcript-http.ts";
+import { RequestRateCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
 import type { StreamAuthDeps } from "./stream.ts";
 
 const HAVE_DB = !!process.env.DATABASE_URL;
@@ -271,5 +272,65 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
     const res = await handler(transcriptTxtReq(callTxt, { cookie: "cookie-B" }));
     expect(res.status).toBe(403);
     expect(await res.text()).toBe("");
+  });
+
+  // ── Anti-abuse: per-token REST request-rate cap (§5.7 / SAMO-RATE-001) ──────
+  // The REST reads authorize with the SAME share token as the WS upgrade but,
+  // before this fix, consulted NEITHER cap — so a leaked share link could drive
+  // UNBOUNDED full-transcript reads while the WS surface was capped. A per-token
+  // request-rate limiter closes that hole, keyed exactly like the WS caps:
+  // shareCapKey(token) for `share`, readCapKey(cookie, callId) for `read`.
+  it("a share-token holder exceeding the per-token REST request cap → 429 SAMO-RATE-001; a reader within the cap is unaffected", async () => {
+    const { token } = await mintShareToken(sql, {
+      callId: callA,
+      signingKey: KEY_CURRENT,
+      ttlSeconds: 3600,
+    });
+    // Tiny cap so the 3rd share request is over-cap; a shared limiter feeds both
+    // handlers exactly as server.ts wires it.
+    const restCaps = new RequestRateCaps({ perWindow: 2, windowMs: 60_000 });
+    const handler = createTranscriptHandler({ sql, authDeps, restCaps });
+
+    // Two share reads on this token are WITHIN the cap → 200.
+    expect((await handler(transcriptReq(callA, { token, since: 0 }))).status).toBe(200);
+    expect((await handler(transcriptReq(callA, { token, since: 0 }))).status).toBe(200);
+    // The THIRD share read from the SAME token EXCEEDS the cap → 429 SAMO-RATE-001.
+    const over = await handler(transcriptReq(callA, { token, since: 0 }));
+    expect(over.status).toBe(429);
+    expect(((await over.json()) as { code?: string }).code).toBe(RATE_LIMIT_ERROR_CODE);
+    expect(over.headers.get("retry-after")).not.toBeNull();
+
+    // A NORMAL reader (session scope → a DIFFERENT cap key) is UNAFFECTED by the
+    // share token having exhausted its budget: keyed independently, no contention.
+    const reader = await handler(transcriptReq(callA, { cookie: "cookie-A", since: 0 }));
+    expect(reader.status).toBe(200);
+  });
+
+  it("the REST request cap is per-token — a DIFFERENT share token has its own budget", async () => {
+    const a = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    const b = await mintShareToken(sql, { callId: callA, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    const restCaps = new RequestRateCaps({ perWindow: 1, windowMs: 60_000 });
+    const handler = createTranscriptHandler({ sql, authDeps, restCaps });
+
+    expect((await handler(transcriptReq(callA, { token: a.token, since: 0 }))).status).toBe(200);
+    // Token A is now over its (1/window) cap …
+    expect((await handler(transcriptReq(callA, { token: a.token, since: 0 }))).status).toBe(429);
+    // … but token B still has its own full budget.
+    expect((await handler(transcriptReq(callA, { token: b.token, since: 0 }))).status).toBe(200);
+  });
+
+  it("the .txt download handler shares the SAME per-token cap — a share token over-cap → 429", async () => {
+    const { token } = await mintShareToken(sql, {
+      callId: callTxt,
+      signingKey: KEY_CURRENT,
+      ttlSeconds: 3600,
+    });
+    const restCaps = new RequestRateCaps({ perWindow: 1, windowMs: 60_000 });
+    const handler = createTranscriptTextHandler({ sql, authDeps, restCaps });
+
+    expect((await handler(transcriptTxtReq(callTxt, { token }))).status).toBe(200);
+    const over = await handler(transcriptTxtReq(callTxt, { token }));
+    expect(over.status).toBe(429);
+    expect(((await over.json()) as { code?: string }).code).toBe(RATE_LIMIT_ERROR_CODE);
   });
 });

@@ -20,7 +20,7 @@
  */
 import type { Server, ServerWebSocket, SQL } from "bun";
 import { Hub } from "./hub.ts";
-import { ShareCaps, ReadCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
+import { ShareCaps, ReadCaps, RequestRateCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
 import {
   prepareStream,
   openStream,
@@ -52,6 +52,13 @@ export interface WsHubServerDeps {
   caps?: ShareCaps;
   /** Read-scope per-(session, call) concurrent cap (§5.7, §8); also from `authDeps.readCaps`. */
   readCaps?: ReadCaps;
+  /**
+   * Per-token REST request-rate cap for the `/transcript` + `/transcript.txt`
+   * reads (§5.7, §5.16). Shared by both handlers; keyed exactly like the WS caps
+   * (share token / (session, call)). Defaults to a fresh {@link RequestRateCaps}
+   * so the REST surface is never left uncapped while the WS surface is capped.
+   */
+  restCaps?: RequestRateCaps;
   /** TCP port (0 ⇒ an ephemeral port, useful in tests). */
   port?: number;
   hostname?: string;
@@ -82,17 +89,25 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
   const authDeps: StreamAuthDeps = { ...deps.authDeps, caps, readCaps };
   const recheckMs = deps.recheckIntervalMs ?? RECHECK_INTERVAL_MS;
   const cookieName = deps.sessionCookieName ?? SESSION_COOKIE_NAME;
+  // Cap the REST transcript reads per token so a leaked share link cannot drive
+  // unbounded full-transcript reads while the WS surface is capped (§5.7). One
+  // instance shared by both handlers; default so the surface is never uncapped.
+  const restCaps = deps.restCaps ?? new RequestRateCaps();
 
   const transcriptHandler = createTranscriptHandler({
     sql: deps.sql,
     authDeps,
     sessionCookieName: cookieName,
     backfillLimit: deps.backfillLimit,
+    restCaps,
+    clockMs: authDeps.clockMs,
   });
   const transcriptTextHandler = createTranscriptTextHandler({
     sql: deps.sql,
     authDeps,
     sessionCookieName: cookieName,
+    restCaps,
+    clockMs: authDeps.clockMs,
   });
 
   const server = Bun.serve<StreamSocketData>({

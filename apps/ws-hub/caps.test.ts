@@ -27,6 +27,9 @@ import {
   ReadCaps,
   readCapKey,
   READ_MAX_CONCURRENT,
+  RequestRateCaps,
+  REST_REQUESTS_PER_WINDOW,
+  REST_REQUEST_WINDOW_MS,
 } from "./caps.ts";
 
 describe("share caps — exact numeric defaults (§5.7)", () => {
@@ -221,5 +224,47 @@ describe("read caps — per-(session, call) concurrent cap (§5.7, §8)", () => 
     caps.release(key);
     caps.release(key);
     expect(caps.concurrent(key)).toBe(0);
+  });
+});
+
+// ── REST request-rate cap — the REST-surface analogue of the WS caps (§5.7, §5.16) ──
+describe("REST request-rate cap (RequestRateCaps) — exact sliding-window bounds", () => {
+  it("pins the generous defaults (120 requests / 60 s)", () => {
+    expect(REST_REQUESTS_PER_WINDOW).toBe(120);
+    expect(REST_REQUEST_WINDOW_MS).toBe(60_000);
+  });
+
+  it("admits exactly `perWindow` requests, then denies with SAMO-RATE-001 back-off", () => {
+    const caps = new RequestRateCaps({ perWindow: 3, windowMs: 60_000 });
+    const key = shareCapKey("tok");
+    const now = 1_000_000;
+    expect(caps.tryRequest(key, now).allowed).toBe(true); // 1
+    expect(caps.tryRequest(key, now).allowed).toBe(true); // 2
+    expect(caps.tryRequest(key, now).allowed).toBe(true); // 3 — the last admitted
+    const over = caps.tryRequest(key, now); // 4th → denied
+    expect(over.allowed).toBe(false);
+    // Back-off = the oldest hit's age-out: first ts (now) + window − now = window.
+    expect(over.retryAfterMs).toBe(60_000);
+  });
+
+  it("the window SLIDES: a denied request frees as the oldest ages out (no slot consumed on DENY)", () => {
+    const caps = new RequestRateCaps({ perWindow: 1, windowMs: 1_000 });
+    const key = shareCapKey("tok");
+    expect(caps.tryRequest(key, 0).allowed).toBe(true); // fills the 1-slot window
+    expect(caps.tryRequest(key, 500).allowed).toBe(false); // still inside the window
+    // A DENY records nothing, so once the first hit ages out the budget is back.
+    expect(caps.tryRequest(key, 1_001).allowed).toBe(true);
+  });
+
+  it("is keyed strictly per key: one token hitting its cap never touches another (share vs read)", () => {
+    const caps = new RequestRateCaps({ perWindow: 1, windowMs: 60_000 });
+    const shareKey = shareCapKey("leaked-token");
+    const readKey = readCapKey("session-A", "call-1");
+    const now = 0;
+    expect(caps.tryRequest(shareKey, now).allowed).toBe(true);
+    expect(caps.tryRequest(shareKey, now).allowed).toBe(false); // share token is now full
+    // A different key (a read session, or another token) has its own full budget.
+    expect(caps.tryRequest(readKey, now).allowed).toBe(true);
+    expect(caps.tryRequest(shareCapKey("other-token"), now).allowed).toBe(true);
   });
 });
