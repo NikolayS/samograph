@@ -53,6 +53,9 @@ import { ShareCaps } from "./caps.ts";
 import { createFanIn, type FanIn } from "./fanIn.ts";
 import type { StreamAuthDeps } from "./stream.ts";
 import { startWsHubServer, stopServerBounded, type WsHubServerHandle } from "./server.ts";
+import { metricsHttpHandler } from "../../packages/shared/observe/metrics-http.ts";
+import type { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
+import type { FunnelSnapshot } from "../../packages/shared/observe/funnel.ts";
 
 /** Collaborators for {@link composeLiveStack}. */
 export interface LiveStackDeps {
@@ -78,7 +81,15 @@ export interface LiveStackDeps {
   recheckIntervalMs?: number;
   /** Monotonic clock for the pickup-latency sample (§6.2 #8). */
   clock?: () => number;
-  /** Counters (in-memory defaults). */
+  /**
+   * Shared §5.11 registry (issue #108). When present it becomes the DEFAULT for
+   * every counter port below (one aggregate per process) and is mounted at `GET
+   * /metrics` on the ingest server. Explicit per-port overrides still win.
+   */
+  registry?: MetricsRegistry;
+  /** Activation-funnel snapshot thunk folded into /metrics (§9; the #16 feed plugs in here). */
+  funnel?: () => FunnelSnapshot;
+  /** Counters (default to `registry` when set, else in-memory fakes). */
   transcriptMetrics?: TranscriptMetrics;
   lifecycleMetrics?: BotLifecycleMetrics;
   webhookMetrics?: WebhookMetrics;
@@ -98,9 +109,12 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   const hub = deps.hub ?? new Hub();
   const caps = deps.caps ?? new ShareCaps();
   const worker = (deps.worker as ReturnType<typeof inMemoryBotWorker>) ?? inMemoryBotWorker();
-  const transcriptMetrics = deps.transcriptMetrics ?? inMemoryTranscriptMetrics();
-  const lifecycleMetrics = deps.lifecycleMetrics ?? inMemoryBotLifecycleMetrics();
-  const webhookMetrics = deps.webhookMetrics ?? inMemoryWebhookMetrics();
+  // ONE shared registry (issue #108) is the default for every counter port, so
+  // the five §5.11 counters aggregate into a single per-process scrape source.
+  const registry = deps.registry;
+  const transcriptMetrics = deps.transcriptMetrics ?? registry ?? inMemoryTranscriptMetrics();
+  const lifecycleMetrics = deps.lifecycleMetrics ?? registry ?? inMemoryBotLifecycleMetrics();
+  const webhookMetrics = deps.webhookMetrics ?? registry ?? inMemoryWebhookMetrics();
   const lookupCallByBotId = deps.lookupCallByBotId ?? pgLookupCallByBotId(deps.sql);
   const lookupCallByIngestSecret =
     deps.lookupCallByIngestSecret ?? pgLookupCallByIngestSecret(deps.sql);
@@ -122,6 +136,9 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
     recheckIntervalMs: deps.recheckIntervalMs,
   });
 
+  // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
+  const metrics = registry ? metricsHttpHandler(registry, deps.funnel) : undefined;
+
   // ── ingest: webhook front door → capture §98 signals → fan-in AFTER commit. ──
   async function ingestFetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -133,6 +150,9 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
         nonce: url.searchParams.get("nonce") ?? "",
         marker: HEALTH_MARKER,
       });
+    }
+    if (metrics && req.method === "GET" && url.pathname === "/metrics") {
+      return metrics(req);
     }
 
     // Per-request buffer so concurrent webhooks never interleave their signals.

@@ -32,6 +32,9 @@ import { createCallsHandler } from "./calls/http.ts";
 import type { SQL } from "bun";
 import type { Keyring } from "../../packages/shared/tokens/signing.ts";
 import type { OrchestratorJob } from "../bot-orchestrator/index.ts";
+import { metricsHttpHandler } from "../../packages/shared/observe/metrics-http.ts";
+import type { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
+import type { FunnelSnapshot } from "../../packages/shared/observe/funnel.ts";
 
 /** LOCAL-ONLY affordances injected by the dev wrapper (never in prod). */
 export interface DevShortcuts {
@@ -64,6 +67,15 @@ export interface AppApiConfig {
   linkStore?: MagicLinkStore;
   /** LOCAL-ONLY dev shortcuts. Absent ⇒ no Secure-strip and no /__dev route exist. */
   devShortcuts?: DevShortcuts;
+  /**
+   * Shared §5.11 registry exposed at `GET /metrics` (issue #108). The prod
+   * entrypoint injects the SAME instance it hands the bot-join producer (poller +
+   * runJoinJob), so `bot_join_total` / `pickup_latency_ms` are scrapeable here.
+   * Omitted ⇒ /metrics 404s (no scrape source).
+   */
+  registry?: MetricsRegistry;
+  /** Activation-funnel snapshot thunk folded into /metrics (§9; the #16 feed plugs in here). */
+  funnel?: () => FunnelSnapshot;
 }
 
 /** The composed app-api: a single `fetch(req)` over the auth + calls surface. */
@@ -99,6 +111,8 @@ export function createAppApi(config: AppApiConfig): AppApi {
   });
 
   const dev = config.devShortcuts;
+  // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
+  const metrics = config.registry ? metricsHttpHandler(config.registry, config.funnel) : undefined;
 
   return {
     async fetch(req: Request): Promise<Response> {
@@ -107,6 +121,8 @@ export function createAppApi(config: AppApiConfig): AppApi {
       let res: Response;
       if (path === "/health") {
         res = new Response("ok", { status: 200 });
+      } else if (metrics && req.method === "GET" && path === "/metrics") {
+        res = metrics(req);
       } else if (dev && req.method === "GET" && path === "/__dev/last-magic-link") {
         // DEV-ONLY: absent from the prod handler entirely (falls through to 404).
         res = dev.lastMagicLink(url);

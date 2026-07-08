@@ -39,6 +39,9 @@ import {
   type RegionWatchdogHandle,
   type WatchdogMetrics,
 } from "./tunnelWatchdog.ts";
+import { metricsHttpHandler } from "../../packages/shared/observe/metrics-http.ts";
+import type { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
+import type { FunnelSnapshot } from "../../packages/shared/observe/funnel.ts";
 
 /** What `buildIngestDispatch` needs to compose the two §93 dispatch subscribers. */
 export interface IngestDispatchDeps {
@@ -88,6 +91,15 @@ export interface IngestAppDeps {
   lookupCallByBotId?: (recallBotId: string) => Promise<CallIdentity | null>;
   /** `?t=` → call resolver (ingest_secret_hash); defaults to the privileged Postgres lookup. */
   lookupCallByIngestSecret?: (ingestSecretHash: string) => Promise<CallIdentity | null>;
+  /**
+   * Shared §5.11 registry to expose at `GET /metrics` (issue #108). When present,
+   * the composition root injected this SAME instance into the webhook / transcript
+   * / lifecycle counter ports, so /metrics scrapes the live aggregate. Omitted ⇒
+   * /metrics falls through to the front door's 404 (no scrape source).
+   */
+  registry?: MetricsRegistry;
+  /** Activation-funnel snapshot thunk folded into /metrics (§9; the #16 feed plugs in here). */
+  funnel?: () => FunnelSnapshot;
 }
 
 /**
@@ -106,6 +118,9 @@ export function createIngestApp(deps: IngestAppDeps): (req: Request) => Promise<
     logger: deps.logger,
   });
 
+  // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
+  const metrics = deps.registry ? metricsHttpHandler(deps.registry, deps.funnel) : undefined;
+
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/health") {
@@ -114,6 +129,9 @@ export function createIngestApp(deps: IngestAppDeps): (req: Request) => Promise<
         nonce: url.searchParams.get("nonce") ?? "",
         marker: HEALTH_MARKER,
       });
+    }
+    if (metrics && req.method === "GET" && url.pathname === "/metrics") {
+      return metrics(req);
     }
     return webhook(req);
   };

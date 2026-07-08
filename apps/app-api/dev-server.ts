@@ -46,6 +46,7 @@ import {
   STATUS_POLL_INTERVAL_MS,
 } from "../bot-orchestrator/statusPoller.ts";
 import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
+import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
 
 /**
  * DEV-ONLY guard: this file carries the local shortcuts (Secure-strip, dev
@@ -113,6 +114,8 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
   const devDefaults = usingDevDefaultSecrets(env, APP_API_SIGNING_SECRETS);
 
   const sql = connect();
+  // ONE shared §5.11 registry per process (issue #108): scraped at GET /metrics.
+  const registry = new MetricsRegistry();
   const devSender = new DevEmailSender(PORT);
   // REAL transactional email (Resend) when RESEND_API_KEY is set; otherwise the
   // DEV fake keeps printing links (local/test mode).
@@ -152,6 +155,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
         recall,
         store: pgCallStore(sql),
         webhookBase: WEBHOOK_BASE,
+        metrics: registry, // §5.11 bot_join_total{could_not_join} (issue #108/#107)
         logger: { info: (event, fields) => console.log(`[orchestrator] ${event}`, fields ?? {}) },
       });
       if (outcome.status === "COULD_NOT_JOIN") {
@@ -177,6 +181,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
       source: liveBotStatusSource(),
       actions: liveRecallBotActions(),
       publisher: new PgListenNotifyPublisher(sql),
+      metrics: registry, // §5.11 bot_join_total (issue #108/#107)
       logger: console,
     });
     console.log(
@@ -195,6 +200,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
     webOrigin: WEB_ORIGIN,
     enqueue,
     linkStore: new InMemoryMagicLinkStore(),
+    registry, // §5.11 GET /metrics scrape source (issue #108)
     // LOCAL-ONLY: strip Secure so cookies store over http, expose /__dev route.
     devShortcuts: { lastMagicLink: devLastMagicLink, stripSecureCookie: devCookieFix },
   });
