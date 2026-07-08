@@ -13,7 +13,6 @@ __pycache__/
 node_modules/
 .venv/
 dist/
-bun.lock
 .DS_Store
 
 # Demo recordings (generated, not committed)
