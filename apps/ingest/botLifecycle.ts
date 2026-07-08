@@ -54,13 +54,23 @@ type CallStatus =
   | "COULD_NOT_RECORD"
   | "BOT_REMOVED";
 
-/** Statuses from which a NEW transition is allowed — i.e. not yet terminal (§5.2). */
+/** Pre-join statuses — the only ones a pre-join-only terminal code may escalate from. */
+const PRE_JOIN: readonly CallStatus[] = ["PENDING", "JOINING"];
+/** Every non-terminal status — a live call CAN legitimately end / be removed from here. */
 const NON_TERMINAL: readonly CallStatus[] = ["PENDING", "JOINING", "IN_CALL"];
 
 /** What a Recall lifecycle code means for the call (§5.2 / §5.9 / §5.16). */
 export interface LifecycleTransition {
   /** Target `calls.status`. */
   status: CallStatus;
+  /**
+   * Statuses this transition may fire from — its explicit guard (S2-16). A code
+   * delivered against any OTHER status is a no-op (never regresses). Terminal
+   * codes differ: `call_ended`/`bot_removed` may end a live `IN_CALL`, but
+   * `in_call_not_recording`/`fatal` are pre-join-only, so a late one can NEVER
+   * eject the bot mid-recording or mislabel a recorded call.
+   */
+  allowedFrom: readonly CallStatus[];
   /** Terminal statuses are sticky and reset `ingest_degraded` (0002 trigger). */
   terminal: boolean;
   /** Post the §5.9 disclosure once on the first pickup (only `in_call_recording`). */
@@ -83,6 +93,7 @@ export function mapLifecycleCode(code: string): LifecycleTransition | null {
     case "in_call_recording":
       return {
         status: "IN_CALL",
+        allowedFrom: PRE_JOIN,
         terminal: false,
         postDisclosure: true,
         leave: false,
@@ -92,6 +103,7 @@ export function mapLifecycleCode(code: string): LifecycleTransition | null {
     case "in_call_not_recording":
       return {
         status: "COULD_NOT_RECORD",
+        allowedFrom: PRE_JOIN, // pre-join only — never eject a LIVE IN_CALL bot (S2-16).
         terminal: true,
         postDisclosure: false,
         leave: true,
@@ -101,6 +113,7 @@ export function mapLifecycleCode(code: string): LifecycleTransition | null {
     case "call_ended":
       return {
         status: "ENDED",
+        allowedFrom: NON_TERMINAL, // a live call CAN end.
         terminal: true,
         postDisclosure: false,
         leave: false,
@@ -110,6 +123,7 @@ export function mapLifecycleCode(code: string): LifecycleTransition | null {
     case "bot_removed":
       return {
         status: "BOT_REMOVED",
+        allowedFrom: NON_TERMINAL, // a live call CAN be removed.
         terminal: true,
         postDisclosure: false,
         leave: false,
@@ -119,6 +133,7 @@ export function mapLifecycleCode(code: string): LifecycleTransition | null {
     case "fatal":
       return {
         status: "COULD_NOT_JOIN",
+        allowedFrom: PRE_JOIN, // COULD_NOT_JOIN is pre-join-only (§5.2) — a mid-call fatal must not mislabel a recorded call (S2-16).
         terminal: true,
         postDisclosure: false,
         leave: false,
@@ -257,11 +272,14 @@ export function createBotLifecycle(deps: BotLifecycleDeps): BotLifecycle {
     // only for the pickup transition so the SLO sample is exactly one per pickup.
     const receivedAt = transition.postDisclosure ? clock() : 0;
 
-    // Apply the transition as a CONDITIONAL UPDATE so a terminal status is sticky.
+    // Apply the transition as a CONDITIONAL UPDATE guarded by its own allowedFrom
+    // set (S2-16) so a status can never regress:
     //  - in_call_recording: only PENDING/JOINING→IN_CALL (idempotent + a guard so
     //    a re-emitted distinct event never re-posts the disclosure).
-    //  - terminal codes: only from a NON-terminal status (never regress a terminal
-    //    one) — also stamps ended_at and, for `fatal`, the Recall reason.
+    //  - in_call_not_recording / fatal: pre-join only (PENDING/JOINING) — a late one
+    //    against a LIVE IN_CALL row is a NO-OP (no eject, no mislabel, no leave).
+    //  - call_ended / bot_removed: PENDING/JOINING/IN_CALL — a live call CAN end /
+    //    be removed — also stamps ended_at and, for `fatal`, the Recall reason.
     const changed = transition.terminal
       ? await applyTerminal(tx, callId, transition, parsed.subCode)
       : await applyInCall(tx, callId);
@@ -306,7 +324,11 @@ async function applyInCall(tx: SQL, callId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** A non-terminal status → the terminal `status`. Returns true iff it applied. */
+/**
+ * An allowed source status → the terminal `status`, guarded by the transition's
+ * own `allowedFrom` set (S2-16) so a late `in_call_not_recording`/`fatal` can
+ * never regress a LIVE `IN_CALL` row. Returns true iff it applied.
+ */
 async function applyTerminal(
   tx: SQL,
   callId: string,
@@ -320,7 +342,7 @@ async function applyTerminal(
            ended_at = COALESCE(ended_at, now()),
            status_reason = COALESCE(${reason}::text, status_reason)
      WHERE id = ${callId}
-       AND status IN ${tx(NON_TERMINAL as unknown as string[])}
+       AND status IN ${tx(transition.allowedFrom as unknown as string[])}
     RETURNING id`) as unknown as unknown[];
   return rows.length > 0;
 }
