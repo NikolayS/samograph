@@ -41,8 +41,11 @@ d("/calls/:id/share mint+revoke (DB-backed, §5.7 / §6.2 #10)", () => {
   const callA = randomUUID(); // tenant A
   const callB = randomUUID(); // tenant B
 
-  const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: 1 }, SESSION_SECRET);
-  const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: 1 }, SESSION_SECRET);
+  // Sign with a FRESH iat: the handler verifies against the wall clock and now
+  // enforces the 30-day server-side session TTL (#57), so a 1970 iat would 401.
+  const SESSION_IAT = Date.now();
+  const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: SESSION_IAT }, SESSION_SECRET);
+  const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: SESSION_IAT }, SESSION_SECRET);
 
   const handler = () =>
     createCallsHandler({ sql, sessionSecret: SESSION_SECRET, enqueue: () => {}, keyring });

@@ -63,8 +63,9 @@ const keyring: Keyring = { current: { kid: "dev-share", secret: DEV_TOKEN_SECRET
 const authDeps: AuthorizeDeps = {
   keyring,
   // Verify the signed session cookie the app-api dev-server set (pure HMAC, no DB).
+  // Pass the wall clock (epoch ms) so the server-side session TTL is enforced.
   lookupSession: async (cookie) => {
-    const claims = verifySession(cookie, SESSION_SECRET);
+    const claims = verifySession(cookie, SESSION_SECRET, Date.now());
     return claims ? { userId: claims.userId, tenantId: claims.tenantId } : null;
   },
   // Privileged pre-tenant call→tenant resolver (share-token + fan-in path).

@@ -176,7 +176,9 @@ describe("AuthService.callback", () => {
 
     // the cookie really carries this user's session
     const value = res.setCookie!.split("=")[1].split(";")[0];
-    expect(verifySession(value, SESSION_SECRET)).toEqual({
+    // Pin `now` to the service clock so the assertion is not gated by the #57
+    // server-side session TTL as the wall clock advances past this fixed iat.
+    expect(verifySession(value, SESSION_SECRET, Date.parse("2026-06-28T12:00:00.000Z"))).toEqual({
       userId: user.id,
       tenantId: user.tenantId,
       iat: Date.parse("2026-06-28T12:00:00.000Z"),

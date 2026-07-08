@@ -77,8 +77,11 @@ d("worker registration + discovery + invocation (§6.2 #9)", () => {
   const SECRET_B = "worker-secret-B-deterministic-bbbb";
   const SECRET_C = "worker-secret-C-deterministic-cccc";
 
-  const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: 1 }, SESSION_SECRET);
-  const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: 1 }, SESSION_SECRET);
+  // Sign with a FRESH iat: verifySession (via the gate) checks the wall clock and
+  // now enforces the 30-day server-side session TTL (#57), so a 1970 iat would 401.
+  const SESSION_IAT = Date.now();
+  const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: SESSION_IAT }, SESSION_SECRET);
+  const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: SESSION_IAT }, SESSION_SECRET);
 
   let liveWorker: ReturnType<typeof Bun.serve>;
   let liveRecall: ReturnType<typeof spyRecall>;

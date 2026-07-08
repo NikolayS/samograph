@@ -56,8 +56,11 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
   const callB = randomUUID(); // tenant B, pre-seeded for the isolation tests
   const callFailed = randomUUID(); // tenant A, terminal COULD_NOT_JOIN with a status_reason
 
-  const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: 1 }, SESSION_SECRET);
-  const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: 1 }, SESSION_SECRET);
+  // Sign with a FRESH iat: the handler verifies against the wall clock and now
+  // enforces the 30-day server-side session TTL (#57), so a 1970 iat would 401.
+  const SESSION_IAT = Date.now();
+  const cookieA = signSession({ userId: userA, tenantId: tenantA, iat: SESSION_IAT }, SESSION_SECRET);
+  const cookieB = signSession({ userId: userB, tenantId: tenantB, iat: SESSION_IAT }, SESSION_SECRET);
 
   /** Build a handler with a fresh enqueue spy. */
   function makeHandler() {
