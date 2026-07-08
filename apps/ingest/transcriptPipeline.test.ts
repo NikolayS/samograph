@@ -26,6 +26,7 @@ import {
   createTranscriptPipeline,
   inMemoryTranscriptMetrics,
   splitCanonicalLine,
+  utcLiteral,
 } from "./transcriptPipeline.ts";
 import {
   createWebhookHandler,
@@ -87,6 +88,42 @@ describe("splitCanonicalLine — inverse of the normalizer format (§5.4)", () =
       speaker: "Bob",
       text: "",
     });
+  });
+});
+
+describe("utcLiteral — fail-safe guard against an invalid timestamp (DoS/poison-pill)", () => {
+  // A well-shaped, in-range VALID timestamp is preserved EXACTLY (UTC-pinned).
+  it("preserves a valid canonical ts byte-for-byte, appending the +00 UTC offset", () => {
+    expect(utcLiteral("2026-01-01 00:01:30")).toBe("2026-01-01 00:01:30+00");
+    expect(utcLiteral("2024-02-29 23:59:59")).toBe("2024-02-29 23:59:59+00"); // leap day
+    expect(utcLiteral("9999-12-31 23:59:59")).toBe("9999-12-31 23:59:59+00");
+  });
+
+  // Absent ts (normalizer emitted no timestamp) → null → COALESCE falls to now().
+  it("returns null for an absent (empty) ts", () => {
+    expect(utcLiteral("")).toBeNull();
+  });
+
+  // The security-critical cases: a NON-EMPTY but INVALID value must NOT become a
+  // literal the DB will try (and fail) to cast — it must be null so COALESCE
+  // falls back to now(). Postgres evaluates `::timestamptz` BEFORE COALESCE, so
+  // any of these reaching the cast throws inside the dedup tx → rollback → 500 →
+  // Recall re-delivers forever (a hot poison-pill loop).
+  it("returns null for a non-empty but INVALID timestamp (no throwing literal reaches the DB)", () => {
+    // The exact malformed value from a malformed-but-authenticated Recall payload.
+    expect(utcLiteral("0000-00-00 00:00:00")).toBeNull();
+    expect(utcLiteral("0000-01-01 00:00:00")).toBeNull(); // year 0 does not exist
+    expect(utcLiteral("2024-13-01 00:00:00")).toBeNull(); // month 13
+    expect(utcLiteral("2024-00-10 00:00:00")).toBeNull(); // month 0
+    expect(utcLiteral("2024-02-30 00:00:00")).toBeNull(); // Feb 30 — impossible
+    expect(utcLiteral("2023-02-29 00:00:00")).toBeNull(); // not a leap year
+    expect(utcLiteral("2024-04-31 00:00:00")).toBeNull(); // April has 30 days
+    expect(utcLiteral("2024-01-32 00:00:00")).toBeNull(); // day 32
+    expect(utcLiteral("2024-01-01 24:00:00")).toBeNull(); // hour 24
+    expect(utcLiteral("2024-01-01 00:60:00")).toBeNull(); // minute 60
+    expect(utcLiteral("2024-01-01 00:00:60")).toBeNull(); // second 60
+    expect(utcLiteral("not-a-timestamp-at-all")).toBeNull(); // wrong shape
+    expect(utcLiteral("2024-01-01T00:00:00")).toBeNull(); // un-normalized (T)
   });
 });
 
@@ -382,5 +419,72 @@ d("handleTranscriptEvent persistence (§5.4/§5.2/§5.5/§5.11, TDD #1-#7)", () 
     // An empty payload (no row) does NOT increment the counter.
     await deliver(pipeline, tenantA, transcriptEvent(callA, tenantA, fake.botId, { words: [] }));
     expect(metrics.lines).toEqual({ [REGION]: 3 });
+  });
+
+  it("#8 a malformed absolute timestamp does NOT poison the tx: webhook 200, line persisted with a now() fallback ts", async () => {
+    // Regression for the DoS/poison-pill: an AUTHENTICATED transcript.data whose
+    // first word carries a malformed absolute timestamp (`0000-00-00…`) used to
+    // reach `COALESCE(ts::timestamptz, now())`. Postgres casts BEFORE COALESCE,
+    // so the invalid cast threw inside the §93 dedup tx → rollback → webhook 500
+    // → Recall re-delivered the identical bytes forever (the line never persists).
+    // End-to-end through the webhook front door: it MUST return 200 and persist
+    // the line with a now() fallback timestamp — no throw, no retry loop.
+    const publisher = new InMemoryTranscriptPublisher();
+    const metrics = inMemoryTranscriptMetrics();
+    const pipeline = createTranscriptPipeline({ publisher, metrics });
+
+    const handler = createWebhookHandler({
+      secretProvider: inMemoryWebhookSecretProvider(fake.webhookSecret),
+      lookupCallByBotId: pgLookupCallByBotId(sql),
+      lookupCallByIngestSecret: pgLookupCallByIngestSecret(sql),
+      sql,
+      dispatch: pipeline.dispatch,
+      metrics: inMemoryWebhookMetrics(),
+    } satisfies WebhookHandlerDeps);
+
+    const { createHash } = await import("node:crypto");
+    await sql`UPDATE calls SET ingest_secret_hash = ${createHash("sha256").update(fake.ingestSecret).digest("hex")} WHERE id = ${callA}`;
+    await sql`DELETE FROM webhook_events WHERE bot_id = ${fake.botId}`;
+
+    // The normalizer never throws — it faithfully carries the malformed absolute
+    // through to the canonical line (its documented guarantee, §5.4).
+    const malformed = fake.transcriptData({
+      speaker: "Alice",
+      words: ["hi"],
+      at: "0000-00-00T00:00:00.000Z",
+    });
+    expect(normalizeTranscriptLine(malformed)).toBe("[0000-00-00 00:00:00] Alice: hi");
+
+    const env = fake.webhook(malformed);
+    const before = new Date();
+    const res = await handler(
+      new Request(env.url, { method: "POST", headers: env.headers, body: env.rawBody }),
+    );
+    const after = new Date();
+
+    // 2xx, NOT a 500 — Recall will not re-deliver (the poison-pill loop is broken).
+    expect(res.status).toBe(200);
+
+    // The line IS persisted (exactly one row) with the utterance intact.
+    const rows = await sql`SELECT seq, speaker, text, ts FROM transcripts WHERE call_id = ${callA}`;
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].seq)).toBe(1);
+    expect(rows[0].speaker).toBe("Alice");
+    expect(rows[0].text).toBe("hi");
+
+    // ts fell back to now() (a real, recent timestamp), NOT the malformed value.
+    const persisted = new Date(rows[0].ts as string);
+    expect(persisted.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+    expect(persisted.getTime()).toBeLessThanOrEqual(after.getTime() + 1000);
+    // first_line_at likewise fell back to now(), not the invalid literal.
+    const call = await sql`SELECT first_line_at FROM calls WHERE id = ${callA}`;
+    expect(call[0].first_line_at).not.toBeNull();
+
+    // Published exactly once; the published frame keeps the raw normalizer ts.
+    expect(publisher.linesFor(callA)).toHaveLength(1);
+    expect(publisher.linesFor(callA)[0].ts).toBe("0000-00-00 00:00:00");
+
+    await sql`DELETE FROM webhook_events WHERE bot_id = ${fake.botId}`;
+    await sql`UPDATE calls SET ingest_secret_hash = 'x' WHERE id = ${callA}`;
   });
 });
