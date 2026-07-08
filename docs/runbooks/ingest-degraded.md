@@ -11,6 +11,12 @@ recovering…"* and the live transcript stream carries a
 root cause, and decide whether to fail the affected calls over to a healthy
 region.
 
+> **Note (SPEC.amendments.md → S3-1).** The "cloudflared named tunnel" below is an
+> *optional* prod ingress posture, not a functional requirement — the watchdog probes
+> whatever public HTTPS `/health` route the region exposes (Caddy → ingest, S2-15),
+> tunnel or not. Triage the public ingress; a named tunnel is one possible failure
+> point, not the only one.
+
 ## How it is detected
 
 The leader-elected tunnel watchdog (§4.5/§4.6) probes the region's cloudflared

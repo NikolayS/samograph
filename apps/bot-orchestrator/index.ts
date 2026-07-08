@@ -27,6 +27,27 @@ export const SERVICE_NAME = "bot-orchestrator";
 /** The single production region in v1 (§4.7); multi-region is not a launch gate. */
 export const DEFAULT_REGION = "us-east";
 
+/**
+ * Health + latency snapshot for one region candidate the §4.7 policy chooses
+ * from. `healthy=false` (degraded) means the region FAILS CLOSED for new calls:
+ * {@link pickRegion} skips it. `latencyMs` is the orchestrator-host→region probe
+ * latency used to rank healthy candidates.
+ */
+export interface RegionHealth {
+  region: string;
+  healthy: boolean;
+  latencyMs: number;
+}
+
+/**
+ * The default region set: the single healthy `us-east` region. Until a 2nd region
+ * is DEPLOYED (Sprint-3 deploy is deferred post-launch), this keeps production
+ * behavior UNCHANGED — {@link pickRegion} with no config resolves to `us-east`.
+ */
+export const DEFAULT_REGIONS: readonly RegionHealth[] = [
+  { region: DEFAULT_REGION, healthy: true, latencyMs: 0 },
+];
+
 /** Recognizable bot identity shown in the call (§3 / §5.9). */
 export const BOT_NAME = "samograph (recording)";
 
@@ -91,8 +112,18 @@ export interface Logger {
 export interface OrchestrateDeps {
   recall: RecallClient;
   store: CallStore;
-  /** Region override; defaults to {@link pickRegion}. */
+  /**
+   * Explicit region HARD override. When set it wins outright (operator/testing
+   * escape hatch) — the §4.7 policy is not consulted. When absent the region is
+   * chosen by {@link pickRegion} over {@link regions}/{@link pinnedRegion}.
+   */
   region?: string;
+  /** §4.7 candidate region set for {@link pickRegion}; defaults to {@link DEFAULT_REGIONS}. */
+  regions?: readonly RegionHealth[];
+  /** §4.7(a) user-pinned region preference fed to {@link pickRegion}. */
+  pinnedRegion?: string;
+  /** Deterministic round-robin cursor for a §4.7 latency tie. */
+  regionTieBreaker?: number;
   /**
    * Public webhook base override (§5.3). When set (e.g. from `PUBLIC_WEBHOOK_BASE`,
    * see {@link publicWebhookBase}), the per-call webhook URL is built against this
@@ -138,9 +169,120 @@ const REGION_TUNNEL_BASES: Record<string, string> = {
   "us-east": "https://us-east.tunnel.samograph.dev",
 };
 
-/** v1 region selection: always the single `us-east` region (§4.7). */
-export function pickRegion(): string {
-  return DEFAULT_REGION;
+/**
+ * Options for the §4.7 region-selection policy. All fields are injectable so the
+ * policy is unit-testable and sourced from config/env/deps; every field defaults
+ * so a bare `pickRegion()` resolves to the single `us-east` region (prod path).
+ */
+export interface PickRegionOptions {
+  /** Candidate regions with health+latency; defaults to {@link DEFAULT_REGIONS}. */
+  regions?: readonly RegionHealth[];
+  /** §4.7(a) user-pinned override; honored only when that region is healthy. */
+  pinned?: string;
+  /**
+   * Deterministic round-robin cursor for a latency TIE among healthy regions.
+   * The tied set is ordered by region name; the chosen index is
+   * `tieBreaker mod tieCount`. Same input ⇒ same output (no global state).
+   */
+  tieBreaker?: number;
+  logger?: Logger;
+}
+
+/**
+ * §4.7 region-selection policy. Given a CONFIGURABLE set of regions (each
+ * `{healthy, latencyMs}`), pick where a NEW call's bot joins:
+ *
+ *   (a) a user-pinned override wins — but only when that region is present AND
+ *       healthy; a pinned region that is unknown or degraded FAILS CLOSED and
+ *       falls through to (b) with a log (a new call is never sent to a degraded
+ *       region, even a pinned one);
+ *   (b) otherwise the lowest-latency HEALTHY region, with deterministic
+ *       round-robin within a latency tie.
+ *
+ * Degraded regions are skipped (fail closed); when any region was skipped the
+ * chosen alternative is logged (§4.7). Already-IN_CALL calls are NOT migrated
+ * (Recall has no cross-region migration) — that is a non-action here.
+ *
+ * With the default single-region set this returns `us-east`, so production
+ * behavior is unchanged until a 2nd region is deployed.
+ */
+export function pickRegion(opts: PickRegionOptions = {}): string {
+  const regions = opts.regions ?? DEFAULT_REGIONS;
+  const logger = opts.logger ?? noopLogger;
+
+  if (regions.length === 0) {
+    throw new Error("pickRegion: no regions configured");
+  }
+
+  // (a) User-pinned override — honored only when healthy. A degraded/unknown pin
+  //     fails closed (§4.7) and falls through to lowest-latency auto-selection.
+  if (opts.pinned !== undefined) {
+    const pin = regions.find((r) => r.region === opts.pinned);
+    if (pin && pin.healthy) return pin.region;
+    logger.info("orchestrate.region_pin_skipped", {
+      pinned: opts.pinned,
+      reason: pin ? "degraded" : "unknown",
+    });
+  }
+
+  // (b) Lowest-latency HEALTHY region. Degraded regions are filtered out first —
+  //     they can never be chosen for a new call (fail closed).
+  const healthy = regions.filter((r) => r.healthy);
+  if (healthy.length === 0) {
+    throw new Error("pickRegion: no healthy region available (all degraded)");
+  }
+  const minLatency = Math.min(...healthy.map((r) => r.latencyMs));
+  const tied = healthy
+    .filter((r) => r.latencyMs === minLatency)
+    .sort((a, b) => (a.region < b.region ? -1 : a.region > b.region ? 1 : 0));
+  const cursor = opts.tieBreaker ?? 0;
+  const idx = ((cursor % tied.length) + tied.length) % tied.length;
+  const chosen = tied[idx].region;
+
+  // When any region was skipped as degraded, log the chosen alternative (§4.7).
+  const skipped = regions.filter((r) => !r.healthy).map((r) => r.region);
+  if (skipped.length > 0) {
+    logger.info("orchestrate.region_selected", { chosen, skipped });
+  }
+
+  return chosen;
+}
+
+/**
+ * Read the configurable region set from the environment (§4.7 config/env seam).
+ * `SAMOGRAPH_REGIONS` is a JSON array of `{region,healthy,latencyMs}`; unset ⇒
+ * {@link DEFAULT_REGIONS} (the single healthy `us-east`, prod behavior unchanged).
+ * A set-but-malformed value throws a clear error rather than silently degrading.
+ */
+export function regionsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): readonly RegionHealth[] {
+  const raw = (env.SAMOGRAPH_REGIONS ?? "").trim();
+  if (!raw) return DEFAULT_REGIONS;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`SAMOGRAPH_REGIONS is not valid JSON: ${raw}`);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(
+      "SAMOGRAPH_REGIONS must be a non-empty JSON array of {region,healthy,latencyMs}",
+    );
+  }
+  return parsed.map((entry, i) => {
+    const r = entry as Record<string, unknown>;
+    if (
+      typeof r?.region !== "string" ||
+      typeof r?.healthy !== "boolean" ||
+      typeof r?.latencyMs !== "number"
+    ) {
+      throw new Error(
+        `SAMOGRAPH_REGIONS[${i}] must be {region:string, healthy:boolean, latencyMs:number}`,
+      );
+    }
+    return { region: r.region, healthy: r.healthy, latencyMs: r.latencyMs };
+  });
 }
 
 /**
@@ -200,8 +342,17 @@ export async function orchestrateJoin(
   job: OrchestratorJob,
   deps: OrchestrateDeps,
 ): Promise<OrchestrateResult> {
-  const region = deps.region ?? pickRegion();
   const logger = deps.logger ?? noopLogger;
+  // deps.region is a HARD override (wins outright); otherwise the §4.7 policy
+  // chooses over the configured region set (default: single healthy us-east).
+  const region =
+    deps.region ??
+    pickRegion({
+      regions: deps.regions,
+      pinned: deps.pinnedRegion,
+      tieBreaker: deps.regionTieBreaker,
+      logger,
+    });
   const generate = deps.generateSecret ?? generateIngestSecret;
 
   // Mint the per-call secret and derive its hash. The plaintext stays in this
