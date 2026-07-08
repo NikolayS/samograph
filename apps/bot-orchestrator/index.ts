@@ -19,6 +19,7 @@
 import { randomBytes } from "node:crypto";
 import { sha256Hex } from "../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
+import type { BotJoinMetrics } from "./botJoinMetrics.ts";
 
 /** This service's stable name (parity with the other workspace stubs). */
 export const SERVICE_NAME = "bot-orchestrator";
@@ -102,6 +103,13 @@ export interface OrchestrateDeps {
   /** Secret generator override (deterministic in tests); defaults to {@link generateIngestSecret}. */
   generateSecret?: () => string;
   logger?: Logger;
+  /**
+   * §5.11 `bot_join_total{result}` producer (issue #107). {@link runJoinJob}
+   * increments `could_not_join` EXACTLY once when a createBot/join FAILURE is
+   * persisted as terminal COULD_NOT_JOIN. Carries only the coarse outcome label —
+   * never the Recall key (§4.4). Omit ⇒ no metric (the counter stays at 0).
+   */
+  metrics?: BotJoinMetrics;
 }
 
 export interface OrchestrateResult {
@@ -299,6 +307,10 @@ export async function runJoinJob(
     // could echo the Authorization header on an HTTP failure).
     logger.info("orchestrate.join_failed", { callId: job.callId, reason });
     await deps.store.markCouldNotJoin(job.callId, reason);
+    // §5.11 bot_join_total{could_not_join}: the createBot FAILURE path is the
+    // orchestrator's one terminal outcome, emitted exactly once per failed job.
+    // (The poller owns in_call / could_not_record / its own could_not_join.)
+    deps.metrics?.incBotJoin("could_not_join");
     return { callId: job.callId, status: "COULD_NOT_JOIN", reason };
   }
 }

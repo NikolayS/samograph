@@ -63,6 +63,7 @@ import type {
 } from "../../packages/shared/transcript/publisher.ts";
 import { DISCLOSURE_TEXT } from "../ingest/botLifecycle.ts";
 import type { BotActions } from "./recallBotActions.ts";
+import type { BotJoinMetrics } from "./botJoinMetrics.ts";
 
 /** The `calls.status` enum values (§5.2). */
 export type PolledCallStatus =
@@ -246,6 +247,19 @@ const RANK: Record<PolledCallStatus, number> = {
 /** Statuses the sweep considers (i.e. not yet terminal, §5.2). */
 const NON_TERMINAL: readonly PolledCallStatus[] = ["PENDING", "JOINING", "IN_CALL"];
 
+/**
+ * The §5.11 `bot_join_total{result}` label for a polled transition target, or
+ * `undefined` for a status that is not a join OUTCOME (issue #107). ENDED /
+ * BOT_REMOVED / a JOINING hop are lifecycle moves, not join outcomes, so they
+ * never touch the counter. Emitted only when the forward-only UPDATE APPLIED, so
+ * each of the three outcomes fires at most once per call.
+ */
+const BOT_JOIN_RESULT_BY_STATUS: Partial<Record<PolledCallStatus, string>> = {
+  IN_CALL: "in_call",
+  COULD_NOT_JOIN: "could_not_join",
+  COULD_NOT_RECORD: "could_not_record",
+};
+
 export interface StatusPollerDeps {
   /** PRIVILEGED infra connection (bypasses RLS — the sweep crosses tenants). */
   sql: SQL;
@@ -263,6 +277,14 @@ export interface StatusPollerDeps {
    * (status still lands in Postgres and shows on reload).
    */
   publisher?: TranscriptPublisher;
+  /**
+   * §5.11 `bot_join_total{result}` producer (issue #107). On a forward-only
+   * terminal transition that APPLIES, the poller increments `in_call` /
+   * `could_not_join` / `could_not_record` EXACTLY once; a duplicate poll matches
+   * 0 rows so it never double-counts. Carries only the outcome label — never the
+   * Recall key (§4.4). Omitted ⇒ no metric.
+   */
+  metrics?: BotJoinMetrics;
   /** Wall clock (ms) for the `in_call_not_recording` grace; injectable in tests. */
   clock?: () => number;
   /** Sweep interval (defaults to {@link STATUS_POLL_INTERVAL_MS}). */
@@ -378,10 +400,12 @@ export function startStatusPoller(deps: StatusPollerDeps): StatusPollerHandle {
    * {@link postDisclosureOnce}).
    */
   async function applyResolved(row: SweepRow, transition: PolledTransition, latest: StatusChange) {
+    let applied = false;
     await sql.begin(async (tx) => {
       const exec = tx as unknown as SQL;
       const changed = await applyForward(exec, row.id, transition.status, latest.sub_code ?? null);
       if (!changed) return;
+      applied = true;
 
       await audit(
         exec,
@@ -416,6 +440,16 @@ export function startStatusPoller(deps: StatusPollerDeps): StatusPollerHandle {
         await deps.publisher.publish(frame, exec);
       }
     });
+
+    // §5.11 bot_join_total{result} (issue #107): emit ONCE per call on the
+    // committed forward-only terminal transition. `applied` is set only when the
+    // conditional UPDATE matched a row, so a duplicate poll (0 rows) never
+    // double-counts, and it fires only after the tx COMMITS (a rollback throws
+    // out of sql.begin and skips this). Carries the outcome label only, no key.
+    if (applied) {
+      const result = BOT_JOIN_RESULT_BY_STATUS[transition.status];
+      if (result) deps.metrics?.incBotJoin(result);
+    }
 
     // §5.9 recording disclosure — OUTSIDE the status-flip tx, guarded by the
     // durable marker (driven by the marker, not `changed`, so a failed send
