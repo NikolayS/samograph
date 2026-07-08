@@ -69,6 +69,7 @@ describe("mapLifecycleCode — Recall lifecycle → calls.status (§5.2/§5.16)"
   it("in_call_recording → IN_CALL (non-terminal, posts disclosure, no leave)", () => {
     expect(mapLifecycleCode("in_call_recording")).toEqual({
       status: "IN_CALL",
+      allowedFrom: ["PENDING", "JOINING"],
       terminal: false,
       postDisclosure: true,
       leave: false,
@@ -80,6 +81,7 @@ describe("mapLifecycleCode — Recall lifecycle → calls.status (§5.2/§5.16)"
   it("in_call_not_recording → COULD_NOT_RECORD (terminal, leave, NO disclosure, SAMO-CALL-NOREC)", () => {
     expect(mapLifecycleCode("in_call_not_recording")).toEqual({
       status: "COULD_NOT_RECORD",
+      allowedFrom: ["PENDING", "JOINING"], // pre-join only (S2-16) — never regress a LIVE IN_CALL.
       terminal: true,
       postDisclosure: false,
       leave: true,
@@ -91,6 +93,7 @@ describe("mapLifecycleCode — Recall lifecycle → calls.status (§5.2/§5.16)"
   it("call_ended → ENDED (terminal, no leave, no disclosure)", () => {
     expect(mapLifecycleCode("call_ended")).toEqual({
       status: "ENDED",
+      allowedFrom: ["PENDING", "JOINING", "IN_CALL"], // a live call CAN end.
       terminal: true,
       postDisclosure: false,
       leave: false,
@@ -102,6 +105,7 @@ describe("mapLifecycleCode — Recall lifecycle → calls.status (§5.2/§5.16)"
   it("bot_removed → BOT_REMOVED (terminal, SAMO-CALL-REMOVED)", () => {
     expect(mapLifecycleCode("bot_removed")).toEqual({
       status: "BOT_REMOVED",
+      allowedFrom: ["PENDING", "JOINING", "IN_CALL"], // a live call CAN be removed.
       terminal: true,
       postDisclosure: false,
       leave: false,
@@ -113,6 +117,7 @@ describe("mapLifecycleCode — Recall lifecycle → calls.status (§5.2/§5.16)"
   it("fatal → COULD_NOT_JOIN (terminal, persists Recall reason, SAMO-CALL-JOIN)", () => {
     expect(mapLifecycleCode("fatal")).toEqual({
       status: "COULD_NOT_JOIN",
+      allowedFrom: ["PENDING", "JOINING"], // COULD_NOT_JOIN is pre-join-only (§5.2 / S2-16).
       terminal: true,
       postDisclosure: false,
       leave: false,
@@ -234,7 +239,7 @@ d("handleLifecycleEvent persistence (§5.2/§5.9/§5.11/§5.16, TDD §6.2 #8)", 
   const userA = randomUUID();
   const tenantA = randomUUID();
   // A small pool of independent calls so each scenario owns a fresh row.
-  const calls = Array.from({ length: 6 }, () => randomUUID());
+  const calls = Array.from({ length: 11 }, () => randomUUID());
   const botFor = (callId: string) => `bot_${callId.slice(0, 8)}`;
 
   beforeAll(async () => {
@@ -395,6 +400,86 @@ d("handleLifecycleEvent persistence (§5.2/§5.9/§5.11/§5.16, TDD §6.2 #8)", 
     // A duplicate terminal (bot_removed) likewise leaves ENDED untouched.
     await deliver(lifecycle, tenantA, statusEvent(callId, tenantA, botFor(callId), "bot_removed"));
     expect(await statusOf(callId)).toBe("ENDED");
+  });
+
+  // ── S2-16: per-code terminal guard — a late/re-delivered terminal event must
+  // NOT regress a LIVE IN_CALL row (destructive eject/mislabel). Only `call_ended`
+  // and `bot_removed` may terminate a live call; `in_call_not_recording` and
+  // `fatal` are pre-join-only (allowedFrom = PENDING/JOINING).
+  it("S2-16 IN_CALL + in_call_not_recording → STAYS IN_CALL, NO leave, no COULD_NOT_RECORD frame", async () => {
+    const callId = calls[6];
+    const { lifecycle, worker, publisher } = newLifecycle();
+    await setStatus(callId, "IN_CALL");
+
+    await deliver(lifecycle, tenantA, statusEvent(callId, tenantA, botFor(callId), "in_call_not_recording"));
+
+    // The live call is untouched — the bot is NOT ejected mid-recording.
+    expect(await statusOf(callId)).toBe("IN_CALL");
+    expect(worker.leaves).toHaveLength(0);
+    expect(worker.chats).toHaveLength(0);
+    // No status frame at all — the guarded UPDATE was a no-op.
+    expect(publisher.framesFor(callId)).toEqual([]);
+    // No transition audited.
+    const audit = await sql`SELECT count(*)::int AS c FROM audit_log WHERE call_id = ${callId}`;
+    expect(audit[0].c).toBe(0);
+  });
+
+  it("S2-16 IN_CALL + fatal → STAYS IN_CALL (never mislabelled COULD_NOT_JOIN)", async () => {
+    const callId = calls[7];
+    const { lifecycle, publisher } = newLifecycle();
+    await setStatus(callId, "IN_CALL");
+
+    await deliver(
+      lifecycle,
+      tenantA,
+      statusEvent(callId, tenantA, botFor(callId), "fatal", { reason: "meeting_not_found" }),
+    );
+
+    const row = (await sql`SELECT status, status_reason FROM calls WHERE id = ${callId}`)[0];
+    expect(row.status).toBe("IN_CALL");
+    expect(row.status_reason).toBeNull(); // no reason persisted on a no-op.
+    expect(publisher.framesFor(callId)).toEqual([]);
+  });
+
+  it("S2-16 PENDING + in_call_not_recording → COULD_NOT_RECORD + leave (pre-join escalation preserved)", async () => {
+    const callId = calls[8];
+    const { lifecycle, worker, publisher } = newLifecycle();
+    await setStatus(callId, "PENDING");
+
+    await deliver(lifecycle, tenantA, statusEvent(callId, tenantA, botFor(callId), "in_call_not_recording"));
+
+    expect(await statusOf(callId)).toBe("COULD_NOT_RECORD");
+    expect(worker.leaves).toEqual([callId]);
+    expect(worker.chats).toHaveLength(0);
+    expect(publisher.framesFor(callId)).toEqual([
+      { type: "status", call_id: callId, status: "COULD_NOT_RECORD" },
+    ]);
+  });
+
+  it("S2-16 IN_CALL + call_ended → ENDED (a live call CAN end — preserved)", async () => {
+    const callId = calls[9];
+    const { lifecycle, publisher } = newLifecycle();
+    await setStatus(callId, "IN_CALL");
+
+    await deliver(lifecycle, tenantA, statusEvent(callId, tenantA, botFor(callId), "call_ended"));
+
+    expect(await statusOf(callId)).toBe("ENDED");
+    expect(publisher.framesFor(callId)).toEqual([
+      { type: "status", call_id: callId, status: "ENDED" },
+    ]);
+  });
+
+  it("S2-16 IN_CALL + bot_removed → BOT_REMOVED (a live call CAN be removed — preserved)", async () => {
+    const callId = calls[10];
+    const { lifecycle, publisher } = newLifecycle();
+    await setStatus(callId, "IN_CALL");
+
+    await deliver(lifecycle, tenantA, statusEvent(callId, tenantA, botFor(callId), "bot_removed"));
+
+    expect(await statusOf(callId)).toBe("BOT_REMOVED");
+    expect(publisher.framesFor(callId)).toEqual([
+      { type: "status", call_id: callId, status: "BOT_REMOVED" },
+    ]);
   });
 
   it("status transitions are audited with the event payload sha256 (actor system)", async () => {

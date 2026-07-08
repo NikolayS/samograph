@@ -566,6 +566,19 @@ LIVE `IN_CALL` call to terminal `COULD_NOT_RECORD` and eject the bot (a third bu
 samorev gate caught). Scoping the escalation to `PENDING`/`JOINING` preserves the
 "terminal is sticky, forward-only" lifecycle invariant. `apps/ingest/botLifecycle.ts`.
 
+**Status — implemented + tested (`fix/botlifecycle-status-guard`).** Each transition
+now carries its own explicit `allowedFrom` set instead of the shared `NON_TERMINAL`
+guard, and `applyTerminal`'s `WHERE status IN (…)` is scoped to it:
+`in_call_not_recording` (COULD_NOT_RECORD) and `fatal` (COULD_NOT_JOIN) are
+`allowedFrom = ['PENDING','JOINING']` (pre-join only — from `IN_CALL` a NO-OP, so the
+bot is never ejected mid-recording and a recorded call is never mislabelled), while
+`call_ended` (ENDED) and `bot_removed` (BOT_REMOVED) keep `['PENDING','JOINING','IN_CALL']`
+(a live call CAN end / be removed). Red/green coverage in
+`apps/ingest/botLifecycle.test.ts`: `IN_CALL` + `in_call_not_recording` stays `IN_CALL`
+with NO `worker.leave` and no status frame; `IN_CALL` + `fatal` stays `IN_CALL`; and the
+preserved paths (`PENDING` + `in_call_not_recording` → `COULD_NOT_RECORD` + leave;
+`IN_CALL` + `call_ended` → `ENDED`; `IN_CALL` + `bot_removed` → `BOT_REMOVED`).
+
 ---
 
 ### Gaps tracked as issues (NOT amendments)
