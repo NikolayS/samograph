@@ -61,7 +61,7 @@ Monorepo root: `/Users/new/samograph`. Bun workspaces: `apps/{web,app-api,ingest
 ### 3.2 Apps
 
 **`apps/app-api`** — Bun/Hono control plane (:8787 in dev).
-- `index.ts` is only a `/health` stub — **real routes are the `http.ts` handlers wired by `dev-server.ts`** (an integration seam, not a prod entrypoint).
+- `index.ts` is only a `/health` stub. The real routes are composed by the pure factory **`app.ts` (`createAppApi`)** and served by one of two entrypoints: **`server.ts` is the PROD entrypoint** (no dev shortcuts — `Secure` cookie enforced, no `/__dev/last-magic-link`; runs the #64 fail-closed secret check before binding), and **`dev-server.ts` is the LOCAL-ONLY dev wrapper** (dev-default secrets, `Secure`-strip, `/__dev/last-magic-link` — refuses to boot unless `SAMO_ENV=dev`). Gating flag `SAMO_ENV` (`dev`|`prod`, default `prod` = fail-safe) is resolved once at startup, NOT from the request host.
 - `auth/` — magic-link + session: `service.ts` (`AuthService`, rate limits `PER_EMAIL_LIMIT=5`, `PER_IP_LIMIT=20`), `token.ts`, `session.ts` (`signSession`/`verifySession`, cookie `samo_session`, HttpOnly/Secure/SameSite=Lax, 30d TTL), `keyring.ts`, `rate-limit.ts`, `stores.ts`/`pg-user-store.ts`, `email.ts`/`resend-email.ts` (`EmailSender` port + Resend adapter), `errors.ts` (SAMO-AUTH-001..004).
 - `calls/http.ts` — `POST/GET /calls`, `GET /calls/:id`, share mint/list/revoke/rotate. Every tenant-scoped tx runs `SET LOCAL ROLE samograph_app` + `setTenant`. `calls/validate.ts` — Zoom/Meet URL patterns.
 - `workers/discovery.ts` — `callWorker`: gate FIRST → RLS-scoped `workers` lookup → HTTP call with per-instance Bearer + `AbortSignal.timeout` → clean `SAMO-WORKER-503` on dead worker.
@@ -156,13 +156,13 @@ Runs with the in-repo Recall fake and a dev email fake (prints the magic link) �
 
 | Service | Port(s) | Entry | Notes |
 |---|---|---|---|
-| app-api | 8787 | `apps/app-api/dev-server.ts` | auth, calls, share, `GET /__dev/last-magic-link` |
+| app-api | 8787 | `apps/app-api/dev-server.ts` (dev; `SAMO_ENV=dev`) | auth, calls, share, `GET /__dev/last-magic-link`. PROD entry is `apps/app-api/server.ts` (`SAMO_ENV=prod`, Secure enforced, no `/__dev`). |
 | live (ingest+ws-hub) | 8788 ws / 8089 webhook / 8790 dev-ctrl | `apps/ws-hub/dev-live-server.ts` | `POST /__dev/say` injects a line without webhook auth |
 | web | 3000 | `apps/web` (`bun run --bun dev`) | proxies API to `APP_API_ORIGIN` |
 
 Manual click-through: open `http://localhost:3000` → Get started → any email → `curl -s http://localhost:8787/__dev/last-magic-link` → open link → dashboard → paste `https://meet.google.com/abc-defg-hij` → Add to call → then `curl -s http://localhost:8790/__dev/say -H 'content-type: application/json' -d '{"call_id":"<id>","speaker":"Alice","text":"hello live"}'`.
 
-DEV-only shortcuts baked into the seams (never production): constant fallback secrets shared between app-api and ws-hub (kid `dev-share`), cookie `Secure` stripped for `http://localhost`, fake email/Recall by default. To go live from the same seam: `RESEND_API_KEY`+`MAGIC_LINK_FROM` (real email), `RECALL_LIVE=1`+`RECALL_API_KEY`+`PUBLIC_WEBHOOK_BASE` (real bot; fails fast if the key is missing — #88). See `docs/runbooks/real-recall-flag.md`.
+DEV-only shortcuts baked into the seams (never production), gated by `SAMO_ENV=dev`: constant fallback secrets shared between app-api and ws-hub (kid `dev-share`), cookie `Secure` stripped for `http://localhost`, fake email/Recall by default. `dev-local.sh` sets `SAMO_ENV=dev` on both dev entrypoints. In prod (`SAMO_ENV=prod`, the default when unset) the app-api PROD entrypoint `server.ts` enforces `Secure` and both `server.ts` and `dev-live-server.ts` hard-fail on boot if `SESSION_SECRET`/`MAGIC_LINK_SECRET`/`TOKEN_SECRET` is missing or still a committed dev default (#64). To go live from the same seam: `RESEND_API_KEY`+`MAGIC_LINK_FROM` (real email), `RECALL_LIVE=1`+`RECALL_API_KEY`+`PUBLIC_WEBHOOK_BASE` (real bot; fails fast if the key is missing — #88). See `docs/runbooks/real-recall-flag.md`.
 
 ### Postgres & migrations
 
@@ -204,7 +204,8 @@ CI (`.github/workflows/ci.yml`): `test` (tsc + bun test + CLI build, no DB), `po
 - **Hetzner VM**: `ssh -p 2223 dev@116.203.249.135`. Public traffic goes through Cloudflare at **https://samograph-main.samo.cat** — always use the domain; the raw IP is firewalled.
 - **Caddy** (`/etc/caddy/sites.d/samograph-main.caddy`) routes: `/calls/:id/stream` + `/calls/:id/transcript*` → ws-hub (localhost:8788); `/webhook*` + `/health` → ingest (localhost:8089); everything else → web (localhost:3100, `next start`).
 - **systemd** (templated `@samograph-main`): `samograph-web` (app-api :8787 + web :3100 via `start-preview.sh`) and `samograph-live` (ingest + ws-hub composed in ONE process via `apps/ws-hub/dev-live-server.ts` — Bun SQL has no cross-process LISTEN, so they must share an in-process Hub).
-- **Secrets**: `/opt/samograph/envs/samograph-main/.env` (root-600, NEVER committed): `RECALL_API_KEY`, `RESEND_API_KEY`, `SESSION_SECRET`, `TOKEN_SECRET`, `RECALL_WEBHOOK_SECRET`, `DATABASE_URL`, `APP_API_ORIGIN`, `PUBLIC_WEBHOOK_BASE`, `MAGIC_LINK_FROM=samograph@samo.cat`. No secret value appears anywhere in the repo.
+  - **PENDING INFRA REPOINT (#105/#64):** the app-api service still launches `dev-server.ts`, which strips `Secure` off every session cookie. Repoint `start-preview.sh` (and the systemd unit) from `apps/app-api/dev-server.ts` to **`apps/app-api/server.ts`** and set `SAMO_ENV=prod` in the env file. Until that infra step lands, prod keeps running `dev-server.ts` and keeps stripping `Secure` — merging the code PR does not by itself change prod. `dev-live-server.ts` stays the live entrypoint but must run with `SAMO_ENV=prod` so its #64 fail-closed engages.
+- **Secrets**: `/opt/samograph/envs/samograph-main/.env` (root-600, NEVER committed): `RECALL_API_KEY`, `RESEND_API_KEY`, `SESSION_SECRET`, `MAGIC_LINK_SECRET`, `TOKEN_SECRET`, `RECALL_WEBHOOK_SECRET`, `DATABASE_URL`, `APP_API_ORIGIN`, `PUBLIC_WEBHOOK_BASE`, `MAGIC_LINK_FROM=samograph@samo.cat`, and `SAMO_ENV=prod`. In prod all three signing secrets (`SESSION_SECRET`/`MAGIC_LINK_SECRET`/`TOKEN_SECRET`) must be real or the process refuses to boot (#64). No secret value appears anywhere in the repo.
 - The VM currently tracks main @ `74a73e8` (verify before deploying — it may have moved).
 
 ### Deploy procedure

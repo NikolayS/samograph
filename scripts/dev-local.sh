@@ -83,7 +83,7 @@ run_migrations() {
 start_api() {
   if api_healthy; then log "app-api already healthy on :$APP_API_PORT — skipping"; return 0; fi
   log "starting app-api (composed dev server) on :$APP_API_PORT"
-  APP_API_PORT="$APP_API_PORT" WEB_ORIGIN="http://localhost:${WEB_PORT}" \
+  SAMO_ENV=dev APP_API_PORT="$APP_API_PORT" WEB_ORIGIN="http://localhost:${WEB_PORT}" \
     nohup bun "$ROOT/apps/app-api/dev-server.ts" >"$LOGDIR/app-api.log" 2>&1 &
   echo $! > "$LOGDIR/app-api.pid"
   for _ in $(seq 1 40); do api_healthy && { log "app-api up (pid $(cat "$LOGDIR/app-api.pid"))"; return 0; }; sleep 0.5; done
@@ -93,7 +93,7 @@ start_api() {
 start_live() {
   if live_healthy; then log "live (ingest+ws-hub) already healthy on :$DEV_CTRL_PORT — skipping"; return 0; fi
   log "starting live transport (ingest :$INGEST_PORT + ws-hub :$WS_HUB_PORT, dev-ctrl :$DEV_CTRL_PORT)"
-  WS_HUB_PORT="$WS_HUB_PORT" INGEST_PORT="$INGEST_PORT" DEV_CTRL_PORT="$DEV_CTRL_PORT" \
+  SAMO_ENV=dev WS_HUB_PORT="$WS_HUB_PORT" INGEST_PORT="$INGEST_PORT" DEV_CTRL_PORT="$DEV_CTRL_PORT" \
     nohup bun "$ROOT/apps/ws-hub/dev-live-server.ts" >"$LOGDIR/live.log" 2>&1 &
   echo $! > "$LOGDIR/live.pid"
   for _ in $(seq 1 40); do live_healthy && { log "live up (pid $(cat "$LOGDIR/live.pid"))"; return 0; }; sleep 0.5; done

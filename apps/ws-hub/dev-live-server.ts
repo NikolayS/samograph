@@ -29,6 +29,18 @@ import type { ValidatedEvent } from "../ingest/webhook.ts";
 import { createRecallFake } from "../../packages/test-fakes/recall/index.ts";
 import { composeLiveStack } from "./liveBridge.ts";
 import { startLiveWatchdogBridge } from "./watchdogBridge.ts";
+import {
+  assertNoDevDefaultSecrets,
+  usingDevDefaultSecrets,
+  WS_HUB_SIGNING_SECRETS,
+} from "../../packages/shared/config/env.ts";
+
+// ── #64 fail-closed: this file is ALSO a live prod entrypoint (systemd). In
+// prod (SAMO_ENV≠dev) hard-error BEFORE binding a port if any signing secret
+// THIS service uses is missing or a committed dev default; in dev this no-ops so
+// dev-local.sh runs. Scope: SESSION_SECRET + TOKEN_SECRET only — the ws-hub does
+// NOT use magic links, so requiring MAGIC_LINK_SECRET here would crash-loop it.
+assertNoDevDefaultSecrets(process.env, WS_HUB_SIGNING_SECRETS);
 
 // ── DEV-ONLY config + secrets (clearly marked; NEVER use in production) ────────
 const WS_HUB_PORT = Number(process.env.WS_HUB_PORT ?? 8788);
@@ -38,7 +50,11 @@ const SESSION_SECRET = process.env.SESSION_SECRET ?? "dev-only-session-secret-ch
 const DEV_TOKEN_SECRET = process.env.TOKEN_SECRET ?? "dev-only-token-secret-change-me-abcd";
 const DEV_WEBHOOK_SECRET = process.env.RECALL_WEBHOOK_SECRET ?? "dev-only-webhook-secret-change-me";
 
-const usingDevSecrets = !process.env.SESSION_SECRET || !process.env.RECALL_WEBHOOK_SECRET;
+// Dev warn path: TOKEN_SECRET now included (#64 — it too can silently fall back
+// to its public dev default). RECALL_WEBHOOK_SECRET stays ws-hub-specific.
+const usingDevSecrets =
+  usingDevDefaultSecrets(process.env, WS_HUB_SIGNING_SECRETS).length > 0 ||
+  !process.env.RECALL_WEBHOOK_SECRET;
 
 const sql = connect();
 
