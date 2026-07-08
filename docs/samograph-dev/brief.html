@@ -192,6 +192,7 @@ flowchart TD
       </div>
     </div>
     <p class="muted" style="font-size:0.86rem;">Critical departure from the CLI: one persistent multi-tenant cloudflared <strong>named</strong> tunnel per region (per-call routing encoded as <code>?bot=&lt;id&gt;&amp;t=&lt;ingest_secret&gt;</code>, verified at the tenancy gate) instead of one ngrok per call — killing the <code>ERR_NGROK_727</code> failure mode.</p>
+    <p class="muted" style="font-size:0.8rem;"><strong>Amendment (SPEC.amendments.md → S3-1):</strong> the <strong>named tunnel</strong> is a dev-reachability artifact and an <em>optional</em> prod security posture (zero inbound ports + Cloudflare edge), <strong>not</strong> a functional prod requirement. The functional requirement is one static public HTTPS <code>/webhook</code> reachable by Recall with the per-call <code>?bot=&amp;t=</code> params; a plain public HTTPS ingress (Caddy → ingest) is equally correct.</p>
   </section>
 
   <section class="card">

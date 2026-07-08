@@ -6,7 +6,8 @@ section it amends, states precisely what differs from a literal reading of the
 spec, and explains why. These are reviewed decisions — not silent drift.
 
 > Sections: **[Sprint 1 — "the seams"](#sprint-1--the-seams)** ·
-> **[Sprint 2 — "the live transcript"](#sprint-2--the-live-transcript)**.
+> **[Sprint 2 — "the live transcript"](#sprint-2--the-live-transcript)** ·
+> **[Sprint 3 — "multi-region"](#sprint-3--multi-region)**.
 
 ---
 
@@ -595,3 +596,108 @@ Retry-After), `SAMO-CALL-NOREC` / `COULD_NOT_RECORD` and `SAMO-CALL-REMOVED` /
 `BOT_REMOVED` (lifecycle), `SAMO-INGEST-DEGRADED` (watchdog overlay), and
 `SAMO-CALL-JOIN` (the `COULD_NOT_JOIN` reason, persisted via migration 0004). Still
 intentionally not implemented (v2 surfaces): `SAMO-RECALL-COST`, `SAMO-BILLING-*`.
+
+---
+
+## Sprint 3 — "multi-region"
+
+This section records the **intentional** deviations/clarifications from `SPEC.md`
+made during Sprint 3 (the multi-region seam: region-selection policy code, plus
+the prod-ingress clarification). Same legend (**Extension** / **Clarification** /
+**Superset** / **Deviation (v1)**). Per §8, deploying a 2nd region is *proof of the
+seam*, not a launch gate; in this build the multi-region **code** lands while the
+2nd-region **deploy** is deferred to the owner post-launch — so the shipped default
+keeps the single-region prod path unchanged.
+
+---
+
+### S3-1. §4.3 / §4.5 / §4.9 — "named tunnel per region" is a dev artifact + an *optional* prod security posture, **not** a functional requirement of prod ingress — *Clarification*
+
+**Amends:** §4.3 ("Why one named regional tunnel…"), §4.5 (tunnel watchdog probe
+target `https://<regional-tunnel>/health`), §4.9 (Cloudflare posture) — and the
+downstream docs that repeat "named tunnel per region" as *the* prod path
+(`docs/runbooks/README.md`, `docs/runbooks/ingest-degraded.md`,
+`docs/samograph-dev/brief.html`).
+
+**What differs.** The SPEC body presents a cloudflared **named tunnel per region**
+as *the* production webhook-ingress mechanism. As actually built and operated, the
+tunnel is one of three distinct things, only one of which is a functional
+requirement:
+
+1. **Dev-only artifact (the real driver).** A developer's laptop is not publicly
+   reachable, so a tunnel (ngrok/cloudflared quick tunnel, or a named tunnel) is
+   how Recall's webhooks reach a local ingest during development. This is the
+   origin of the whole "tunnel" language and mirrors the CLI's `--tunnel`.
+2. **Prod ingress = plain public HTTPS (the functional requirement).** In
+   production, ingest sits behind a normal public HTTPS endpoint (Caddy → ingest;
+   see S2-15) at **one static `/webhook` path**, with per-call routing carried in
+   the query string `?bot=<recall_bot_id>&t=<ingest_secret>` (verified at the
+   tenancy gate, §5.3). A publicly reachable HTTPS `/webhook` is all Recall needs;
+   `webhook_url` is built from `PUBLIC_WEBHOOK_BASE`/`webhookBase` when set
+   (`apps/bot-orchestrator/index.ts` `publicWebhookBase`, issue #88), otherwise
+   from the region's configured base. There is **no per-call** ingress object.
+3. **Named tunnel in prod = OPTIONAL hardening, not required.** Running that public
+   `/webhook` *behind* a cloudflared **named** tunnel is a legitimate,
+   recommended-when-desired security posture — it yields **zero inbound open ports**
+   on the host and puts Cloudflare's edge (DDoS/WAF/TLS) in front of ingest. But it
+   is a *deployment choice*, not a functional prerequisite: a plain public HTTPS
+   `/webhook` (e.g. Caddy with a real cert, security-group-restricted) is equally
+   correct. §4.9 already frames the tunnel as free/no-request-cap and explicitly
+   says *"fail over to a second tunnel/`--webhook-base`"* and keep Cloudflare off
+   the hard critical path — i.e. the tunnel is a posture, not a hard dependency.
+
+**Why.** The "named tunnel per region" framing conflates a *dev-reachability
+workaround* and an *optional edge-security posture* with the actual *functional*
+requirement, which is simply **a public HTTPS `/webhook` reachable by Recall, with
+per-call params**. Reading it as a hard requirement would (a) wrongly imply
+Cloudflare is on the critical live path (it must not be — §4.9, risk #15) and
+(b) wrongly imply per-region tunnels are load-bearing for correctness rather than
+an ops/security convenience. The per-region **watchdog** (§4.5/§4.6) and the
+region-selection policy (§4.7, S3-2) operate over whatever public ingress a region
+uses; "regional tunnel `/health`" in §4.5 should be read as "the region's public
+`/health` marker route" (already realized that way in S2-15).
+
+**Docs touched.** Non-invasive pointers were added referencing this amendment where
+the docs still assert named-tunnel-per-region as THE prod path — the SPEC body and
+runbook/brief wording are **not** rewritten (the SPEC stays the contract): §4.3,
+§4.5, §4.9 (`SPEC.md`), `docs/runbooks/README.md`, `docs/runbooks/ingest-degraded.md`,
+`docs/samograph-dev/brief.html`.
+
+---
+
+### S3-2. §4.7 — region-selection policy implemented as a configurable, injectable policy defaulting to single healthy `us-east` — *Extension*
+
+**Amends:** §4.7 (region selection policy).
+
+**What differs.** `apps/bot-orchestrator/index.ts` now implements the §4.7 policy
+in `pickRegion(opts)` over a **configurable** region set (`RegionHealth[]` =
+`{region, healthy, latencyMs}`), sourced from injected deps or env
+(`regionsFromEnv` reads `SAMOGRAPH_REGIONS`), and **defaulting to
+`DEFAULT_REGIONS` = the single healthy `us-east`** so production behavior is
+UNCHANGED until a 2nd region is deployed. Selection is exactly §4.7:
+
+- **(a) user-pinned override** wins — honored only when that region is present and
+  **healthy**; a pinned region that is unknown or **degraded fails closed** and
+  falls through to (b) with a `region_pin_skipped` log (a new call is never sent to
+  a degraded region, even a pinned one).
+- **(b) lowest-latency HEALTHY region**, with **deterministic round-robin** within
+  a latency tie (tied set ordered by region name, indexed by an injected
+  `tieBreaker` cursor mod tie-count — same input ⇒ same output).
+- A **degraded** region **fails closed** (filtered out; never chosen for a new
+  call); when any region was skipped, the chosen alternative is logged
+  (`region_selected {chosen, skipped}`). All-degraded throws (no healthy target).
+
+`orchestrateJoin`'s existing `deps.region` is retained as a **hard override** that
+bypasses the policy entirely (operator/testing escape hatch); when absent the
+policy chooses. The `publicWebhookBase`/`webhookBase` seam (issue #88) is unchanged.
+
+**Not migrated:** already-`IN_CALL` calls in a region that later degrades are **not**
+moved (Recall has no cross-region bot migration, §4.7) — a deliberate non-action;
+they keep surfacing the §4.5 warning until recovery.
+
+**Deferred (owner, post-launch):** the actual **2nd-region deploy** + a live
+health/latency source feeding `regionsFromEnv`/deps. The code + tests land now; the
+deploy is not a launch gate (§8). `apps/bot-orchestrator/index.ts`,
+`apps/bot-orchestrator/index.test.ts`.
+
+---

@@ -13,6 +13,7 @@ import { inMemoryBotJoinMetrics } from "./botJoinMetrics.ts";
 import {
   BOT_NAME,
   DEFAULT_REGION,
+  DEFAULT_REGIONS,
   SERVICE_NAME,
   buildWebhookUrl,
   envSecretProvider,
@@ -22,12 +23,15 @@ import {
   orchestrateJoin,
   pickRegion,
   publicWebhookBase,
+  regionsFromEnv,
   regionTunnelBase,
   runJoinJob,
   sanitizeFailureReason,
   type CallStore,
   type CreateBotRequest,
+  type Logger,
   type RecallClient,
+  type RegionHealth,
 } from "./index.ts";
 
 const CALL_ID = "11111111-1111-1111-1111-111111111111";
@@ -78,6 +82,162 @@ describe("bot-orchestrator service identity", () => {
     expect(SERVICE_NAME).toBe("bot-orchestrator");
     expect(DEFAULT_REGION).toBe("us-east");
     expect(pickRegion()).toBe("us-east");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §4.7 region-selection policy. The set of regions (each {healthy, latencyMs}) is
+// configurable/injectable and defaults to the single us-east region so production
+// behavior is UNCHANGED until a 2nd region is deployed. Selection: (a) honor a
+// user-pinned override; else (b) lowest-latency HEALTHY region, deterministic
+// round-robin within a latency tie; a degraded region FAILS CLOSED (skipped).
+// ─────────────────────────────────────────────────────────────────────────────
+/** A `Logger` that records every event + fields, in order. */
+function captureLogger(): { logger: Logger; logs: { event: string; fields?: Record<string, unknown> }[] } {
+  const logs: { event: string; fields?: Record<string, unknown> }[] = [];
+  return { logger: { info: (event, fields) => logs.push({ event, fields }) }, logs };
+}
+
+describe("region selection policy (§4.7)", () => {
+  it("single-region config still returns us-east (prod behavior UNCHANGED)", () => {
+    // No args, and the explicit default set, both resolve to the one v1 region.
+    expect(pickRegion()).toBe("us-east");
+    expect(pickRegion({ regions: DEFAULT_REGIONS })).toBe("us-east");
+    expect(DEFAULT_REGIONS).toEqual([{ region: "us-east", healthy: true, latencyMs: 0 }]);
+  });
+
+  const twoRegions: RegionHealth[] = [
+    { region: "us-east", healthy: true, latencyMs: 40 },
+    { region: "eu-west", healthy: true, latencyMs: 12 },
+  ];
+
+  it("picks the lowest-latency HEALTHY region (§4.7b)", () => {
+    expect(pickRegion({ regions: twoRegions })).toBe("eu-west");
+  });
+
+  it("honors a user-pinned override even when a lower-latency region exists (§4.7a)", () => {
+    // eu-west is faster, but the pin wins.
+    expect(pickRegion({ regions: twoRegions, pinned: "us-east" })).toBe("us-east");
+  });
+
+  it("skips a DEGRADED region (fails closed) and LOGS the chosen alternative (§4.7)", () => {
+    const { logger, logs } = captureLogger();
+    const regions: RegionHealth[] = [
+      { region: "eu-west", healthy: false, latencyMs: 12 }, // lowest latency but degraded
+      { region: "us-east", healthy: true, latencyMs: 40 },
+    ];
+    expect(pickRegion({ regions, logger })).toBe("us-east");
+    const line = logs.find((l) => l.event === "orchestrate.region_selected");
+    expect(line).toBeDefined();
+    expect(line!.fields).toEqual({ chosen: "us-east", skipped: ["eu-west"] });
+  });
+
+  it("resolves latency ties DETERMINISTICALLY via round-robin (§4.7b)", () => {
+    const tied: RegionHealth[] = [
+      { region: "us-east", healthy: true, latencyMs: 20 },
+      { region: "eu-west", healthy: true, latencyMs: 20 },
+      { region: "us-west", healthy: true, latencyMs: 20 },
+    ];
+    // Tie set sorted by region name is [eu-west, us-east, us-west]; the injected
+    // round-robin cursor selects deterministically and wraps.
+    expect(pickRegion({ regions: tied, tieBreaker: 0 })).toBe("eu-west");
+    expect(pickRegion({ regions: tied, tieBreaker: 1 })).toBe("us-east");
+    expect(pickRegion({ regions: tied, tieBreaker: 2 })).toBe("us-west");
+    expect(pickRegion({ regions: tied, tieBreaker: 3 })).toBe("eu-west"); // wraps
+    // Same input → same output (no hidden global state).
+    expect(pickRegion({ regions: tied, tieBreaker: 1 })).toBe("us-east");
+  });
+
+  it("a lower-latency degraded region does not win the tie among healthy peers", () => {
+    const regions: RegionHealth[] = [
+      { region: "eu-west", healthy: false, latencyMs: 5 }, // fastest but degraded → skipped
+      { region: "us-east", healthy: true, latencyMs: 20 },
+      { region: "us-west", healthy: true, latencyMs: 20 },
+    ];
+    expect(pickRegion({ regions, tieBreaker: 0 })).toBe("us-east");
+    expect(pickRegion({ regions, tieBreaker: 1 })).toBe("us-west");
+  });
+
+  it("a PINNED but degraded region fails closed and falls back to a healthy peer (§4.7)", () => {
+    const { logger, logs } = captureLogger();
+    const regions: RegionHealth[] = [
+      { region: "eu-west", healthy: false, latencyMs: 12 },
+      { region: "us-east", healthy: true, latencyMs: 40 },
+    ];
+    expect(pickRegion({ regions, pinned: "eu-west", logger })).toBe("us-east");
+    const skip = logs.find((l) => l.event === "orchestrate.region_pin_skipped");
+    expect(skip).toBeDefined();
+    expect(skip!.fields).toEqual({ pinned: "eu-west", reason: "degraded" });
+  });
+
+  it("an unknown pinned region falls back to auto-selection with a log", () => {
+    const { logger, logs } = captureLogger();
+    expect(pickRegion({ regions: twoRegions, pinned: "ap-south", logger })).toBe("eu-west");
+    const skip = logs.find((l) => l.event === "orchestrate.region_pin_skipped");
+    expect(skip!.fields).toEqual({ pinned: "ap-south", reason: "unknown" });
+  });
+
+  it("throws when EVERY region is degraded (no healthy target — fail closed)", () => {
+    const allDown: RegionHealth[] = [
+      { region: "us-east", healthy: false, latencyMs: 40 },
+      { region: "eu-west", healthy: false, latencyMs: 12 },
+    ];
+    expect(() => pickRegion({ regions: allDown })).toThrow(/no healthy region/);
+  });
+
+  it("throws on an empty region set (misconfiguration)", () => {
+    expect(() => pickRegion({ regions: [] })).toThrow(/no regions/);
+  });
+});
+
+describe("regionsFromEnv (§4.7 config/env seam)", () => {
+  it("defaults to the single us-east region when SAMOGRAPH_REGIONS is unset", () => {
+    expect(regionsFromEnv({})).toEqual(DEFAULT_REGIONS);
+  });
+
+  it("parses a JSON array of {region,healthy,latencyMs} from SAMOGRAPH_REGIONS", () => {
+    expect(
+      regionsFromEnv({
+        SAMOGRAPH_REGIONS:
+          '[{"region":"us-east","healthy":true,"latencyMs":40},{"region":"eu-west","healthy":false,"latencyMs":12}]',
+      }),
+    ).toEqual([
+      { region: "us-east", healthy: true, latencyMs: 40 },
+      { region: "eu-west", healthy: false, latencyMs: 12 },
+    ]);
+  });
+
+  it("throws on malformed JSON", () => {
+    expect(() => regionsFromEnv({ SAMOGRAPH_REGIONS: "not json" })).toThrow(/SAMOGRAPH_REGIONS/);
+  });
+
+  it("throws on a non-array / empty configuration", () => {
+    expect(() => regionsFromEnv({ SAMOGRAPH_REGIONS: "[]" })).toThrow(/SAMOGRAPH_REGIONS/);
+    expect(() => regionsFromEnv({ SAMOGRAPH_REGIONS: '{"region":"x"}' })).toThrow(/SAMOGRAPH_REGIONS/);
+  });
+});
+
+describe("orchestrateJoin — region override + policy wiring (§4.7)", () => {
+  it("honors the explicit deps.region hard override (unchanged behavior)", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store, recorded } = memStore();
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store, region: "us-east" },
+    );
+    expect(result.region).toBe("us-east");
+    // The persisted region is the override.
+    expect(recorded[0].args[2]).toBe("us-east");
+  });
+
+  it("falls back to the §4.7 policy (single us-east) when no override is given", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store } = memStore();
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store },
+    );
+    expect(result.region).toBe("us-east");
   });
 });
 

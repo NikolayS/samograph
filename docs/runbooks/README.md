@@ -7,6 +7,13 @@ recovery procedure. They assume the v1 architecture: one multi-tenant Postgres
 with RLS (§5.10), one regional cloudflared **named** tunnel per region (§4.3),
 and a leader-elected ingest watchdog (§4.5/§4.6).
 
+> **Note (SPEC.amendments.md → S3-1).** "Named tunnel per region" is a dev-reachability
+> artifact and an *optional* prod security posture (zero inbound ports + Cloudflare
+> edge) — **not** a functional prod requirement. The functional requirement is a
+> public HTTPS `/webhook` reachable by Recall with per-call `?bot=&t=` params (Caddy →
+> ingest, S2-15). Read "regional tunnel `/health`" below as "the region's public
+> `/health` marker route", tunnel or not.
+
 ## Quick reference — symptom → runbook
 
 | Symptom (status / code) | Meaning | Runbook |
