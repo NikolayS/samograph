@@ -64,13 +64,16 @@ export {
 
 export {
   ShareCaps,
+  ReadCaps,
   shareCapKey,
+  readCapKey,
   rateLimitedResponse,
   SHARE_MAX_CONCURRENT,
   SHARE_COMMANDS_PER_WINDOW,
   SHARE_COMMAND_WINDOW_MS,
   SHARE_ESTABLISH_PER_WINDOW,
   SHARE_ESTABLISH_WINDOW_MS,
+  READ_MAX_CONCURRENT,
   RATE_LIMIT_ERROR_CODE,
   type ShareCapsConfig,
   type CapDecision,

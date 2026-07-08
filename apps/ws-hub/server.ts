@@ -20,7 +20,7 @@
  */
 import type { Server, ServerWebSocket, SQL } from "bun";
 import { Hub } from "./hub.ts";
-import { ShareCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
+import { ShareCaps, ReadCaps, RATE_LIMIT_ERROR_CODE } from "./caps.ts";
 import {
   prepareStream,
   openStream,
@@ -50,6 +50,8 @@ export interface WsHubServerDeps {
   hub?: Hub;
   /** Share-scope anti-abuse caps (§5.7); also taken from `authDeps.caps`. */
   caps?: ShareCaps;
+  /** Read-scope per-(session, call) concurrent cap (§5.7, §8); also from `authDeps.readCaps`. */
+  readCaps?: ReadCaps;
   /** TCP port (0 ⇒ an ephemeral port, useful in tests). */
   port?: number;
   hostname?: string;
@@ -76,7 +78,8 @@ const TRANSCRIPT_TXT_PATH = /^\/calls\/([^/]+)\/transcript\.txt$/;
 export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
   const hub = deps.hub ?? new Hub();
   const caps = deps.caps ?? deps.authDeps.caps;
-  const authDeps: StreamAuthDeps = { ...deps.authDeps, caps };
+  const readCaps = deps.readCaps ?? deps.authDeps.readCaps;
+  const authDeps: StreamAuthDeps = { ...deps.authDeps, caps, readCaps };
   const recheckMs = deps.recheckIntervalMs ?? RECHECK_INTERVAL_MS;
   const cookieName = deps.sessionCookieName ?? SESSION_COOKIE_NAME;
 
@@ -112,8 +115,10 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
         if (!prepared.ok) return prepared.response; // bodyless 403 or 429 + Retry-After
         const upgraded = srv.upgrade(req, { data: { prepared } });
         if (upgraded) return undefined; // Bun completes the WS handshake
-        // Upgrade refused (not a WS request): free the slot prepareStream reserved.
+        // Upgrade refused (not a WS request): free the slot prepareStream reserved
+        // — on BOTH cap paths, else a 426'd GET permanently burns a share or read slot.
         if (caps && prepared.capKey) caps.release(prepared.capKey);
+        if (readCaps && prepared.readCapKey) readCaps.release(prepared.readCapKey);
         return new Response("expected a websocket upgrade", { status: 426 });
       }
 
@@ -145,6 +150,7 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
             authDeps,
             backfillLimit: deps.backfillLimit,
             caps,
+            readCaps,
             clockMs: authDeps.clockMs,
           });
           ws.data.conn = conn;

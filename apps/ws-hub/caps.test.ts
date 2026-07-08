@@ -24,6 +24,9 @@ import {
   SHARE_ESTABLISH_PER_WINDOW,
   SHARE_ESTABLISH_WINDOW_MS,
   RATE_LIMIT_ERROR_CODE,
+  ReadCaps,
+  readCapKey,
+  READ_MAX_CONCURRENT,
 } from "./caps.ts";
 
 describe("share caps — exact numeric defaults (§5.7)", () => {
@@ -159,5 +162,64 @@ describe("rateLimitedResponse — 429 + Retry-After + typed SAMO-RATE-001 body (
 
     // Sub-second waits still surface a Retry-After of at least 1 second.
     expect(rateLimitedResponse(10).headers.get("Retry-After")).toBe("1");
+  });
+});
+
+// ── Read-scope concurrent cap — pure limiter (SPEC §5.7, §8) ─────────────────
+describe("read caps — per-(session, call) concurrent cap (§5.7, §8)", () => {
+  it("pins the spec number: 10 concurrent read connections per session per call", () => {
+    expect(READ_MAX_CONCURRENT).toBe(10);
+  });
+
+  it("admits up to the cap and rejects the (cap+1)th; a DENY records nothing", () => {
+    const cap = 3;
+    const caps = new ReadCaps(cap);
+    const key = readCapKey("session-cookie-A", "call-1");
+    for (let i = 1; i <= cap; i++) {
+      const d = caps.tryEstablish(key);
+      expect(d.allowed).toBe(true);
+      expect(caps.concurrent(key)).toBe(i);
+    }
+    // The (cap+1)th is denied with a positive back-off and does NOT inflate the count.
+    const over = caps.tryEstablish(key);
+    expect(over.allowed).toBe(false);
+    expect(over.retryAfterMs).toBeGreaterThan(0);
+    expect(caps.concurrent(key)).toBe(cap);
+  });
+
+  it("closing one connection frees exactly one slot", () => {
+    const caps = new ReadCaps(1);
+    const key = readCapKey("session-cookie-A", "call-1");
+    expect(caps.tryEstablish(key).allowed).toBe(true);
+    expect(caps.tryEstablish(key).allowed).toBe(false); // full at 1
+    caps.release(key);
+    expect(caps.concurrent(key)).toBe(0);
+    expect(caps.tryEstablish(key).allowed).toBe(true); // slot freed → admitted again
+  });
+
+  it("is keyed per (session, call): a different session OR a different call has its own budget", () => {
+    const caps = new ReadCaps(1);
+    const keyA1 = readCapKey("session-A", "call-1");
+    const keyB1 = readCapKey("session-B", "call-1"); // different session, same call
+    const keyA2 = readCapKey("session-A", "call-2"); // same session, different call
+    expect(caps.tryEstablish(keyA1).allowed).toBe(true);
+    expect(caps.tryEstablish(keyA1).allowed).toBe(false); // A/call-1 is now full
+    expect(caps.tryEstablish(keyB1).allowed).toBe(true); // a different session is unaffected
+    expect(caps.tryEstablish(keyA2).allowed).toBe(true); // a different call is unaffected
+  });
+
+  it("readCapKey binds the session cookie to the call id (distinct keys per pair)", () => {
+    expect(readCapKey("s", "c1")).not.toBe(readCapKey("s", "c2"));
+    expect(readCapKey("s1", "c")).not.toBe(readCapKey("s2", "c"));
+    // Stable: same inputs → same key.
+    expect(readCapKey("s", "c1")).toBe(readCapKey("s", "c1"));
+  });
+
+  it("release() is idempotent at zero (never goes negative)", () => {
+    const caps = new ReadCaps(2);
+    const key = readCapKey("s", "c");
+    caps.release(key);
+    caps.release(key);
+    expect(caps.concurrent(key)).toBe(0);
   });
 });

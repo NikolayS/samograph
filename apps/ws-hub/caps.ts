@@ -168,6 +168,82 @@ export function shareCapKey(shareToken: string): string {
   return sha256Hex(shareToken);
 }
 
+// ── Read-scope concurrent-connection cap (§5.7, §8 "distinct caps for read vs share") ──
+/**
+ * Per-(session, call) concurrent WS cap for the SESSION-DERIVED `read` scope
+ * (SPEC §5.7: "max 10 concurrent WS connections per user session per call").
+ *
+ * This is a cap DISTINCT from {@link SHARE_MAX_CONCURRENT}: `read` was previously
+ * UNCAPPED (only `share` carried caps), so a signed-in owner could open unbounded
+ * sockets to one call. §8 (Backend + Security) requires "rate-limit WS connections
+ * per call (distinct caps for `read` vs `share`)". The two caps are independent —
+ * a read connection never consumes a share slot and vice-versa — because they are
+ * enforced by separate limiter instances keyed on unrelated keys.
+ */
+export const READ_MAX_CONCURRENT = 10;
+
+/**
+ * Retry-After for the read concurrent cap. Like the share concurrent cap it has
+ * NO time window — a slot frees when a peer read connection closes — so a
+ * one-second back-off (the revoke-recheck cadence, §5.5) is the right granularity.
+ */
+const READ_CONCURRENT_RETRY_AFTER_MS = 1_000;
+
+/**
+ * In-memory per-(session, call) concurrent-connection limiter for the `read`
+ * scope. One instance per ws-hub process; state is a single map keyed by
+ * {@link readCapKey} (sha256 of the session cookie bound to the call id), so two
+ * DIFFERENT sessions — or the same session on two DIFFERENT calls — never share a
+ * slot. Structurally parallel to the concurrent half of {@link ShareCaps}; kept a
+ * separate class so the `read` and `share` caps stay strictly independent (§8).
+ */
+export class ReadCaps {
+  private readonly maxConcurrent: number;
+  /** readCapKey → number of currently-open read connections. */
+  private readonly concurrentByKey = new Map<string, number>();
+
+  constructor(maxConcurrent: number = READ_MAX_CONCURRENT) {
+    this.maxConcurrent = maxConcurrent;
+  }
+
+  /** Currently-open read connection count for a (session, call) key (tests / observability). */
+  concurrent(key: string): number {
+    return this.concurrentByKey.get(key) ?? 0;
+  }
+
+  /**
+   * Admit a new read connection for `key`, or deny it. On ADMIT it reserves one
+   * concurrent slot — callers MUST pair a successful establish with exactly one
+   * {@link release} (the stream connection releases on close). A DENY mutates
+   * nothing, so the counter is never inflated past the cap.
+   */
+  tryEstablish(key: string): CapDecision {
+    const open = this.concurrentByKey.get(key) ?? 0;
+    if (open >= this.maxConcurrent) {
+      return { allowed: false, retryAfterMs: READ_CONCURRENT_RETRY_AFTER_MS };
+    }
+    this.concurrentByKey.set(key, open + 1);
+    return ALLOWED;
+  }
+
+  /** Release one concurrent slot for `key` (idempotent at zero). */
+  release(key: string): void {
+    const open = this.concurrentByKey.get(key) ?? 0;
+    if (open <= 1) this.concurrentByKey.delete(key);
+    else this.concurrentByKey.set(key, open - 1);
+  }
+}
+
+/**
+ * Stable per-(session, call) read cap key: sha256 of the session cookie bound to
+ * the call id. The `AuthorizeResult` carries no `userId` (§5.6), so the session
+ * cookie is the stable session identity; binding it to `callId` makes the cap
+ * per-call as §5.7 requires. Never the raw cookie as a map key, never logged.
+ */
+export function readCapKey(sessionCookie: string, callId: string): string {
+  return sha256Hex(`${sessionCookie}\n${callId}`);
+}
+
 /**
  * Render the `SAMO-RATE-001` 429 a cap breach returns (§5.16). `Retry-After` is
  * the back-off in WHOLE seconds, at least 1 (a sub-second hint still asks for a

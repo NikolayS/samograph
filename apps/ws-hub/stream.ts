@@ -33,7 +33,7 @@ import { authorizeCall, type AuthorizeDeps } from "../../packages/shared/auth/in
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { Hub, type ControlFrame, type DataFrame, type GapFrame, type OutboundFrame } from "./hub.ts";
 import { parseSinceSeq, readCallCredentials, type CallCredentials } from "./request.ts";
-import { ShareCaps, shareCapKey, rateLimitedResponse, type CapDecision } from "./caps.ts";
+import { ShareCaps, ReadCaps, shareCapKey, readCapKey, rateLimitedResponse, type CapDecision } from "./caps.ts";
 import {
   backfillRecent,
   replayTranscripts,
@@ -74,6 +74,13 @@ export interface StreamAuthDeps extends AuthorizeDeps {
    * are never consulted. Omitted ⇒ no caps enforced (the pre-caps behaviour).
    */
   caps?: ShareCaps;
+  /**
+   * Read-scope anti-abuse cap (§5.7, §8). When present, a `read`-tagged upgrade
+   * that carries a session cookie is admitted through {@link ReadCaps.tryEstablish}
+   * keyed per (session, call); `share` upgrades are never consulted. DISTINCT from
+   * {@link caps} — the two caps are independent. Omitted ⇒ no read cap enforced.
+   */
+  readCaps?: ReadCaps;
   /** Epoch-ms clock the caps read; defaults to the wall clock. */
   clockMs?: () => number;
 }
@@ -94,6 +101,12 @@ export type PrepareStreamResult =
        * so the reserved concurrent slot is released exactly once on close.
        */
       capKey?: string;
+      /**
+       * Per-(session, call) read cap key (set only for an admitted `read` upgrade
+       * when {@link StreamAuthDeps.readCaps} is configured). Released exactly once
+       * on close, mirroring {@link capKey} for the share path.
+       */
+      readCapKey?: string;
     }
   | { ok: false; response: Response };
 
@@ -180,6 +193,21 @@ export async function prepareStream(
     }
   }
 
+  // Read-scope concurrent cap (§5.7, §8): a `read` upgrade must clear the
+  // per-(session, call) concurrent-connection cap BEFORE the socket opens;
+  // over-cap → 429 + Retry-After (`SAMO-RATE-001`). DISTINCT from the share cap
+  // above and keyed independently, so read and share never contend for a slot.
+  // A `share` upgrade is never consulted here. The reserved slot is released on
+  // close via the returned `readCapKey`.
+  let readKey: string | undefined;
+  if (scope === "read" && deps.readCaps && parsed.credentials.sessionCookie) {
+    readKey = readCapKey(parsed.credentials.sessionCookie, authz.callId);
+    const decision = deps.readCaps.tryEstablish(readKey);
+    if (!decision.allowed) {
+      return { ok: false, response: rateLimitedResponse(decision.retryAfterMs) };
+    }
+  }
+
   return {
     ok: true,
     callId: authz.callId,
@@ -189,6 +217,7 @@ export async function prepareStream(
     sinceSeq: parsed.sinceSeq,
     credentials: parsed.credentials,
     capKey,
+    readCapKey: readKey,
   };
 }
 
@@ -226,6 +255,10 @@ export interface StreamConnectionInit {
   caps?: ShareCaps;
   /** The per-token cap key reserved at establish time (released on close). */
   capKey?: string;
+  /** Read caps (§5.7, §8): the per-(session, call) concurrent slot to free on close. */
+  readCaps?: ReadCaps;
+  /** The per-(session, call) read cap key reserved at establish time (released on close). */
+  readCapKey?: string;
   /** Epoch-ms clock the command-rate cap reads; defaults to the wall clock. */
   clockMs?: () => number;
 }
@@ -243,6 +276,8 @@ export class StreamConnection {
   private readonly reauthorize: () => Promise<boolean>;
   private readonly caps?: ShareCaps;
   private readonly capKey?: string;
+  private readonly readCaps?: ReadCaps;
+  private readonly readCapKey?: string;
   private readonly clockMs: () => number;
   /** Per-connection identity the command-rate cap is keyed on (§5.7). */
   private readonly connId = randomUUID();
@@ -259,6 +294,8 @@ export class StreamConnection {
     this.reauthorize = init.reauthorize;
     this.caps = init.caps;
     this.capKey = init.capKey;
+    this.readCaps = init.readCaps;
+    this.readCapKey = init.readCapKey;
     this.clockMs = init.clockMs ?? Date.now;
     this.lastSeq = init.initialSeq;
   }
@@ -374,6 +411,9 @@ export class StreamConnection {
       // Prune the per-connection command-rate window so it is not leaked (#102).
       this.caps.forgetConnection(this.connId);
     }
+    // Free the per-(session, call) read concurrent slot reserved at establish time
+    // (§5.7, §8) — once, guarded by `closed`. A `share` connection has no readCapKey.
+    if (this.readCaps && this.readCapKey) this.readCaps.release(this.readCapKey);
     this.hub.unsubscribe(this.subscriber);
     this.socket.close(code, reason);
   }
@@ -390,6 +430,8 @@ export interface OpenStreamDeps {
   backfillLimit?: number;
   /** Share caps (§5.7): handed to the connection for command-rate + slot release. */
   caps?: ShareCaps;
+  /** Read caps (§5.7, §8): handed to the connection for the read concurrent-slot release. */
+  readCaps?: ReadCaps;
   /** Epoch-ms clock the command-rate cap reads; defaults to the wall clock. */
   clockMs?: () => number;
 }
@@ -425,6 +467,8 @@ export async function openStream(
     reauthorize,
     caps: deps.caps,
     capKey: prepared.capKey,
+    readCaps: deps.readCaps,
+    readCapKey: prepared.readCapKey,
     clockMs: deps.clockMs,
   });
 
