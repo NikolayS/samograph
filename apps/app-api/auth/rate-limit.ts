@@ -25,6 +25,15 @@ export interface RateLimiter {
   peek(key: string, limit: number, windowMs: number, now: number): Promise<boolean>;
   /** Record an attempt against `key` and report whether it is within `limit` per `windowMs`. */
   hit(key: string, limit: number, windowMs: number, now: number): Promise<RateDecision>;
+  /**
+   * Return one previously-recorded slot to `key`: undo a single `hit` at `now`.
+   * Lets a caller RESERVE a slot up front (atomic committing `hit` before the
+   * protected work) and give it back if that work fails, so a failed attempt
+   * consumes no budget. Best-effort: removing a slot that is not present is a
+   * no-op. Only an ALLOWED reservation should be refunded (a blocked `hit`
+   * consumed nothing).
+   */
+  refund(key: string, windowMs: number, now: number): Promise<void>;
 }
 
 /** In-memory sliding-window limiter (per-key timestamp list). */
@@ -64,5 +73,19 @@ export class InMemoryRateLimiter implements RateLimiter {
     live.push(now);
     this.hits.set(key, live);
     return { allowed: true, remaining: limit - live.length, retryAfterMs: 0 };
+  }
+
+  /**
+   * Undo one `hit` at `now` (refund a reserved slot). Drops a single matching
+   * timestamp, prunes anything outside the window, and is a no-op if no matching
+   * slot remains — so refunding is safe and idempotent-ish even after the window
+   * has moved.
+   */
+  async refund(key: string, windowMs: number, now: number): Promise<void> {
+    const cutoff = now - windowMs;
+    const live = (this.hits.get(key) ?? []).filter((ts) => ts > cutoff);
+    const idx = live.lastIndexOf(now);
+    if (idx !== -1) live.splice(idx, 1);
+    this.hits.set(key, live);
   }
 }

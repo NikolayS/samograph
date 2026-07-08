@@ -268,6 +268,98 @@ describe("POST /calls — per-tenant bot-creation rate limit (§5.16 SAMO-RECALL
     expect(await limiter.peek(key, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, now)).toBe(false);
   });
 
+  /**
+   * A `sql` that answers the `tenants` probe but whose create tx (`sql.begin`)
+   * THROWS a generic (non-FK) error — models a transient DB failure mid-create.
+   * The reserved bot-create slot MUST be refunded so the failed create consumes
+   * no budget.
+   */
+  function createThrowsSql(): SQL {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const tag: any = () => Promise.resolve([{ ok: 1 }]);
+    tag.unsafe = () => Promise.resolve([] as unknown[]);
+    tag.begin = async () => {
+      throw new Error("boom: create tx failed");
+    };
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    return tag as SQL;
+  }
+
+  it("reserves the slot BEFORE the create: N concurrent creates never exceed the cap", async () => {
+    // The real-money guardrail bug: a NON-committing peek before the awaited create
+    // lets N concurrent POST /calls all peek below the cap before any slot is
+    // recorded → all create → ~N bots against a 30/hr cap. Reserving the slot UP
+    // FRONT (committing hit before the create) makes the count atomic, so exactly
+    // `cap` creates succeed no matter the concurrency.
+    const now = Date.now();
+    const limiter = new InMemoryRateLimiter();
+    const jobs: OrchestratorJob[] = [];
+    const handler = createCallsHandler({
+      sql: createOkSql(),
+      sessionSecret: SESSION_SECRET,
+      enqueue: (job) => { jobs.push(job); },
+      rateLimiter: limiter,
+      now: () => now,
+    });
+
+    const N = BOT_CREATE_PER_TENANT_LIMIT + 10;
+    const results = await Promise.all(
+      Array.from({ length: N }, () =>
+        handler(postCalls(cookieHeader(validSessionCookie()), { meeting_url: "https://meet.google.com/abc-defg-hij" })),
+      ),
+    );
+    const created = results.filter((r) => r.status === 201).length;
+    const throttled = results.filter((r) => r.status === 429).length;
+    // EXACT: exactly `cap` bots created, the rest throttled — the guardrail holds
+    // under concurrency (RED before the fix: all N would be 201).
+    expect(created).toBe(BOT_CREATE_PER_TENANT_LIMIT);
+    expect(throttled).toBe(N - BOT_CREATE_PER_TENANT_LIMIT);
+    expect(jobs.length).toBe(BOT_CREATE_PER_TENANT_LIMIT); // exactly `cap` real bots enqueued
+  });
+
+  it("REFUNDS the reserved slot when the create fails, so a failed create consumes no budget", async () => {
+    const now = Date.now();
+    const limiter = new InMemoryRateLimiter();
+    const key = `bot-create:${TENANT_ID}`;
+    // Pre-fill to cap-1: exactly ONE slot of budget remains.
+    for (let i = 0; i < BOT_CREATE_PER_TENANT_LIMIT - 1; i++) {
+      await limiter.hit(key, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, now);
+    }
+
+    // A create that reserves its slot then THROWS. Without a refund the reserve
+    // would burn the last slot; with the refund the budget is returned.
+    const failing = createCallsHandler({
+      sql: createThrowsSql(),
+      sessionSecret: SESSION_SECRET,
+      enqueue: () => {},
+      rateLimiter: limiter,
+      now: () => now,
+    });
+    await expect(
+      failing(postCalls(cookieHeader(validSessionCookie()), { meeting_url: "https://meet.google.com/abc-defg-hij" })),
+    ).rejects.toThrow("boom: create tx failed");
+
+    // The failed create must have REFUNDED its slot → the last slot is still free.
+    expect(await limiter.peek(key, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, now)).toBe(true);
+
+    // …and a subsequent SUCCESSFUL create is admitted on that remaining budget.
+    const jobs: OrchestratorJob[] = [];
+    const ok = createCallsHandler({
+      sql: createOkSql(),
+      sessionSecret: SESSION_SECRET,
+      enqueue: (job) => { jobs.push(job); },
+      rateLimiter: limiter,
+      now: () => now,
+    });
+    const res = await ok(
+      postCalls(cookieHeader(validSessionCookie()), { meeting_url: "https://meet.google.com/abc-defg-hij" }),
+    );
+    expect(res.status).toBe(201);
+    expect(jobs.length).toBe(1);
+    // Now the window is exactly full (cap-1 pre-fill + this one success).
+    expect(await limiter.peek(key, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, now)).toBe(false);
+  });
+
   it("the guardrail is keyed PER TENANT: a different tenant at cap does not block this one", async () => {
     const now = Date.now();
     const limiter = new InMemoryRateLimiter();
