@@ -160,6 +160,64 @@ d("RLS tenant isolation (§5.10)", () => {
     await sql`DELETE FROM calls WHERE id = ${cid}`;
   });
 
+  it("denies a cross-tenant UPDATE under samograph_app (0 rows, row unchanged)", async () => {
+    await sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL ROLE samograph_app");
+      await setTenant(tx, tenantA);
+
+      // The RLS USING filter hides tenant B's row, so the UPDATE matches nothing.
+      const res = await tx`UPDATE calls SET region = 'hacked-by-A'
+                           WHERE id = ${callB} RETURNING id`;
+      expect(res.count).toBe(0);
+      expect(res.length).toBe(0);
+    });
+
+    // Superuser (bypasses RLS) confirms tenant B's row is byte-for-byte unchanged.
+    const b = await sql`SELECT region, status, ingest_degraded FROM calls WHERE id = ${callB}`;
+    expect(b.length).toBe(1);
+    expect(b[0].region).toBeNull();
+    expect(b[0].status).toBe("IN_CALL");
+    expect(b[0].ingest_degraded).toBe(true);
+  });
+
+  it("denies a cross-tenant DELETE under samograph_app (0 rows deleted, row survives)", async () => {
+    await sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL ROLE samograph_app");
+      await setTenant(tx, tenantA);
+
+      const res = await tx`DELETE FROM calls WHERE id = ${callB} RETURNING id`;
+      expect(res.count).toBe(0);
+      expect(res.length).toBe(0);
+    });
+
+    // Superuser confirms tenant B's call still exists — nothing was deleted.
+    const survivors = await sql`SELECT count(*)::int AS c FROM calls WHERE id = ${callB}`;
+    expect(survivors[0].c).toBe(1);
+  });
+
+  it("keeps ingest_degraded=true on a NON-terminal status UPDATE (trigger negative path §5.2)", async () => {
+    const cid = randomUUID();
+    await sql`INSERT INTO calls (id, tenant_id, meeting_url, status, ingest_degraded)
+              VALUES (${cid}, ${tenantA}, 'https://meet.google.com/y', 'JOINING', true)`;
+
+    const before = await sql`SELECT status, ingest_degraded FROM calls WHERE id = ${cid}`;
+    expect(before[0].status).toBe("JOINING");
+    expect(before[0].ingest_degraded).toBe(true);
+
+    // Fire the BEFORE UPDATE OF status trigger with a NON-terminal NEW.status.
+    // Only ENDED/COULD_NOT_JOIN/COULD_NOT_RECORD/BOT_REMOVED clear the overlay,
+    // so JOINING -> IN_CALL must leave ingest_degraded untouched.
+    const res = await sql`UPDATE calls SET status = 'IN_CALL' WHERE id = ${cid} RETURNING status`;
+    expect(res.count).toBe(1);
+    expect(res[0].status).toBe("IN_CALL");
+
+    const after = await sql`SELECT status, ingest_degraded FROM calls WHERE id = ${cid}`;
+    expect(after[0].status).toBe("IN_CALL");
+    expect(after[0].ingest_degraded).toBe(true);
+
+    await sql`DELETE FROM calls WHERE id = ${cid}`;
+  });
+
   it("rejects a duplicate (call_id, seq) on transcripts (append-only PK)", async () => {
     let caught: { errno?: string } | null = null;
     try {
