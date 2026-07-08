@@ -84,9 +84,55 @@ export interface TranscriptPipeline {
   dispatch: Dispatch;
 }
 
-/** A UTC `timestamptz` literal from the canonical `ts`, or `null` if absent. */
-function utcLiteral(ts: string): string | null {
-  return ts ? `${ts}+00` : null;
+/** Matches the canonical `YYYY-MM-DD HH:MM:SS` shape the normalizer emits. */
+const CANONICAL_TS = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
+
+/**
+ * A UTC `timestamptz` literal from the canonical `ts` — or `null` when the `ts`
+ * is absent OR not a real, in-range calendar timestamp.
+ *
+ * **Why the validation matters (fail-safe / anti-DoS).** The INSERT/UPDATE cast
+ * `COALESCE(<literal>::timestamptz, now())`, and Postgres evaluates the
+ * `::timestamptz` cast BEFORE `COALESCE`. So a NON-EMPTY but invalid literal
+ * (e.g. `0000-00-00 00:00:00` from a malformed-but-authenticated Recall payload —
+ * `normalizeTranscriptLine` slices the absolute value verbatim and never throws)
+ * would throw *inside the §93 dedup transaction* → rollback → webhook 500 →
+ * Recall re-delivers the identical bytes forever (a hot poison-pill loop; the
+ * line never persists). Returning `null` here makes `COALESCE` fall back to
+ * `now()` instead, so the line always persists and the webhook returns 2xx.
+ *
+ * A VALID timestamp is preserved EXACTLY (the same `${ts}+00` as before); only a
+ * value Postgres would reject is turned into `null`. Shape + field-range checks
+ * reject out-of-range fields, and a UTC round-trip rejects impossible calendar
+ * days (Feb 30, Apr 31, a non-leap Feb 29). Years `< 1` (no year 0) are rejected
+ * too. This keeps the normalizer's never-throws guarantee true end-to-end.
+ */
+export function utcLiteral(ts: string): string | null {
+  if (!ts) return null;
+  const m = CANONICAL_TS.exec(ts);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6]);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  // Reject impossible calendar days (e.g. Feb 30) via a UTC round-trip: a valid
+  // (Y, M, D) survives Date.UTC unchanged; an overflowing one rolls into the
+  // next month/day and fails the equality below. `setUTCFullYear` sidesteps the
+  // JS quirk that maps years 0–99 to 1900–1999.
+  const dt = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  dt.setUTCFullYear(year);
+  if (
+    dt.getUTCFullYear() !== year ||
+    dt.getUTCMonth() !== month - 1 ||
+    dt.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${ts}+00`;
 }
 
 /**
