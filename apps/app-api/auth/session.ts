@@ -27,8 +27,26 @@ export function signSession(claims: SessionClaims, secret: string): string {
   return `${payloadB64}.${base64url(sig)}`;
 }
 
-/** Verify + decode a session cookie value, or null if tampered/malformed. */
-export function verifySession(value: string, secret: string): SessionClaims | null {
+/**
+ * Verify + decode a session cookie value, or null if tampered/malformed/expired.
+ *
+ * `now` (epoch **milliseconds**, defaulting to {@link Date.now}) is the clock the
+ * server-side TTL is measured against: after the constant-time HMAC compare AND
+ * the claim-shape check succeed, the session is rejected when it is older than
+ * {@link SESSION_TTL_MS} (`now - iat > SESSION_TTL_MS`). Because `now` defaults
+ * to the wall clock, a caller that forgets to thread it still ENFORCES the TTL —
+ * it can never silently bypass it. `iat` is epoch MILLISECONDS (see
+ * {@link issueSessionCookie}), so `now` MUST be milliseconds too — do NOT pass a
+ * seconds clock, or every session reads ~1000× too old and 401s.
+ *
+ * The TTL check runs strictly AFTER the constant-time HMAC compare so `iat` is
+ * never reachable without a valid signature (no pre-auth timing oracle on iat).
+ */
+export function verifySession(
+  value: string,
+  secret: string,
+  now: number = Date.now(),
+): SessionClaims | null {
   const parts = value.split(".");
   if (parts.length !== 2) return null;
   const [payloadB64, sigB64] = parts;
@@ -52,6 +70,10 @@ export function verifySession(value: string, secret: string): SessionClaims | nu
   ) {
     return null;
   }
+  // Server-side TTL (§5.1): a captured cookie must not verify forever. Reject
+  // once it is older than the session lifetime. `>` is strict, so a session that
+  // is exactly SESSION_TTL_MS old is still accepted.
+  if (now - c.iat > SESSION_TTL_MS) return null;
   return { userId: c.userId, tenantId: c.tenantId, iat: c.iat };
 }
 

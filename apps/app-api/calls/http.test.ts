@@ -51,7 +51,9 @@ function cookieHeader(value: string): Record<string, string> {
 }
 
 function validSessionCookie(): string {
-  return signSession({ userId: USER_ID, tenantId: TENANT_ID, iat: 1 }, SESSION_SECRET);
+  // FRESH iat: the handler verifies against the wall clock and now enforces the
+  // 30-day server-side session TTL (#57), so a 1970 iat would 401 here.
+  return signSession({ userId: USER_ID, tenantId: TENANT_ID, iat: Date.now() }, SESSION_SECRET);
 }
 
 function postCalls(headers: Record<string, string>, body: unknown) {

@@ -121,12 +121,16 @@ export function createCallsHandler(
   const keyring = deps.keyring ?? PLACEHOLDER_KEYRING;
   const shareTtlSeconds = deps.shareTtlSeconds ?? DEFAULT_SHARE_TTL_SECONDS;
   const nowSec = (): number | undefined => (deps.now ? Math.floor(deps.now() / 1000) : undefined);
+  // Epoch-MILLISECONDS clock for the session TTL. `deps.now` is already ms (unlike
+  // `nowSec`, which the TOKEN path floors to seconds). NEVER feed `nowSec()` to
+  // verifySession — its iat is ms, so a seconds value reads ~1000× too old.
+  const nowMs = (): number => (deps.now ? deps.now() : Date.now());
 
   const gateDeps: AuthorizeDeps = {
     keyring,
     // The session seam: verify the signed cookie (pure HMAC — no DB).
     lookupSession: async (cookie) => {
-      const claims = verifySession(cookie, sessionSecret);
+      const claims = verifySession(cookie, sessionSecret, nowMs());
       return claims ? { userId: claims.userId, tenantId: claims.tenantId } : null;
     },
     // Privileged pre-tenant call→tenant resolver (only used by the token path,
@@ -149,7 +153,7 @@ export function createCallsHandler(
     // ── POST /calls — create a call from a meeting URL (§5.2) ─────────────────
     if (req.method === "POST" && url.pathname === "/calls") {
       // 1) Authenticate the owner session. No/invalid session → 401, bodyless.
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return unauthenticated();
 
       // 2) Validate the URL BEFORE any DB write. Bad URL → typed 400, no row.
@@ -185,7 +189,7 @@ export function createCallsHandler(
 
     // ── GET /calls — list the caller's tenant's calls (RLS-scoped, §5.10) ─────
     if (req.method === "GET" && url.pathname === "/calls") {
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return unauthenticated();
       const calls = await sql.begin(async (tx) => {
         await tx.unsafe("SET LOCAL ROLE samograph_app");
@@ -203,7 +207,7 @@ export function createCallsHandler(
     const shareMatch = url.pathname.match(/^\/calls\/([^/]+)\/share$/);
     if (req.method === "POST" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const minted = await sql.begin(async (tx) => {
@@ -262,7 +266,7 @@ export function createCallsHandler(
     // minted one are the SAME capability — one revoke kills both.
     if (req.method === "GET" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const found = await sql.begin(async (tx) => {
@@ -303,7 +307,7 @@ export function createCallsHandler(
     const rotateMatch = url.pathname.match(/^\/calls\/([^/]+)\/share\/rotate$/);
     if (req.method === "POST" && rotateMatch) {
       const callId = decodeURIComponent(rotateMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const rotated = await sql.begin(async (tx) => {
@@ -336,7 +340,7 @@ export function createCallsHandler(
     // sees `revoked_at`.
     if (req.method === "DELETE" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const outcome = await sql.begin(async (tx) => {
@@ -357,7 +361,7 @@ export function createCallsHandler(
     if (req.method === "DELETE" && revokeMatch) {
       const callId = decodeURIComponent(revokeMatch[1]);
       const tokenId = decodeURIComponent(revokeMatch[2]);
-      const claims = cookie ? verifySession(cookie, sessionSecret) : null;
+      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const outcome = await sql.begin(async (tx) => {
