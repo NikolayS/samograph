@@ -19,13 +19,46 @@ import { signToken, type Keyring, type TokenPayload } from "../../../packages/sh
 import { mintShareToken, revokeToken } from "../../../packages/shared/tokens/store.ts";
 import { setTenant } from "../../../packages/shared/db/client.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../../packages/shared/auth/index.ts";
-import { verifySession, SESSION_COOKIE_NAME } from "../auth/session.ts";
+import {
+  verifySession,
+  SESSION_COOKIE_NAME,
+  buildClearedSessionCookie,
+  type SessionClaims,
+} from "../auth/session.ts";
+import { AUTH_ERRORS } from "../auth/errors.ts";
 import type { OrchestratorJob } from "../../bot-orchestrator/index.ts";
 import { validateMeetingUrl } from "./validate.ts";
 import { errorResponse, CALL_URL_INVALID } from "./errors.ts";
 
 /** Default TTL for a minted share token's `expires_at` (§5.7): 30 days. */
 const DEFAULT_SHARE_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** SQLSTATE for a foreign-key violation — `calls.tenant_id → tenants` (§5.14 / #114). */
+const FK_VIOLATION = "23503";
+
+/** §5.16 code for a stale session whose tenant no longer exists (#114). */
+const SESSION_INVALID_CODE = "SAMO-AUTH-005" as const;
+
+/**
+ * The 401 for a session whose tenant no longer exists (#114, §5.14). Carries the
+ * stable `SAMO-AUTH-005` code so the web renders a distinct "you've been signed
+ * out" copy (not the generic "Request failed."), and CLEARS the cookie with the
+ * exact attributes {@link buildClearedSessionCookie} sets, so the browser drops
+ * the cookie and the dashboard redirects to sign-in.
+ */
+function sessionInvalidResponse(): Response {
+  const info = AUTH_ERRORS[SESSION_INVALID_CODE];
+  return new Response(
+    JSON.stringify({ code: info.code, message: info.message, retryable: info.retryable }),
+    {
+      status: info.httpStatus,
+      headers: {
+        "content-type": "application/json",
+        "set-cookie": buildClearedSessionCookie(),
+      },
+    },
+  );
+}
 
 /** Injected collaborators for the `/calls` handler. */
 export interface CallsHandlerDeps {
@@ -126,6 +159,38 @@ export function createCallsHandler(
   // verifySession — its iat is ms, so a seconds value reads ~1000× too old.
   const nowMs = (): number => (deps.now ? deps.now() : Date.now());
 
+  /**
+   * Privileged pre-tenant existence check (#114, §5.14). Mirrors PostgresUserStore
+   * and the gate's `lookupCallTenant`: reads `tenants` on the PRIVILEGED `sql`
+   * connection — NOT inside a `SET LOCAL ROLE samograph_app` tx — because auth
+   * runs before any tenant context exists and `tenants` carries no RLS. This is
+   * the DB check the pure-HMAC {@link verifySession} cannot do: a signed cookie
+   * can outlive its tenant.
+   */
+  const tenantExists = async (tenantId: string): Promise<boolean> => {
+    const rows = (await sql`SELECT 1 AS ok FROM tenants WHERE id = ${tenantId}`) as unknown as unknown[];
+    return rows.length > 0;
+  };
+
+  /** The outcome of resolving an owner session cookie against the current DB. */
+  type OwnerSession =
+    | { kind: "ok"; claims: SessionClaims } // valid signature AND the tenant exists
+    | { kind: "stale" } // valid signature but the tenant was deleted → 401 clear-cookie
+    | { kind: "anonymous" }; // missing / tampered / expired → the route's 401/403
+
+  /**
+   * The SHARED owner-session resolve every tenant-scoped route funnels through:
+   * verify the HMAC cookie (no DB), then confirm its tenant still exists. This is
+   * what turns a deleted-tenant cookie into a 401 instead of a silent-empty read
+   * or an uncaught FK 500 (#114).
+   */
+  const resolveOwnerSession = async (cookie: string | null): Promise<OwnerSession> => {
+    const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
+    if (!claims) return { kind: "anonymous" };
+    if (!(await tenantExists(claims.tenantId))) return { kind: "stale" };
+    return { kind: "ok", claims };
+  };
+
   const gateDeps: AuthorizeDeps = {
     keyring,
     // The session seam: verify the signed cookie (pure HMAC — no DB).
@@ -152,11 +217,11 @@ export function createCallsHandler(
 
     // ── POST /calls — create a call from a meeting URL (§5.2) ─────────────────
     if (req.method === "POST" && url.pathname === "/calls") {
-      // 1) Authenticate the owner session. No/invalid session → 401, bodyless.
+      // 1) Authenticate the owner session (pure HMAC — no DB). No/invalid → 401 bodyless.
       const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
       if (!claims) return unauthenticated();
 
-      // 2) Validate the URL BEFORE any DB write. Bad URL → typed 400, no row.
+      // 2) Validate the URL BEFORE any DB access. Bad URL → typed 400, no row, no DB.
       let body: unknown;
       try {
         body = await req.json();
@@ -167,30 +232,47 @@ export function createCallsHandler(
       const valid = validateMeetingUrl(candidate);
       if (!valid.ok) return errorResponse(CALL_URL_INVALID);
 
-      // 3) Create the PENDING call + audit entry under the tenant, as samograph_app.
-      const created = await sql.begin(async (tx) => {
-        await tx.unsafe("SET LOCAL ROLE samograph_app");
-        await setTenant(tx, claims.tenantId);
-        const rows = await tx`
-          INSERT INTO calls (tenant_id, meeting_url, status, ingest_degraded)
-          VALUES (${claims.tenantId}, ${valid.url}, 'PENDING', false)
-          RETURNING id, status`;
-        const row = rows[0] as { id: string; status: string };
-        await tx`
-          INSERT INTO audit_log (tenant_id, call_id, actor, action)
-          VALUES (${claims.tenantId}, ${row.id}, ${`user:${claims.userId}`}, 'call.create')`;
-        return row;
-      });
+      // 3) Privileged existence check (#114, §5.14): a stale session for a DELETED
+      //    tenant → 401 clear-cookie, never the uncaught FK 500 it used to throw.
+      if (!(await tenantExists(claims.tenantId))) return sessionInvalidResponse();
 
-      // 4) Enqueue the bot-orchestrator join job (§5.2). Return id + status.
+      // 4) Create the PENDING call + audit entry under the tenant, as samograph_app.
+      //    If the tenant is deleted in the race between (3) and here, the FK
+      //    violation (calls.tenant_id → tenants, SQLSTATE 23503) maps to the SAME
+      //    401 clear-cookie path — defence in depth, still never a bare 500.
+      let created: { id: string; status: string };
+      try {
+        created = await sql.begin(async (tx) => {
+          await tx.unsafe("SET LOCAL ROLE samograph_app");
+          await setTenant(tx, claims.tenantId);
+          const rows = await tx`
+            INSERT INTO calls (tenant_id, meeting_url, status, ingest_degraded)
+            VALUES (${claims.tenantId}, ${valid.url}, 'PENDING', false)
+            RETURNING id, status`;
+          const row = rows[0] as { id: string; status: string };
+          await tx`
+            INSERT INTO audit_log (tenant_id, call_id, actor, action)
+            VALUES (${claims.tenantId}, ${row.id}, ${`user:${claims.userId}`}, 'call.create')`;
+          return row;
+        });
+      } catch (err) {
+        if ((err as { errno?: string }).errno === FK_VIOLATION) return sessionInvalidResponse();
+        throw err;
+      }
+
+      // 5) Enqueue the bot-orchestrator join job (§5.2). Return id + status.
       await enqueue({ callId: created.id, meetingUrl: valid.url });
       return Response.json({ id: created.id, status: created.status }, { status: 201 });
     }
 
     // ── GET /calls — list the caller's tenant's calls (RLS-scoped, §5.10) ─────
     if (req.method === "GET" && url.pathname === "/calls") {
-      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
-      if (!claims) return unauthenticated();
+      // Shared resolve: a deleted-tenant cookie → 401 clear-cookie (not empty 200);
+      // a missing/tampered cookie → the existing bodyless 401 (#114).
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      if (session.kind !== "ok") return unauthenticated();
+      const claims = session.claims;
       const calls = await sql.begin(async (tx) => {
         await tx.unsafe("SET LOCAL ROLE samograph_app");
         await setTenant(tx, claims.tenantId);
@@ -207,7 +289,11 @@ export function createCallsHandler(
     const shareMatch = url.pathname.match(/^\/calls\/([^/]+)\/share$/);
     if (req.method === "POST" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
+      // Shared resolve: a deleted-tenant owner cookie → 401 clear-cookie (#114);
+      // otherwise a share-credential attempt → 403, a fully anonymous one → 401.
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      const claims = session.kind === "ok" ? session.claims : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const minted = await sql.begin(async (tx) => {
@@ -266,7 +352,11 @@ export function createCallsHandler(
     // minted one are the SAME capability — one revoke kills both.
     if (req.method === "GET" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
+      // Shared resolve: a deleted-tenant owner cookie → 401 clear-cookie (#114);
+      // otherwise a share-credential attempt → 403, a fully anonymous one → 401.
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      const claims = session.kind === "ok" ? session.claims : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const found = await sql.begin(async (tx) => {
@@ -307,7 +397,11 @@ export function createCallsHandler(
     const rotateMatch = url.pathname.match(/^\/calls\/([^/]+)\/share\/rotate$/);
     if (req.method === "POST" && rotateMatch) {
       const callId = decodeURIComponent(rotateMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
+      // Shared resolve: a deleted-tenant owner cookie → 401 clear-cookie (#114);
+      // otherwise a share-credential attempt → 403, a fully anonymous one → 401.
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      const claims = session.kind === "ok" ? session.claims : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const rotated = await sql.begin(async (tx) => {
@@ -340,7 +434,11 @@ export function createCallsHandler(
     // sees `revoked_at`.
     if (req.method === "DELETE" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
-      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
+      // Shared resolve: a deleted-tenant owner cookie → 401 clear-cookie (#114);
+      // otherwise a share-credential attempt → 403, a fully anonymous one → 401.
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      const claims = session.kind === "ok" ? session.claims : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const outcome = await sql.begin(async (tx) => {
@@ -361,7 +459,11 @@ export function createCallsHandler(
     if (req.method === "DELETE" && revokeMatch) {
       const callId = decodeURIComponent(revokeMatch[1]);
       const tokenId = decodeURIComponent(revokeMatch[2]);
-      const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
+      // Shared resolve: a deleted-tenant owner cookie → 401 clear-cookie (#114);
+      // otherwise a share-credential attempt → 403, a fully anonymous one → 401.
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      const claims = session.kind === "ok" ? session.claims : null;
       if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
 
       const outcome = await sql.begin(async (tx) => {

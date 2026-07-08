@@ -116,6 +116,30 @@ describe("AddToCallForm — the dashboard's single primary action", () => {
     ).toBeDefined();
   });
 
+  it("shows a distinct 'signed out' copy (not generic) when the session is stale (#114)", async () => {
+    // A deleted-tenant session returns 401 SAMO-AUTH-005. Even when the raw wire
+    // message is the generic fallback, the form must derive and show the distinct
+    // "you've been signed out" copy — never the generic "Request failed."
+    const client = createFakeAppApiClient({
+      failCreateCallWith: {
+        code: "SAMO-AUTH-005",
+        message: "Request failed.",
+        status: 401,
+      },
+    });
+    const { container, getByLabelText, findByText, queryByText } = render(
+      <AddToCallForm client={client} />,
+    );
+    fireEvent.change(getByLabelText("Meeting link"), {
+      target: { value: "https://meet.google.com/abc-defg-hij" },
+    });
+    submit(container);
+    expect(
+      await findByText("You've been signed out. Please sign in again."),
+    ).toBeDefined();
+    expect(queryByText("Request failed.")).toBeNull();
+  });
+
   it("calls onCreated with the PENDING call after a successful create", async () => {
     const client = createFakeAppApiClient();
     const created: string[] = [];

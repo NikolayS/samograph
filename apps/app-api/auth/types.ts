@@ -16,7 +16,8 @@ export type AuthErrorCode =
   | "SAMO-AUTH-001" // invalid / tampered KID / bad signature
   | "SAMO-AUTH-002" // expired (> 15 min)
   | "SAMO-AUTH-003" // already used (replay)
-  | "SAMO-AUTH-004"; // rate limit (5/hr email OR 20/hr IP)
+  | "SAMO-AUTH-004" // rate limit (5/hr email OR 20/hr IP)
+  | "SAMO-AUTH-005"; // stale session — the tenant no longer exists (#114, §5.14)
 
 /** A signed-in principal: a user and their 1:1 tenant (SPEC §5.1, §5.10). */
 export interface AuthUser {
