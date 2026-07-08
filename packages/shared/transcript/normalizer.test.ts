@@ -123,6 +123,43 @@ describe("normalizeTranscriptLine — §6.2 #1 red cases (exact values)", () => 
     ).toBe("[] Eve: hi");
   });
 
+  it("§6.2 #1 — a null word element is guarded (untrusted ingest): contributes '' not a throw", () => {
+    // Live Recall webhook payloads are untrusted: a malformed `words[]` may
+    // contain a null element. `w.text` throws "null is not an object"; the
+    // guarded `w?.text ?? ""` makes the null contribute an empty word instead.
+    const payload = rawEvent({
+      speaker: "Alice",
+      words: [
+        null as unknown as RawWord,
+        { text: "hi", start_timestamp: { absolute: AT } },
+      ],
+    });
+    // null → "" ; joined with " " → " hi" ; sanitize trims the leading space.
+    // words[0] is null so the (already-guarded) timestamp lookup yields "" → '[]'.
+    expect(normalizeTranscriptLine(payload)).toBe("[] Alice: hi");
+  });
+
+  it("§6.2 #1 — a trailing null word keeps the first word's timestamp and body", () => {
+    // First word well-formed → timestamp present; a later null just adds "".
+    const payload = rawEvent({
+      speaker: "Alice",
+      words: [
+        { text: "hi", start_timestamp: { absolute: AT } },
+        null as unknown as RawWord,
+      ],
+    });
+    expect(normalizeTranscriptLine(payload)).toBe("[2026-01-01 00:01:30] Alice: hi");
+  });
+
+  it("§6.2 #1 — all-null words[] → empty utterance body (timestamp still '[]')", () => {
+    // Every word null: each contributes "" and there is no first-word timestamp.
+    const payload = rawEvent({
+      speaker: "Bob",
+      words: [null as unknown as RawWord, null as unknown as RawWord],
+    });
+    expect(normalizeTranscriptLine(payload)).toBe("[] Bob: ");
+  });
+
   it("non-transcript / malformed payloads → null (never throws)", () => {
     expect(normalizeTranscriptLine({ event: "other.event", data: {} })).toBeNull();
     expect(normalizeTranscriptLine({ data: {} })).toBeNull(); // no event field
@@ -168,6 +205,11 @@ describe("normalizeTranscriptLine — byte-identical parity with CLI (§5.4)", (
     utterance("   ", ["hi"], "2026-01-01T00:00:00.000Z"),
     rawEvent({ speaker: "Dan", words: [{ text: "hello" }] }),
     rawEvent({ speaker: "Eve", words: [{ text: "hi", start_timestamp: {} }] }),
+    // null-word fixture: guarded ingest must stay byte-identical to the CLI.
+    rawEvent({
+      speaker: "Nul",
+      words: [null as unknown as RawWord, { text: "hi", start_timestamp: { absolute: AT } }],
+    }),
     rawEvent({
       speaker: "Bob",
       words: [
