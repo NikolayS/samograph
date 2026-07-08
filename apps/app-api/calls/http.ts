@@ -314,30 +314,36 @@ export function createCallsHandler(
       //    tenant → 401 clear-cookie, never the uncaught FK 500 it used to throw.
       if (!(await tenantExists(claims.tenantId))) return sessionInvalidResponse();
 
-      // 3.5) Per-tenant bot-creation guardrail (§5.16 `SAMO-RECALL-COST`, §8). The
-      //    (cap+1)th create within the window → 429 + `Retry-After`. CHECK-before-
-      //    COMMIT: `peek` is non-committing, so a rejected create never consumes a
-      //    slot; the slot is only recorded (`hit`) AFTER the create commits (step 4).
-      //    Keyed strictly by tenant, so one tenant hitting the cap never blocks
-      //    another. This is the per-tenant guardrail — NOT the share-scoped
-      //    `SAMO-RATE-001` cap (§5.7), which is intentionally not overloaded here.
+      // 3.5) Per-tenant bot-creation guardrail (§5.16 `SAMO-RECALL-COST`, §8).
+      //    RESERVE-BEFORE-CREATE: record the slot with a COMMITTING `hit` UP FRONT,
+      //    atomically, before the create. A non-committing `peek` here would leave
+      //    an await-window (the tx) between check and commit, so N concurrent
+      //    POST /calls could all peek below the cap before any slot is recorded →
+      //    all create → ~N bots against the cap, defeating the real-money Recall
+      //    spend guardrail. `hit` mutates the counter synchronously, so concurrent
+      //    reservations serialize and never exceed the cap. Keyed strictly by
+      //    tenant, so one tenant at cap never blocks another. This is the per-tenant
+      //    guardrail — NOT the share-scoped `SAMO-RATE-001` cap (§5.7).
       const rateKey = `bot-create:${claims.tenantId}`;
       const rateNow = nowMs();
-      if (!(await rateLimiter.peek(rateKey, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, rateNow))) {
-        // A blocked `hit` reports the back-off WITHOUT consuming a slot.
-        const blocked = await rateLimiter.hit(
-          rateKey,
-          BOT_CREATE_PER_TENANT_LIMIT,
-          BOT_CREATE_WINDOW_MS,
-          rateNow,
-        );
-        return recallCostResponse(blocked.retryAfterMs);
+      const reservation = await rateLimiter.hit(
+        rateKey,
+        BOT_CREATE_PER_TENANT_LIMIT,
+        BOT_CREATE_WINDOW_MS,
+        rateNow,
+      );
+      if (!reservation.allowed) {
+        // Over cap: the blocked `hit` consumed no slot and reports the back-off.
+        return recallCostResponse(reservation.retryAfterMs);
       }
 
       // 4) Create the PENDING call + audit entry under the tenant, as samograph_app.
       //    If the tenant is deleted in the race between (3) and here, the FK
       //    violation (calls.tenant_id → tenants, SQLSTATE 23503) maps to the SAME
       //    401 clear-cookie path — defence in depth, still never a bare 500.
+      //    On ANY create failure we REFUND the reserved slot (the guardrail counts
+      //    real creates, not failed attempts — §8), so a transient DB error or a
+      //    raced tenant-delete does not burn a tenant's budget.
       let created: { id: string; status: string };
       try {
         created = await sql.begin(async (tx) => {
@@ -354,15 +360,12 @@ export function createCallsHandler(
           return row;
         });
       } catch (err) {
+        // Refund the slot the failed create reserved (best-effort; never masks the
+        // original error).
+        await rateLimiter.refund(rateKey, BOT_CREATE_WINDOW_MS, rateNow);
         if ((err as { errno?: string }).errno === FK_VIOLATION) return sessionInvalidResponse();
         throw err;
       }
-
-      // 4.5) Record the SUCCESSFUL create against the per-tenant guardrail. Done
-      //    AFTER the commit so a create that threw (e.g. FK on a raced tenant
-      //    delete → 401 above) never consumes a slot — the check-before-commit
-      //    discipline, so the counter tracks real creates, not attempts (§8).
-      await rateLimiter.hit(rateKey, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, rateNow);
 
       // 5) Enqueue the bot-orchestrator join job (§5.2). Return id + status.
       await enqueue({ callId: created.id, meetingUrl: valid.url });
