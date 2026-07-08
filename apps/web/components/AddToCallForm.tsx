@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type FormEvent } from "react";
 import { AppApiError, type AppApiClient, type Call } from "../lib/appApiClient.ts";
+import { isSessionInvalid, SESSION_INVALID_MESSAGE } from "../lib/apiError.ts";
 import { validateMeetingUrl } from "../lib/validateMeetingUrl.ts";
 
 export interface AddToCallFormProps {
@@ -53,8 +54,15 @@ export function AddToCallForm({ client, initialUrl = "", onCreated }: AddToCallF
       setPhase("created");
       onCreated?.(created);
     } catch (err) {
-      // Surface the server's typed `{code,message}` (e.g. SAMO-CALL-URL) instead
-      // of swallowing it behind a generic "Try again." (defect: typed errors).
+      // A stale/absent session (deleted tenant → SAMO-AUTH-005, or any 401) gets a
+      // DISTINCT "you've been signed out" copy, not the generic failure (#114).
+      if (isSessionInvalid(err)) {
+        setError(SESSION_INVALID_MESSAGE);
+        setPhase("error");
+        return;
+      }
+      // Otherwise surface the server's typed `{code,message}` (e.g. SAMO-CALL-URL)
+      // instead of swallowing it behind a generic "Try again." (defect: typed errors).
       setError(err instanceof AppApiError ? err.message : GENERIC_ERROR);
       setPhase("error");
     }

@@ -177,6 +177,54 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
     expect(await countCalls(tenantA)).toBe(before);
   });
 
+  // ── Stale session for a DELETED tenant (#114, §5.14) ───────────────────────
+  // A stateless HMAC cookie outlives its tenant (prod: GDPR deletion; dev: DB
+  // recreated). verifySession is pure HMAC, so the signature still checks — but
+  // the tenant row is gone. Both tenant-scoped routes must force re-auth (401 +
+  // clear-cookie carrying SAMO-AUTH-005) rather than read-empty (GET) or FK-500
+  // (POST). A never-inserted tenant/user id is exactly a deleted tenant here.
+  const ghostUser = randomUUID();
+  const ghostTenant = randomUUID();
+  const ghostCookie = signSession(
+    { userId: ghostUser, tenantId: ghostTenant, iat: Date.now() },
+    SESSION_SECRET,
+  );
+
+  it("GET /calls: a deleted-tenant session → 401 SAMO-AUTH-005 + cleared cookie (not empty 200)", async () => {
+    const { handler } = makeHandler();
+    const res = await handler(req("GET", "/calls", { cookie: ghostCookie }));
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("SAMO-AUTH-005");
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(`${SESSION_COOKIE_NAME}=;`);
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
+  it("POST /calls: a deleted-tenant session → 401 SAMO-AUTH-005 (not 500) + no row/enqueue", async () => {
+    const { handler, jobs } = makeHandler();
+    const before = await countCalls(ghostTenant);
+    const res = await handler(
+      req("POST", "/calls", { cookie: ghostCookie, body: { meeting_url: MEET_URL } }),
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("SAMO-AUTH-005");
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(`${SESSION_COOKIE_NAME}=;`);
+    expect(setCookie).toContain("Max-Age=0");
+    expect(await countCalls(ghostTenant)).toBe(before); // no row created
+    expect(jobs).toEqual([]); // no orchestrator enqueue
+  });
+
+  it("GET /calls: a VALID tenant still lists normally (the fix does not break the happy path)", async () => {
+    const { handler } = makeHandler();
+    const res = await handler(req("GET", "/calls", { cookie: cookieA }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { calls: Array<{ id: string }> };
+    expect(body.calls.map((c) => c.id)).toContain(callA);
+  });
+
   // ── Read one (gate-authorized, §5.6) ───────────────────────────────────────
   it("GET /calls/:id: owner reads their own call → 200 with the row", async () => {
     const { handler } = makeHandler();

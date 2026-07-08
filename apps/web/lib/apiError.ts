@@ -20,6 +20,32 @@ export class AppApiError extends Error {
   }
 }
 
+/**
+ * Stable §5.16 code for a stale session whose tenant no longer exists (#114,
+ * §5.14). app-api returns it as a 401 that also clears the session cookie.
+ */
+export const SESSION_INVALID_CODE = "SAMO-AUTH-005";
+
+/**
+ * Canonical "you've been signed out" copy — shown for a stale-session failure
+ * instead of the generic "Request failed." The web owns this string so the copy
+ * is stable even when the wire body carries only a fallback message.
+ */
+export const SESSION_INVALID_MESSAGE =
+  "You've been signed out. Please sign in again.";
+
+/**
+ * True when a failure means the caller's session is no longer valid (the stale
+ * `SAMO-AUTH-005` code, or any 401): the UI should show the signed-out copy and
+ * route the user back to sign-in, not a generic error.
+ */
+export function isSessionInvalid(err: unknown): boolean {
+  return (
+    err instanceof AppApiError &&
+    (err.code === SESSION_INVALID_CODE || err.status === 401)
+  );
+}
+
 interface ApiErrorBody {
   code?: unknown;
   message?: unknown;
