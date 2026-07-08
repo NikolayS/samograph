@@ -50,6 +50,7 @@ import {
 } from "../bot-orchestrator/statusPoller.ts";
 import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
 import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
+import { createCachedFunnelSource } from "./metrics/funnelSource.ts";
 
 /**
  * Prod email fallback: if `RESEND_API_KEY` is not configured there is NO dev
@@ -91,6 +92,14 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
   // ONE shared §5.11 registry per process (issue #108): the bot-join producer
   // (poller + runJoinJob) increments it and it is scraped at GET /metrics.
   const registry = new MetricsRegistry();
+  // §9 activation-funnel feed (issue #16): read-only, counts-only aggregate over
+  // the privileged connection, cached + background-refreshed so the synchronous
+  // /metrics scrape stays fast. Folded into /metrics as the samograph_funnel_*
+  // gauges — THE v1 success metric.
+  const funnelSource = createCachedFunnelSource(sql, {
+    logger: { error: (msg) => console.error(msg) },
+  });
+  funnelSource.start();
   // REAL transactional email (Resend) when RESEND_API_KEY is set; otherwise the
   // prod fallback throws on send (no silent drop, no dev fake in prod).
   const sender = emailSenderFromEnv(env, unconfiguredEmailSender());
@@ -157,6 +166,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     webOrigin,
     enqueue,
     registry, // §5.11 GET /metrics scrape source (issue #108)
+    funnel: funnelSource.thunk, // §9 activation-funnel gauges at /metrics (issue #16)
     // PROD: restart/replica-safe magic-link store (issue #62). Migration 0007
     // MUST be applied before this server boots. dev-server keeps the in-memory
     // store. Auth is a privileged pre-tenant path, so `sql` is the privileged
