@@ -216,3 +216,34 @@ Every PR walks this loop in order *(merged from rpg's "no exceptions" sequence +
 
 ### Compatibility with the existing samorev merge gate
 The repo-level **Merge Gate (samorev)** rules in the root `CLAUDE.md` remain in force unchanged. This section *layers* the manager+agents flow, strict TDD-first, and the per-sprint STOP on top of that gate; where both speak, samorev step 2 above IS that gate.
+
+## Deployment topology & CI/CD — 3-tier preview → prod (TARGET; owner-specified)
+
+> Owner-specified target (2026-07-08). **All deployments go through CI (GitHub Actions)** — no manual VM deploys, no VM-side auto-deploy-on-merge. Three tiers:
+
+| Trigger (via CI) | Environment | URL | Database |
+|---|---|---|---|
+| push to any **dev branch** `<branch>` | ephemeral branch preview | `samograph-<branch>.samo.cat` | its own **DBLab** thin-clone / branch |
+| **merge to `main`** | canonical main preview | `samograph-main.samo.cat` | its own DBLab clone |
+| push a **release tag** (e.g. `v*`) | **production** | `samograph.samo.team` | prod DB |
+
+- **Prod deploys ONLY on a release tag** — never on a branch or `main` push. A merge to `main` deploys the *preview*, not prod.
+- **DBLab** (postgres.ai Database Lab Engine) gives each preview an isolated, production-like database via a thin **clone/branch** (cheap, fast). Branch previews are torn down when the branch is deleted/merged.
+- Entrypoints: prod/preview app-api = `apps/app-api/server.ts` with `SAMO_ENV=<prod|preview>` (fail-closed on missing/dev-default secrets); local dev = `apps/app-api/dev-server.ts` + `SAMO_ENV=dev`. Live stack (ingest+ws-hub composed) = `apps/ws-hub/dev-live-server.ts`.
+
+### Current machinery — the VM "samohost" system (as of 2026-07-08; some details still being mapped)
+- Hetzner VM: `ssh -p 2223 dev@116.203.249.135` (root via passwordless `sudo`). A **"samohost"** system already provides per-env previews: templated systemd units `samograph-web@<env>` / `samograph-live@<env>`, per-env checkouts under `/opt/samograph/envs/<env>`, a per-env `.env` with a DBLab-derived `DATABASE_URL`, per-env Caddy site config, and per-env ports.
+- **Real prod** = `/opt/samograph/app` (units `samograph-web.service` / `samograph-live.service`) → **`samograph.samo.team`**. The `@samograph-main` instance → `samograph-main.samo.cat` is a **preview** (NB: earlier handoff docs mislabel samo.cat as prod — it is not).
+- ⚠️ **Current mapping is WRONG vs the target:** samohost currently auto-deploys `main` → **prod (`samo.team`)**, un-tag-gated, and `samograph-main.samo.cat` is a stale preview. Target: `main` → the main *preview*; **prod only on a release tag**.
+- ⚠️ **Prod entrypoint fragility:** `/opt/samograph/start-prod.sh` still execs `apps/app-api/dev-server.ts`, which is built to **refuse to boot under `SAMO_ENV=prod`** — it must be pointed at `server.ts` (the cutover). Prod is currently up only because it's coasting on a stale old process; a service restart crashes the API until the cutover lands.
+- Being mapped (read-only VM investigation): the DBLab endpoint/version/token, Caddy wildcard + on-demand TLS, Cloudflare `*.samo.cat` DNS + API token, and the exact samohost trigger/entrypoint a CI job would call.
+
+### To build
+1. **GitHub Actions workflows** for the three triggers, each driving samohost (via an SSH deploy command or a samohost API) to create/update the right env + its DBLab clone.
+2. **Fix the trigger mapping:** stop auto-deploying `main` → prod; make `main` → `samograph-main` preview; add a **tag → prod** deploy that cuts prod over to `server.ts` + `SAMO_ENV=prod` and applies migrations.
+3. **DBLab branching per preview** + teardown on branch delete/merge.
+4. **DNS:** Cloudflare wildcard `*.samo.cat` + Caddy on-demand TLS so arbitrary branch names resolve.
+5. **GitHub Actions secrets:** a deploy key (or samohost API token), a DBLab token, a Cloudflare DNS token. **Never commit secret values** (they live in the secret manager / GH Actions secrets).
+6. **Incremental, non-breaking rollout:** don't disturb the currently-live prod/preview until each tier is proven.
+
+**Access status (2026-07-08):** VM root ✓; GitHub (PRs + `gh`) ✓; DBLab token / Cloudflare DNS token / ability to set GH Actions secrets = to confirm or obtain from the owner.
