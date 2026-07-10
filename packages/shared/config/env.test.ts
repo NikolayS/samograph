@@ -36,6 +36,9 @@ describe("resolveSamoEnv — default prod (fail-safe)", () => {
     expect(resolveSamoEnv({ SAMO_ENV: "prod" })).toBe("prod");
     expect(resolveSamoEnv({ SAMO_ENV: "" })).toBe("prod");
   });
+  it("is 'preview' for the exact value 'preview' (prod-mode, distinguishable)", () => {
+    expect(resolveSamoEnv({ SAMO_ENV: "preview" })).toBe("preview");
+  });
 });
 
 describe("assertNoDevDefaultSecrets — prod fail-closed (#64)", () => {
@@ -63,6 +66,13 @@ describe("assertNoDevDefaultSecrets — prod fail-closed (#64)", () => {
 
   it("defaults to prod: absent SAMO_ENV + dev defaults still throws", () => {
     expect(() => assertNoDevDefaultSecrets({ ...DEV_DEFAULT_SECRETS })).toThrow();
+  });
+
+  it("throws in preview when a signing secret is dev-default (preview = prod-mode)", () => {
+    const env = { ...goodProd(), SAMO_ENV: "preview" };
+    expect(() => assertNoDevDefaultSecrets(env)).not.toThrow(); // real secrets → ok
+    const withDevSecret = { ...env, SESSION_SECRET: DEV_DEFAULT_SECRETS.SESSION_SECRET };
+    expect(() => assertNoDevDefaultSecrets(withDevSecret)).toThrow(/SESSION_SECRET/);
   });
 });
 

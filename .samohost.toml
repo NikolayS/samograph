@@ -32,6 +32,14 @@ envDbVars         = ["DATABASE_URL"]                 # rewritten to the DBLab cl
 previewDbBackend  = "dblab"                          # previews = DBLab thin clones (owner non-negotiable)
 dbBackend         = "none"                           # prod DB is durable (samograph_prod), not samohost-cloned
 
+# PR-B: auto-generate these signing secrets per preview env (stored in 0600 secrets.env as EnvironmentFile).
+# Exact names verified against packages/shared/config/env.ts APP_API_SIGNING_SECRETS +
+# WS_HUB_SIGNING_SECRETS: app-api needs all three; ws-hub needs SESSION + TOKEN only.
+secrets           = ["SESSION_SECRET", "TOKEN_SECRET", "MAGIC_LINK_SECRET"]
+
+# PR-C: env-create rewrites this var in each preview's secrets.env to the DBLab clone URL.
+databaseUrlEnv    = "DATABASE_URL"
+
 # Multi-service routing topology.
 # defaultListener = the catch-all reverse_proxy target (web:3000).
 defaultListener   = "web"
@@ -43,8 +51,12 @@ defaultListener   = "web"
 # Confirmed live: ss -tlnp shows :3000 (node) and :8887 (bun) under the same cgroup.
 
 [[services]]
-name = "web"
-unit = "samograph-web"
+name      = "web"
+unit      = "samograph-web"
+# PROD ExecStart confirmed READ-ONLY from VM (116.203.249.135, 2026-07-10):
+#   systemctl cat samograph-web → ExecStart=/opt/samograph/start-prod.sh
+# start-prod.sh starts: bun apps/app-api/server.ts (bg) + bun run start in apps/web (fg).
+execStart = "/opt/samograph/start-prod.sh"
 
   [[services.listeners]]
   name       = "web"
@@ -66,8 +78,13 @@ unit = "samograph-web"
 # Confirmed live: ss -tlnp shows :8888 and :8189 (bun pid 1552, samograph-live cgroup).
 
 [[services]]
-name = "live"
-unit = "samograph-live"
+name      = "live"
+unit      = "samograph-live"
+# PROD ExecStart confirmed READ-ONLY from VM (116.203.249.135, 2026-07-10):
+#   systemctl cat samograph-live → ExecStart=/usr/local/bin/bun apps/ws-hub/dev-live-server.ts
+# (dev-live-server.ts combines ingest + ws-hub in one process with assertNoDevDefaultSecrets guard;
+#  it is the prod entrypoint for the live unit despite the "dev" prefix in the filename.)
+execStart = "/usr/local/bin/bun apps/ws-hub/dev-live-server.ts"
 
   [[services.listeners]]
   name       = "ws-hub"

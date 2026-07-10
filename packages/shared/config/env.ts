@@ -14,8 +14,16 @@
  * `X-Forwarded-Host`.
  */
 
-/** Runtime mode. Absence resolves to `prod` (fail-safe). */
-export type SamoEnv = "dev" | "prod";
+/**
+ * Runtime mode. Absence resolves to `prod` (fail-safe).
+ *
+ * `preview` is a FIRST-CLASS value: it carries PROD-MODE behavior (real secrets,
+ * real auth, `assertNoDevDefaultSecrets` fires) but is DISTINGUISHABLE from `prod`
+ * so the app can gate noindex headers and a "preview env" banner on it.
+ * SAMO_ENV=preview is injected by samohost's env-create into every preview env's
+ * generated secrets.env — it NEVER falls through to dev.
+ */
+export type SamoEnv = "dev" | "prod" | "preview";
 
 /**
  * The committed, PUBLIC dev-default literals. These live in the repo on purpose
@@ -55,9 +63,16 @@ export const WS_HUB_SIGNING_SECRETS: readonly SigningSecretName[] = ["SESSION_SE
 /** Minimal env shape (a subset of `process.env`). */
 export type EnvLike = Record<string, string | undefined>;
 
-/** Resolve SAMO_ENV once; only the exact string `dev` is dev, everything else is prod. */
+/**
+ * Resolve SAMO_ENV once. Only the exact string `"dev"` is dev; `"preview"` is a
+ * prod-mode variant (real secrets, real auth) distinguishable from `"prod"` for
+ * noindex/banner gating; everything else (absent, `"prod"`, unknown) resolves to
+ * `"prod"` (fail-safe: forgetting to set the var hardens rather than weakens).
+ */
 export function resolveSamoEnv(env: EnvLike): SamoEnv {
-  return env.SAMO_ENV === "dev" ? "dev" : "prod";
+  if (env.SAMO_ENV === "dev") return "dev";
+  if (env.SAMO_ENV === "preview") return "preview";
+  return "prod";
 }
 
 /**
@@ -97,7 +112,9 @@ export function assertNoDevDefaultSecrets(
   env: EnvLike,
   secretNames: readonly SigningSecretName[] = SIGNING_SECRET_NAMES,
 ): void {
-  if (resolveSamoEnv(env) !== "prod") return;
+  // Engage for "prod" AND "preview" — both require real secrets.
+  // Only "dev" gets the free pass (dev-local.sh uses the committed dev defaults by design).
+  if (resolveSamoEnv(env) === "dev") return;
   const offending = usingDevDefaultSecrets(env, secretNames);
   if (offending.length > 0) {
     throw new Error(

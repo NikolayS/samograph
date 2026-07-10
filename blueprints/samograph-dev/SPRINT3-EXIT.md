@@ -16,7 +16,7 @@ The new secure app-api entrypoint `apps/app-api/server.ts` is fail-closed; the o
    - `SAMO_ENV=prod`
    - three **distinct** real secrets (32+ random bytes each; must NOT equal the committed `dev-only-*` defaults — boot fail-closes if they do): `SESSION_SECRET`, `MAGIC_LINK_SECRET`, `TOKEN_SECRET`. (ws-hub uses `SESSION_SECRET` + `TOKEN_SECRET`.)
 2. Apply migrations (there is a NEW one, `0007_magic_links.sql`) **before restarting**: `bun packages/shared/db/migrate.ts` with the VM `DATABASE_URL`. The prod server uses the Postgres magic-link store, so the table must exist first.
-3. Repoint systemd `samograph-web@samograph-main` (via `start-preview.sh`) from `apps/app-api/dev-server.ts` → `apps/app-api/server.ts`.
+3. ~~Repoint via `start-preview.sh`~~ **DONE** — `start-prod.sh` now launches `apps/app-api/server.ts` directly. samohost's `.samohost.toml` `execStart` fields declare the prod entrypoints for all preview envs; `start-preview.sh` is dead and should be removed from `/opt/samograph/` on next hostprep.
 4. Restart both units. **Verify on the live host:** the session cookie carries `Secure`; `GET /__dev/last-magic-link` → 404; boot log shows no dev-default-secret warning.
 
 **Why this is the #1 gate:** until the cutover, prod runs `dev-server.ts`, which strips the `Secure` flag off session cookies. (Your live prod already has real secrets set, so the more serious "forgeable session" fallback does not apply today — this closes the `Secure` gap and locks in the fail-safe boot checks.)
