@@ -20,7 +20,7 @@ name              = "samograph"
 repo              = "NikolayS/samograph"
 branch            = "main"                       # drives the MAIN PREVIEW, NOT prod
 appDir            = "/opt/samograph/app"
-buildCmd          = "bun install --frozen-lockfile && cd apps/web && APP_API_ORIGIN=http://127.0.0.1:8887 bun run build"
+buildCmd          = "bun install --frozen-lockfile && cd apps/web && APP_API_ORIGIN=http://127.0.0.1:${APP_API_PORT} bun run build"
 migrateCmd        = "bun packages/shared/db/migrate.ts"
 healthUrl         = "http://127.0.0.1:8887/health"   # app-api prod port; returns 200 "ok"
 serviceUnit       = "samograph-web"                  # legacy synthesis source (kept for back-compat)
