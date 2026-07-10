@@ -2,6 +2,7 @@
  * Marketing landing at `samograph.dev` (SPEC §3 Story 1, §8 Sprint 3 final copy).
  * Hero + honest v1 value prop (hosted, zero-setup) + the four-step flow, with a
  * single call-to-action into the magic-link sign-in.
+ * probe-deploy-evidence-20260710
  */
 export function Landing() {
   return (
