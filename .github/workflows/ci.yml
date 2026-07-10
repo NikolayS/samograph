@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']   # run CI on release tags so samohost's per-SHA CI gate can green-light a tag→prod deploy
 
 permissions:
   contents: read

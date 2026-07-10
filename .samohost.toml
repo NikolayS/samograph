@@ -1,0 +1,37 @@
+# samohost app manifest for samograph.dev — schema: NikolayS/samohost src/manifest/toml.ts.
+#
+# NOTE: this file is INERT until an operator runs, ON THE CONTROL PLANE:
+#   samohost app register samograph --from-toml .samohost.toml --force
+# That is the one command that flips deploys to the 3-tier model:
+#   v* release tag  -> production   (samograph.samo.team)
+#   merge to main   -> main preview  (samograph-main.samo.cat)
+#   dev-branch push -> branch preview (samograph-<branch>.samo.cat), each a DBLab clone
+# (Requires the samohost release-tag feature — NikolayS/samohost#132 / PR #133.)
+#
+# NO secrets belong here (public repo). DB URLs + tokens stay in envFile on the host,
+# which samohost never reads or writes.
+
+name              = "samograph"
+repo              = "NikolayS/samograph"
+branch            = "main"                       # drives the MAIN PREVIEW, NOT prod
+appDir            = "/opt/samograph/app"
+buildCmd          = "bun install --frozen-lockfile && cd apps/web && APP_API_ORIGIN=http://127.0.0.1:8887 bun run build"
+migrateCmd        = "bun packages/shared/db/migrate.ts"
+healthUrl         = "http://127.0.0.1:8887/health"   # app-api prod port; returns 200 "ok"
+serviceUnit       = "samograph-web"                  # prod web + app-api unit
+mainHost          = "samograph.samo.team"            # PROD public host
+releaseTagPattern = "v*"                             # PROD ships ONLY on a new v* release tag
+envFile           = "/opt/samograph/app/.env"        # SAMO_ENV=prod + real secrets (samohost never touches it)
+envDbVars         = ["DATABASE_URL"]                 # rewritten to the DBLab clone in previews (never touches prod DB)
+previewDbBackend  = "dblab"                          # previews = DBLab thin clones (owner non-negotiable)
+dbBackend         = "none"                           # prod DB is durable (samograph_prod), not samohost-cloned  [confirm at register]
+
+# Confirm/finish at register time (needs control-plane access + a couple of decisions):
+#  - buildCmd bakes APP_API_ORIGIN=:8887 (prod). Preview envs need per-env app-api ports
+#    (they currently all collide on :8787) — the per-env port-isolation punch-list item.
+#  - serviceUnit covers only samograph-web; the live stack (samograph-live = ws-hub + ingest)
+#    is a second unit a single serviceUnit does not restart.
+#  - dbBackend="none" assumes samohost does not manage the durable prod DB; verify vs the
+#    current registration.
+#  - Recall webhook ingress = per-env cloudflared NAMED tunnel -> PUBLIC_WEBHOOK_BASE
+#    (amends S2-15; needs a Cloudflare tunnel credential).
