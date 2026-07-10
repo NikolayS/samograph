@@ -35,7 +35,7 @@ dbBackend         = "none"                           # prod DB is durable (samog
 # PR-B: auto-generate these signing secrets per preview env (stored in 0600 secrets.env as EnvironmentFile).
 # Exact names verified against packages/shared/config/env.ts APP_API_SIGNING_SECRETS +
 # WS_HUB_SIGNING_SECRETS: app-api needs all three; ws-hub needs SESSION + TOKEN only.
-secrets           = ["SESSION_SECRET", "TOKEN_SECRET", "MAGIC_LINK_SECRET"]
+secrets           = ["SESSION_SECRET", "TOKEN_SECRET", "MAGIC_LINK_SECRET", "RECALL_WEBHOOK_SECRET"]
 
 # PR-C: env-create rewrites this var in each preview's secrets.env to the DBLab clone URL.
 databaseUrlEnv    = "DATABASE_URL"
