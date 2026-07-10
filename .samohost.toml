@@ -10,28 +10,118 @@
 #
 # NO secrets belong here (public repo). DB URLs + tokens stay in envFile on the host,
 # which samohost never reads or writes.
+#
+# CADDY-ADAPT PROOF (NikolayS/samograph PR #xxx):
+#   renderVhost(planFromApp(this spec)) caddy-adapt-EQUALS
+#   test/fixtures/samograph-main-vhost.caddy (sha256 fce6b0f1...)
+#   Proved on caddy v2.11.4 via proof-samograph-toml.ts in samohost worktree.
 
 name              = "samograph"
 repo              = "NikolayS/samograph"
 branch            = "main"                       # drives the MAIN PREVIEW, NOT prod
 appDir            = "/opt/samograph/app"
-buildCmd          = "bun install --frozen-lockfile && cd apps/web && APP_API_ORIGIN=http://127.0.0.1:8887 bun run build"
+buildCmd          = "bun install --frozen-lockfile && cd apps/web && APP_API_ORIGIN=http://127.0.0.1:${APP_API_PORT} bun run build"
 migrateCmd        = "bun packages/shared/db/migrate.ts"
 healthUrl         = "http://127.0.0.1:8887/health"   # app-api prod port; returns 200 "ok"
-serviceUnit       = "samograph-web"                  # prod web + app-api unit
+serviceUnit       = "samograph-web"                  # legacy synthesis source (kept for back-compat)
 mainHost          = "samograph.samo.team"            # PROD public host
-releaseTagPattern = "v*"                             # PROD ships ONLY on a new v* release tag
+mainListen        = "cp-http80"                      # control-plane HTTP:80 (TLS terminated upstream by CF)
+releaseTagPattern = "v*"                             # PROD ships ONLY on a new v* release tag (requires samohost#132)
 envFile           = "/opt/samograph/app/.env"        # SAMO_ENV=prod + real secrets (samohost never touches it)
 envDbVars         = ["DATABASE_URL"]                 # rewritten to the DBLab clone in previews (never touches prod DB)
 previewDbBackend  = "dblab"                          # previews = DBLab thin clones (owner non-negotiable)
-dbBackend         = "none"                           # prod DB is durable (samograph_prod), not samohost-cloned  [confirm at register]
+dbBackend         = "none"                           # prod DB is durable (samograph_prod), not samohost-cloned
 
-# Confirm/finish at register time (needs control-plane access + a couple of decisions):
-#  - buildCmd bakes APP_API_ORIGIN=:8887 (prod). Preview envs need per-env app-api ports
-#    (they currently all collide on :8787) — the per-env port-isolation punch-list item.
-#  - serviceUnit covers only samograph-web; the live stack (samograph-live = ws-hub + ingest)
-#    is a second unit a single serviceUnit does not restart.
-#  - dbBackend="none" assumes samohost does not manage the durable prod DB; verify vs the
-#    current registration.
-#  - Recall webhook ingress = per-env cloudflared NAMED tunnel -> PUBLIC_WEBHOOK_BASE
-#    (amends S2-15; needs a Cloudflare tunnel credential).
+# PR-B: auto-generate these signing secrets per preview env (stored in 0600 secrets.env as EnvironmentFile).
+# Exact names verified against packages/shared/config/env.ts APP_API_SIGNING_SECRETS +
+# WS_HUB_SIGNING_SECRETS: app-api needs all three; ws-hub needs SESSION + TOKEN only.
+secrets           = ["SESSION_SECRET", "TOKEN_SECRET", "MAGIC_LINK_SECRET", "RECALL_WEBHOOK_SECRET"]
+
+# PR-C: env-create rewrites this var in each preview's secrets.env to the DBLab clone URL.
+databaseUrlEnv    = "DATABASE_URL"
+
+# Multi-service routing topology.
+# defaultListener = the catch-all reverse_proxy target (web:3000).
+defaultListener   = "web"
+
+# ---- service: web (samograph-web unit) ----
+# Runs two processes under start-prod.sh:
+#   node apps/web (Next.js)        PORT        = 3000
+#   bun  apps/app-api/server.ts    APP_API_PORT = 8887
+# Confirmed live: ss -tlnp shows :3000 (node) and :8887 (bun) under the same cgroup.
+
+[[services]]
+name      = "web"
+unit      = "samograph-web"
+# PROD ExecStart confirmed READ-ONLY from VM (116.203.249.135, 2026-07-10):
+#   systemctl cat samograph-web → ExecStart=/opt/samograph/start-prod.sh
+# start-prod.sh starts: bun apps/app-api/server.ts (bg) + bun run start in apps/web (fg).
+execStart = "/opt/samograph/start-prod.sh"
+
+  [[services.listeners]]
+  name       = "web"
+  port       = 3000
+  portEnv    = "PORT"
+  healthPath = "/"
+
+  [[services.listeners]]
+  name       = "app-api"
+  port       = 8887
+  portEnv    = "APP_API_PORT"
+  healthPath = "/health"
+
+# ---- service: live (samograph-live unit) ----
+# Single bun process (apps/ws-hub/dev-live-server.ts) binding three ports:
+#   ws-hub   WS_HUB_PORT  = 8888   WebSocket hub for real-time call streams
+#   ingest   INGEST_PORT  = 8189   Recall webhook ingest endpoint
+#   dev-ctrl DEV_CTRL_PORT = 8790  Internal dev-inject controller (NOT routed externally)
+# Confirmed live: ss -tlnp shows :8888 and :8189 (bun pid 1552, samograph-live cgroup).
+
+[[services]]
+name      = "live"
+unit      = "samograph-live"
+# PROD ExecStart confirmed READ-ONLY from VM (116.203.249.135, 2026-07-10):
+#   systemctl cat samograph-live → ExecStart=/usr/local/bin/bun apps/ws-hub/dev-live-server.ts
+# (dev-live-server.ts combines ingest + ws-hub in one process with assertNoDevDefaultSecrets guard;
+#  it is the prod entrypoint for the live unit despite the "dev" prefix in the filename.)
+execStart = "/usr/local/bin/bun apps/ws-hub/dev-live-server.ts"
+
+  [[services.listeners]]
+  name       = "ws-hub"
+  port       = 8888
+  portEnv    = "WS_HUB_PORT"
+  healthPath = "/health"
+
+  [[services.listeners]]
+  name       = "ingest"
+  port       = 8189
+  portEnv    = "INGEST_PORT"
+  healthPath = "/health"
+
+  [[services.listeners]]
+  name    = "dev-ctrl"
+  port    = 8790
+  portEnv = "DEV_CTRL_PORT"
+  routed  = false              # internal-only; Caddy never routes public traffic here
+
+# ---- routes (Caddy first-match order; matches prod /etc/caddy/sites.d/00-main-samograph.caddy) ----
+
+[[routes]]
+name        = "stream"
+matchRegexp = "^/calls/[^/]+/stream$"
+to          = "ws-hub"
+
+[[routes]]
+matchPath   = "/webhook*"
+to          = "ingest"
+
+[[routes]]
+name        = "transcript"
+matchRegexp = "^/calls/[^/]+/transcript"
+to          = "ws-hub"
+
+[[routes]]
+matchPath   = "/__dev*"
+[routes.respond]
+status = 404
+body   = "not found"

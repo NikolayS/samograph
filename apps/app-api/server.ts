@@ -16,10 +16,11 @@
  * `getRecallClient` / `isRecallLive` / `liveRecallClient` / `liveBotStatusSource`
  * — which own the key internally.
  *
- * NOTE (infra): repointing the VM systemd unit / start-preview.sh from
- * `dev-server.ts` to THIS file (and setting `SAMO_ENV=prod` + real secrets) is a
- * separate infra step. Until then prod keeps running `dev-server.ts` and keeps
- * stripping `Secure`.
+ * NOTE (infra): the cutover from dev-server.ts to this file (+ SAMO_ENV=prod +
+ * real secrets in envFile) is done — start-prod.sh on the VM now launches this
+ * file. start-preview.sh (the old dev-launcher) is superseded by samohost's
+ * per-service execStart declared in .samohost.toml; it should be removed from
+ * /opt/samograph/ on next hostprep.
  */
 import { createAppApi } from "./app.ts";
 import {
