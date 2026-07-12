@@ -4,7 +4,7 @@
 
 samograph lets your AI agent (Claude Code, Codex, and others) join Zoom and Google Meet calls as an active participant — listening, responding, and taking action in real time.
 
-Give this CLI, a meeting URL, and the needed tokens to your AI agent. samograph handles the meeting plumbing through Recall.ai: joining calls, streaming the live transcript, sending explicit chat messages, and inspecting the current call view on demand.
+Give your AI agent this CLI, a meeting URL, and the required tokens. samograph handles the meeting plumbing through Recall.ai: joining calls, streaming the live transcript, sending explicit chat messages, and inspecting the current call view on demand.
 
 ## Setup
 
@@ -12,7 +12,7 @@ Requirements:
 
 - Bun.
 - `RECALL_API_KEY`.
-- `ngrok` installed and authenticated (free plan is enough for transcription; the presence camera needs an interstitial-free tunnel — see Dynamic Bot Presence). `join` starts and manages ngrok automatically — you don't run it yourself. ngrok is optional when using `--webhook-base` with an external tunnel (localtunnel, cloudflared, etc.).
+- `ngrok` installed and authenticated (free plan is enough for transcription; the presence camera needs an interstitial-free tunnel — see Dynamic bot presence). `join` starts and manages ngrok automatically — you don't run it yourself. ngrok is optional when using `--webhook-base` with an external tunnel (localtunnel, cloudflared, etc.).
 
 Install the CLI from npm:
 
@@ -22,9 +22,9 @@ export RECALL_API_KEY=...
 samograph join "https://meet.google.com/..." --name Leo
 ```
 
-During development use `bun install`, `bun run build`, then `bun run samograph ...`.
+During development, use `bun install`, `bun run build`, then `bun run samograph ...`.
 
-## What It Provides
+## What it provides
 
 samograph gives an AI agent a small set of meeting tools:
 
@@ -59,30 +59,30 @@ samograph watch/notes/chat/frame
 
 ## Integration
 
-`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for webhooks and transcription, but its browser interstitial blocks the presence camera page — `join` then warns and joins without the camera (see Dynamic Bot Presence). Alternatives: `--tunnel cloudflared` starts a free cloudflared quick tunnel instead of ngrok, or pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning one entirely; localtunnel has the same interstitial limitation.
+`join` starts a local callback server and exposes it with `ngrok http` so Recall.ai can deliver HTTPS/WSS events back to your machine. The free ngrok HTTP plan is enough for webhooks and transcription, but its browser interstitial blocks the presence camera page — `join` then warns and joins without the camera (see Dynamic bot presence). Alternatives: `--tunnel cloudflared` starts a free cloudflared quick tunnel instead of ngrok, or pass `--webhook-base <URL>` to use an existing external tunnel (localtunnel, cloudflared, etc.) and skip spawning one entirely; localtunnel has the same interstitial limitation.
 
 ngrok TCP is only needed for the optional RTMP path (`--rtmp`) and requires a credit/debit card on file at ngrok.com (free plan — the card is not charged). The standard WebSocket frame path does not need TCP or card verification.
 
 Webhook, frame, and presence routes are token-protected, and default runtime files stay under `~/.samograph/`.
 
-## Tunnel Health
+## Tunnel health
 
 A tunnel that stops relaying requests is worse than no tunnel: the bot would sit in the meeting while the transcript silently stays empty (this is exactly what an ngrok free-account request-limit error, `ERR_NGROK_727`, looks like mid-call). samograph treats webhook reachability as core:
 
 - **join refuses when the tunnel is dead.** After the public URL is known, `join` fetches `<public-url>/health` with a one-time nonce and requires its own server's answer back. On failure it exits with the ngrok error code when one is reported (e.g. `ERR_NGROK_727: account HTTP request limit exceeded`) instead of joining a call it cannot hear. The presence camera preflight still merely degrades — the camera is optional, webhooks are not.
 - **a mid-call watchdog warns in the transcript stream.** The callback server re-checks the tunnel every 60 s. After 2 consecutive failures it appends a line like `[2026-06-11 17:03:05] SAMOGRAPH-WARNING: tunnel unreachable (ERR_NGROK_727) - transcript may be incomplete; rejoin with --tunnel cloudflared or --webhook-base` to the live transcript — so an agent following `samograph watch` sees it immediately — and mirrors it to stderr. It warns once per outage and writes a single `SAMOGRAPH-WARNING: tunnel recovered` line when the tunnel comes back.
-- **quota math.** The presence camera page is loaded by Recall through the tunnel, so its same-origin `/presence.json` polls also count against tunnel request quotas: at the old fixed 1 s poll that alone was ~3600 requests/hour. The page now polls at 1 s only while the presence snapshot is changing and backs off to 5 s after 30 s of no changes; the watchdog adds ~60/hour. If you are on a free ngrok account, prefer `--tunnel cloudflared` (no request limits) for long or camera-heavy calls.
+- **quota math.** The presence camera page is loaded by Recall through the tunnel, so its same-origin `/presence.json` polls also count against tunnel request quotas: at the old fixed 1 s poll, that alone was ~3600 requests/hour. The page now polls at 1 s only while the presence snapshot is changing and backs off to 5 s after 30 s of no changes; the watchdog adds ~60/hour. If you are on a free ngrok account, prefer `--tunnel cloudflared` (no request limits) for long or camera-heavy calls.
 
-## Transcript Health
+## Transcript health
 
-A healthy tunnel that delivers video frames but no transcript is the silent killer: the bot reports `in_call_recording`, the presence camera shows "listening", and the agent believes it is following along — while the transcription provider connection has actually failed inside Recall (e.g. Deepgram `provider_connection_failed` from an expired key or exhausted credits) and **zero** transcript lines are produced. To the agent this is indistinguishable from "nobody has spoken yet." samograph treats transcript-stream health as core, mirroring the tunnel watchdog:
+A healthy tunnel that delivers video frames but no transcript is the most insidious failure: the bot reports `in_call_recording`, the presence camera shows "listening", and the agent believes it is following along — while the transcription provider connection has actually failed inside Recall (e.g. Deepgram `provider_connection_failed` from an expired key or exhausted credits) and **zero** transcript lines are produced. To the agent this is indistinguishable from "nobody has spoken yet." samograph treats transcript-stream health as core, mirroring the tunnel watchdog:
 
 - **a mid-call transcript watchdog warns in the transcript stream.** The callback server polls Recall's recording transcript status every 20 s. The moment it reports `failed`, it appends a line like `[2026-06-22 09:46:31] SAMOGRAPH-WARNING: transcript stream failed (provider_connection_failed) - no transcript is being produced; check the transcription provider key/credits in the Recall dashboard` to the live transcript — so an agent following `samograph watch` sees it immediately — and mirrors it to stderr. It warns once per outage and writes a single `transcript stream recovered` line if it comes back.
 - **`status` shows the stream state.** `samograph status` prints `Transcript stream: <code>` so a `0`-line transcript is never ambiguous between "nobody spoke" and "the provider connection died."
 
-Provider failures are usually account-side (key/credits/plan in the Recall workspace) and not something samograph can prevent — so it makes them loud instead of letting the bot sit silently deaf.
+Provider failures are usually account-side (key/credits/plan in the Recall workspace) and not something samograph can prevent — so it makes them loud instead of letting the bot sit in the call, unable to hear.
 
-## Agent Workflow
+## Agent workflow
 
 ```bash
 samograph join "https://meet.google.com/..." --name Leo --dict postgresfm
@@ -107,13 +107,13 @@ Run `watch` immediately after `join` and keep it running for the whole call. It 
 
 Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session.
 
-## Dynamic Bot Presence
+## Dynamic bot presence
 
-`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samograph-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samograph presence` sends in a header. The page starts as `listening` and refreshes itself from the callback server every second while the presence snapshot is changing, backing off to every 5 seconds after 30 seconds without changes (the polls travel through the public tunnel, so this preserves tunnel request quota — see Tunnel Health). Pick the background mode with `join --presence-bg <sphere|field|static|cycle>` (`sphere` is the default; `static` is the cheapest to render; `cycle` alternates between field and sphere; unknown values fall back to `sphere`). The mode is fixed at join time.
+`join` gives the Recall bot a token-protected local camera page through the same public tunnel used for webhooks. The page URL carries a read-only token (valid only for viewing the page; `/presence.json` requires the same token in the `X-Samograph-Presence-Token` header, which the page sends when polling); presence updates require a separate write token that `join` keeps in local state and `samograph presence` sends in a header. The page starts as `listening` and refreshes itself from the callback server every second while the presence snapshot is changing, backing off to every 5 seconds after 30 seconds without changes (the polls travel through the public tunnel, so this preserves tunnel request quota — see Tunnel health). Pick the background mode with `join --presence-bg <sphere|field|static|cycle>` (`sphere` is the default; `static` is the cheapest to render; `cycle` alternates between field and sphere; unknown values fall back to `sphere`). The mode is fixed at join time.
 
 The presence camera requires the tunnel to serve the page cleanly to a browser. Free-ngrok and localtunnel show an interstitial page to browser user agents, which blocks the camera: `join` detects this in a preflight check, prints a warning, and joins **without** the presence camera — transcription, chat, and frames are unaffected, but `samograph presence` is unavailable for that call. Use a paid/clean tunnel (e.g. a paid ngrok plan or cloudflared) for the presence camera, or pass `join --no-presence` to skip the camera and the preflight entirely.
 
-Update it from the agent loop:
+Update the presence state from the agent loop:
 
 ```bash
 samograph presence listening
@@ -125,7 +125,7 @@ samograph presence idle
 
 Presence is in-memory runtime state. It is meant for lightweight meeting signaling, not persistence.
 
-## Google Doc Notes
+## Google Doc notes
 
 `notes` follows GitLab-style live doc meetings: the doc is an agenda and collaboration surface, not a transcript dump. The agent watches the transcript, decides what matters, then writes concise points into the right section.
 
@@ -148,7 +148,7 @@ samograph notes transcript --from-start
 
 ## Frames
 
-Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samograph keeps the latest frames in memory, indexed by source, and only writes to disk when you call `frame`.
+Frame capture is on by default. Recall sends separate PNG frames over WebSocket; samograph keeps the latest frames in memory, indexed by source, and writes to disk only when you call `frame`.
 
 `frame` fails with `FRAME_UNAVAILABLE` if no frame has arrived yet — call it after the bot has been in the meeting for a few seconds.
 
@@ -177,10 +177,10 @@ samograph frame --archive
 
 Archive filenames include call id, UTC timestamp, source type, and participant id. Source type and participant id come from the Recall event metadata and may be `unknown` if Recall does not provide them.
 
-## Important Flags
+## Important flags
 
 - `join --no-ws-video` - disable the default WebSocket frame path (e.g. when using RTMP instead).
-- `join --tunnel cloudflared` - start a free cloudflared quick tunnel instead of ngrok (binary from `PATH` or `CLOUDFLARED_BIN`). Recommended when ngrok hits its free-tier request limit (`ERR_NGROK_727`); see Tunnel Health. Default: `--tunnel ngrok`.
+- `join --tunnel cloudflared` - start a free cloudflared quick tunnel instead of ngrok (binary from `PATH` or `CLOUDFLARED_BIN`). Recommended when ngrok hits its free-tier request limit (`ERR_NGROK_727`); see Tunnel health. Default: `--tunnel ngrok`.
 - `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting one. Mutually exclusive with `--tunnel`. E.g. run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here. The join-time health round-trip still verifies it relays requests.
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
 - `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
@@ -216,7 +216,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.
-- `screenshot [--out FILE]` - capture the local Mac screen with `screencapture`; use as a fallback when frame is not available.
+- `screenshot [--out FILE]` - capture the local Mac screen with `screencapture`; use it as a fallback when no call frame is available.
 - `leave` - remove bot, stop local processes, and clean state.
 - `dicts` - list keyword dictionaries.
 
@@ -230,7 +230,7 @@ Runtime files live under `~/.samograph/` by default:
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.
 
-## Environment Variables
+## Environment variables
 
 `join` sets these automatically when it spawns the callback server (`_serve`); set them yourself only when running `samograph _serve` manually behind your own tunnel:
 

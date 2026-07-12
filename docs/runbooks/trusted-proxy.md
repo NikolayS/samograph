@@ -50,7 +50,7 @@ trusted proxy that overwrites XFF. That guarantee is what this runbook records.
 
 ## Operator verification
 
-Confirm, on the origin app-api receives:
+Confirm the following at the origin:
 
 - app-api's origin is **not** routable from the public internet (only the edge
   can reach it — firewall / private network / origin auth).
