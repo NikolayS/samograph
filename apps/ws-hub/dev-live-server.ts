@@ -47,6 +47,8 @@ assertNoDevDefaultSecrets(process.env, WS_HUB_SIGNING_SECRETS);
 const WS_HUB_PORT = Number(process.env.WS_HUB_PORT ?? 8788);
 const INGEST_PORT = Number(process.env.INGEST_PORT ?? 8089);
 const DEV_CTRL_PORT = Number(process.env.DEV_CTRL_PORT ?? 8790);
+// Caddy is the only public ingress on hosted environments.
+const LISTEN_HOST = process.env.HOST ?? "127.0.0.1";
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "dev-only-session-secret-change-me";
 const DEV_TOKEN_SECRET = process.env.TOKEN_SECRET ?? "dev-only-token-secret-change-me-abcd";
 const DEV_WEBHOOK_SECRET = process.env.RECALL_WEBHOOK_SECRET ?? "dev-only-webhook-secret-change-me";
@@ -91,6 +93,7 @@ const stack = composeLiveStack({
   registry,
   wsPort: WS_HUB_PORT,
   ingestPort: INGEST_PORT,
+  hostname: LISTEN_HOST,
 });
 
 // ── OUTAGE watchdog (Story 5, §4.5/§4.6): probe the public ingress /health ────
@@ -146,6 +149,7 @@ async function devSay(callId: string, speaker: string, text: string): Promise<vo
 
 const ctrl = Bun.serve({
   port: DEV_CTRL_PORT,
+  hostname: LISTEN_HOST,
   async fetch(req): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/health") return new Response("ok");

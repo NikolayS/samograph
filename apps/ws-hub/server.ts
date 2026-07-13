@@ -112,7 +112,7 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
 
   const server = Bun.serve<StreamSocketData>({
     port: deps.port ?? 0,
-    hostname: deps.hostname,
+    hostname: deps.hostname ?? "127.0.0.1",
     // Long silences are normal on a live call; hold the socket at Bun's max
     // idleTimeout (255 s). A client reconnect carries `?since_seq` so an idle
     // close loses nothing — a server-side keepalive ping for arbitrarily long

@@ -154,7 +154,7 @@ export function startIngestServer(deps: IngestServerDeps): IngestServerHandle {
   const app = createIngestApp(deps);
   const server = Bun.serve({
     port: deps.port ?? 0,
-    hostname: deps.hostname,
+    hostname: deps.hostname ?? "127.0.0.1",
     fetch: (req) => app(req),
   });
   const port = server.port ?? deps.port ?? 0;

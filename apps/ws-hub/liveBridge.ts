@@ -136,7 +136,7 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
     caps,
     readCaps,
     port: deps.wsPort,
-    hostname: deps.hostname,
+    hostname: deps.hostname ?? "127.0.0.1",
     recheckIntervalMs: deps.recheckIntervalMs,
   });
 

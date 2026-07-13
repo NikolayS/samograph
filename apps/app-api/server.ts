@@ -79,6 +79,9 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
   assertNoDevDefaultSecrets(env, APP_API_SIGNING_SECRETS);
 
   const port = Number(env.APP_API_PORT ?? 8787);
+  // Caddy is the public ingress; the application socket must not be exposed
+  // directly on the VM network interface.
+  const hostname = env.HOST ?? "127.0.0.1";
   const webOrigin = env.WEB_ORIGIN ?? "https://samograph.dev";
   // Guaranteed non-dev-default + present by the fail-closed assert above.
   const sessionSecret = env.SESSION_SECRET as string;
@@ -177,7 +180,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     devShortcuts: undefined,
   });
 
-  const server = Bun.serve({ port, fetch: api.fetch });
+  const server = Bun.serve({ port, hostname, fetch: api.fetch });
   console.log(
     `\n[app-api] PROD server listening on http://localhost:${server.port} (SAMO_ENV=prod)\n` +
       `  routes: GET /health | POST /auth/magic-link | GET /auth/callback |\n` +
