@@ -27,6 +27,8 @@ serviceUnit       = "samograph-web"                  # legacy synthesis source (
 mainHost          = "samograph.samo.team"            # PROD public host
 mainListen        = "cp-http80"                      # control-plane HTTP:80 (TLS terminated upstream by CF)
 releaseTagPattern = "v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9]*" # vYYYYMMDD.N only; CI enforces the exact numeric shape
+releaseTagFormat  = "date"                           # valid-calendar vYYYYMMDD.N, N >= 1
+releaseCiWorkflow = ".github/workflows/ci.yml"       # only this exact workflow may green-light the release SHA
 envFile           = "/opt/samograph/app/.env"        # SAMO_ENV=prod + real secrets (samohost never touches it)
 envDbVars         = ["DATABASE_URL"]                 # rewritten to the DBLab clone in previews (never touches prod DB)
 previewDbBackend  = "dblab"                          # previews = DBLab thin clones (owner non-negotiable)

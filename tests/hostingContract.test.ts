@@ -47,6 +47,8 @@ describe("samohost hosting contract", () => {
     expect(manifest).toContain(
       'releaseTagPattern = "v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9]*"',
     );
+    expect(manifest).toContain('releaseTagFormat  = "date"');
+    expect(manifest).toContain('releaseCiWorkflow = ".github/workflows/ci.yml"');
     expect(workflow).toContain('^v[0-9]{8}\\.[1-9][0-9]*$');
     for (const productionOnlyName of [
       "RECALL_LIVE",
