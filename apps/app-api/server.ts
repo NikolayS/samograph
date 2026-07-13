@@ -52,6 +52,7 @@ import {
 import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
 import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
 import { createCachedFunnelSource } from "./metrics/funnelSource.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
 
 /**
  * Prod email fallback: if `RESEND_API_KEY` is not configured there is NO dev
@@ -81,7 +82,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
   const port = Number(env.APP_API_PORT ?? 8787);
   // Caddy is the public ingress; the application socket must not be exposed
   // directly on the VM network interface.
-  const hostname = env.HOST ?? "127.0.0.1";
+  const hostname = resolveLoopbackHostname(env.HOST);
   const webOrigin = env.WEB_ORIGIN ?? "https://samograph.dev";
   // Guaranteed non-dev-default + present by the fail-closed assert above.
   const sessionSecret = env.SESSION_SECRET as string;

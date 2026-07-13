@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start --hostname ${HOST:-127.0.0.1}",
+    "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

@@ -47,6 +47,7 @@ import {
 } from "../bot-orchestrator/statusPoller.ts";
 import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
 import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
 
 /**
  * DEV-ONLY guard: this file carries the local shortcuts (Secure-strip, dev
@@ -102,6 +103,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
   assertDevEnv(env);
 
   const PORT = Number(env.APP_API_PORT ?? 8787);
+  const HOST = resolveLoopbackHostname(env.HOST);
   const WEB_ORIGIN = env.WEB_ORIGIN ?? "http://localhost:3000";
   const SESSION_SECRET = env.SESSION_SECRET ?? "dev-only-session-secret-change-me";
   const MAGIC_KID = env.MAGIC_LINK_KID ?? "dev-kid-1";
@@ -205,7 +207,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
     devShortcuts: { lastMagicLink: devLastMagicLink, stripSecureCookie: devCookieFix },
   });
 
-  const server = Bun.serve({ port: PORT, fetch: api.fetch });
+  const server = Bun.serve({ port: PORT, hostname: HOST, fetch: api.fetch });
 
   const recallMode = isRecallLive()
     ? `REAL (RECALL_LIVE) → bot joins; webhook base ${WEBHOOK_BASE ?? "(regional tunnel default)"}`

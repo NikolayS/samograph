@@ -1,22 +1,24 @@
 /**
- * LOCAL-ONLY composed LIVE-TRANSPORT server (#99) — ingest + ws-hub in ONE
- * process around a shared Hub, so a human can watch a live transcript stream
- * locally on the deterministic fake (no real Recall, no tunnel, no tokens).
+ * Composed LIVE-TRANSPORT server (#99) — ingest + ws-hub in ONE process around
+ * a shared Hub. Production and previews use its authenticated ingest/ws paths;
+ * explicit local dev additionally gets the unauthenticated transcript injector.
  *
- * This is the live analog of `apps/app-api/dev-server.ts`: an INTEGRATION SEAM
- * that does not exist in production (where ingest and ws-hub are separate
- * processes joined by `pg_notify`/LISTEN — deferred while Bun's SQL has no LISTEN
- * consumer). It is intentionally NOT a production entrypoint:
+ * This currently is the production entrypoint for the combined live unit while
+ * the split `pg_notify`/LISTEN consumer is deferred. Consequently:
  *
- *   - the per-region webhook secret is an obvious DEV-ONLY constant;
- *   - `POST /__dev/say {call_id, speaker, text}` injects a transcript line
+ *   - production/preview require a real per-region webhook secret, while local
+ *     dev may use the obvious committed fallback;
+ *   - only SAMO_ENV=dev binds `POST /__dev/say`; prod/preview bind no dev-control
+ *     listener at all;
+ *   - in dev, `POST /__dev/say {call_id, speaker, text}` injects a transcript line
  *     WITHOUT webhook auth (a human can't sign one — the ingest_secret plaintext
  *     is never stored), driving the REAL §5.4 pipeline + §98 fan-in so the line
  *     streams to every connected per-call page;
  *   - session cookies are verified with the SAME `SESSION_SECRET` as the app-api
  *     dev-server (share-token parity with app-api is out of scope for the demo).
  *
- * Ports: ws-hub (stream) :8788, ingest (webhook) :8089, dev control :8790.
+ * Ports: ws-hub (stream) :8788, ingest (webhook) :8089, plus dev control :8790
+ * only under SAMO_ENV=dev.
  */
 import { connect, setTenant } from "../../packages/shared/db/index.ts";
 import { encodeSignal, type TranscriptFrame, type TranscriptPublisher } from "../../packages/shared/transcript/publisher.ts";
@@ -35,6 +37,8 @@ import {
   usingDevDefaultSecrets,
   WS_HUB_SIGNING_SECRETS,
 } from "../../packages/shared/config/env.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
+import { shouldStartDevControl } from "./devControl.ts";
 
 // ── #64 fail-closed: this file is ALSO a live prod entrypoint (systemd). In
 // prod (SAMO_ENV≠dev) hard-error BEFORE binding a port if any signing secret
@@ -48,7 +52,7 @@ const WS_HUB_PORT = Number(process.env.WS_HUB_PORT ?? 8788);
 const INGEST_PORT = Number(process.env.INGEST_PORT ?? 8089);
 const DEV_CTRL_PORT = Number(process.env.DEV_CTRL_PORT ?? 8790);
 // Caddy is the only public ingress on hosted environments.
-const LISTEN_HOST = process.env.HOST ?? "127.0.0.1";
+const LISTEN_HOST = resolveLoopbackHostname(process.env.HOST);
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "dev-only-session-secret-change-me";
 const DEV_TOKEN_SECRET = process.env.TOKEN_SECRET ?? "dev-only-token-secret-change-me-abcd";
 const DEV_WEBHOOK_SECRET = process.env.RECALL_WEBHOOK_SECRET ?? "dev-only-webhook-secret-change-me";
@@ -147,49 +151,58 @@ async function devSay(callId: string, speaker: string, text: string): Promise<vo
   for (const frame of captured) await stack.fanIn.deliver(encodeSignal(frame));
 }
 
-const ctrl = Bun.serve({
-  port: DEV_CTRL_PORT,
-  hostname: LISTEN_HOST,
-  async fetch(req): Promise<Response> {
-    const url = new URL(req.url);
-    if (url.pathname === "/health") return new Response("ok");
-    if (req.method === "POST" && url.pathname === "/__dev/say") {
-      let body: { call_id?: string; speaker?: string; text?: string };
-      try {
-        body = (await req.json()) as typeof body;
-      } catch {
-        return Response.json({ error: "expected JSON {call_id, speaker, text}" }, { status: 400 });
-      }
-      if (!body.call_id || !body.text) {
-        return Response.json({ error: "call_id and text are required" }, { status: 400 });
-      }
-      try {
-        await devSay(body.call_id, body.speaker ?? "Speaker", body.text);
-        return Response.json({ ok: true });
-      } catch (err) {
-        return Response.json({ error: String((err as Error).message) }, { status: 404 });
-      }
-    }
-    return new Response("not found", { status: 404 });
-  },
-});
+const ctrl = shouldStartDevControl(process.env)
+  ? Bun.serve({
+      port: DEV_CTRL_PORT,
+      hostname: LISTEN_HOST,
+      async fetch(req): Promise<Response> {
+        const url = new URL(req.url);
+        if (url.pathname === "/health") return new Response("ok");
+        if (req.method === "POST" && url.pathname === "/__dev/say") {
+          let body: { call_id?: string; speaker?: string; text?: string };
+          try {
+            body = (await req.json()) as typeof body;
+          } catch {
+            return Response.json({ error: "expected JSON {call_id, speaker, text}" }, { status: 400 });
+          }
+          if (!body.call_id || !body.text) {
+            return Response.json({ error: "call_id and text are required" }, { status: 400 });
+          }
+          try {
+            await devSay(body.call_id, body.speaker ?? "Speaker", body.text);
+            return Response.json({ ok: true });
+          } catch (err) {
+            return Response.json({ error: String((err as Error).message) }, { status: 404 });
+          }
+        }
+        return new Response("not found", { status: 404 });
+      },
+    })
+  : undefined;
 
-console.log(
-  `\n[live] composed ingest + ws-hub on a shared Hub (LOCAL-ONLY, fake)\n` +
-    `  ws-hub stream : ${stack.wsHub.url}/calls/:id/stream  (WS) + /calls/:id/transcript (REST)\n` +
-    `  ingest webhook: ${stack.ingest.url}/webhook  (signed fake webhooks)\n` +
-    `  metrics       : ${stack.ingest.url}/metrics  (§5.11 Prometheus exposition)\n` +
-    `  dev control   : http://localhost:${ctrl.port}/__dev/say  (POST {call_id, speaker, text})\n` +
-    `  watchdog      : region '${REGION_ID}' probing ${PROBE_BASE}/health every 20s ` +
-    `(leader=${watchdog.isLeader() ? "yes" : "pending first tick"}; §4.5 outage → SAMOGRAPH-WARNING + degraded banner)\n` +
-    `  Recall: in-repo deterministic FAKE — no real bot, no tunnel\n\n` +
-    `  Watch a call live:\n` +
+const devControlSummary = ctrl
+  ? `  dev control   : http://${LISTEN_HOST}:${ctrl.port}/__dev/say  (DEV ONLY)\n`
+  : "  dev control   : disabled (prod/preview)\n";
+const devControlInstructions = ctrl
+  ? `  Watch a call live:\n` +
     `    1. create a call via the app-api dev-server, copy its <call_id>\n` +
     `    2. open the per-call page (web) — its WS connects to the ws-hub above\n` +
     `    3. inject a line:\n` +
-    `       curl -s http://localhost:${ctrl.port}/__dev/say \\\n` +
+    `       curl -s http://${LISTEN_HOST}:${ctrl.port}/__dev/say \\\n` +
     `         -H 'content-type: application/json' \\\n` +
-    `         -d '{"call_id":"<call_id>","speaker":"Alice","text":"hello from the live stream"}'\n`,
+    `         -d '{"call_id":"<call_id>","speaker":"Alice","text":"hello from the live stream"}'\n`
+  : "";
+
+console.log(
+  `\n[live] composed ingest + ws-hub on a shared Hub\n` +
+    `  ws-hub stream : ${stack.wsHub.url}/calls/:id/stream  (WS) + /calls/:id/transcript (REST)\n` +
+    `  ingest webhook: ${stack.ingest.url}/webhook  (signed fake webhooks)\n` +
+    `  metrics       : ${stack.ingest.url}/metrics  (§5.11 Prometheus exposition)\n` +
+    devControlSummary +
+    `  watchdog      : region '${REGION_ID}' probing ${PROBE_BASE}/health every 20s ` +
+    `(leader=${watchdog.isLeader() ? "yes" : "pending first tick"}; §4.5 outage → SAMOGRAPH-WARNING + degraded banner)\n` +
+    `  Recall: ${process.env.RECALL_LIVE === "1" ? "REAL" : "in-repo deterministic FAKE"}\n\n` +
+    devControlInstructions,
 );
 if (usingDevSecrets) {
   console.warn(

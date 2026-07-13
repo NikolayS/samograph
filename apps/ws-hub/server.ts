@@ -33,6 +33,7 @@ import {
 import { createTranscriptHandler, createTranscriptTextHandler } from "./transcript-http.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { stopServerBounded } from "../../packages/shared/serverLifecycle.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
 
 /** What an upgraded socket carries until {@link WebSocketHandler.open} wires it. */
 interface StreamSocketData {
@@ -93,6 +94,7 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
   // unbounded full-transcript reads while the WS surface is capped (§5.7). One
   // instance shared by both handlers; default so the surface is never uncapped.
   const restCaps = deps.restCaps ?? new RequestRateCaps();
+  const hostname = resolveLoopbackHostname(deps.hostname);
 
   const transcriptHandler = createTranscriptHandler({
     sql: deps.sql,
@@ -112,7 +114,7 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
 
   const server = Bun.serve<StreamSocketData>({
     port: deps.port ?? 0,
-    hostname: deps.hostname ?? "127.0.0.1",
+    hostname,
     // Long silences are normal on a live call; hold the socket at Bun's max
     // idleTimeout (255 s). A client reconnect carries `?since_seq` so an idle
     // close loses nothing — a server-side keepalive ping for arbitrarily long
