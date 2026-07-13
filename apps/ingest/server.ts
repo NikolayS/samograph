@@ -42,6 +42,7 @@ import {
 import { metricsHttpHandler } from "../../packages/shared/observe/metrics-http.ts";
 import type { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
 import type { FunnelSnapshot } from "../../packages/shared/observe/funnel.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
 
 /** What `buildIngestDispatch` needs to compose the two §93 dispatch subscribers. */
 export interface IngestDispatchDeps {
@@ -152,9 +153,10 @@ export interface IngestServerHandle {
 /** Start the ingest HTTP service over a composed {@link createIngestApp} handler. */
 export function startIngestServer(deps: IngestServerDeps): IngestServerHandle {
   const app = createIngestApp(deps);
+  const hostname = resolveLoopbackHostname(deps.hostname);
   const server = Bun.serve({
     port: deps.port ?? 0,
-    hostname: deps.hostname,
+    hostname,
     fetch: (req) => app(req),
   });
   const port = server.port ?? deps.port ?? 0;

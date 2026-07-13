@@ -3,7 +3,7 @@
 # NOTE: this file is INERT until an operator runs, ON THE CONTROL PLANE:
 #   samohost app register samograph --from-toml .samohost.toml --force
 # That is the one command that flips deploys to the 3-tier model:
-#   v* release tag  -> production   (samograph.samo.team)
+#   vYYYYMMDD.N tag -> production   (samograph.samo.team)
 #   merge to main   -> main preview  (samograph-main.samo.cat)
 #   dev-branch push -> branch preview (samograph-<branch>.samo.cat), each a DBLab clone
 # (Requires the samohost release-tag feature — NikolayS/samohost#132 / PR #133.)
@@ -26,11 +26,29 @@ healthUrl         = "http://127.0.0.1:8887/health"   # app-api prod port; return
 serviceUnit       = "samograph-web"                  # legacy synthesis source (kept for back-compat)
 mainHost          = "samograph.samo.team"            # PROD public host
 mainListen        = "cp-http80"                      # control-plane HTTP:80 (TLS terminated upstream by CF)
-releaseTagPattern = "v*"                             # PROD ships ONLY on a new v* release tag (requires samohost#132)
+releaseTagPattern = "v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9]*" # vYYYYMMDD.N only; CI enforces the exact numeric shape
+releaseTagFormat  = "date"                           # valid-calendar vYYYYMMDD.N, N >= 1
+releaseCiWorkflow = ".github/workflows/ci.yml"       # only this exact workflow may green-light the release SHA
 envFile           = "/opt/samograph/app/.env"        # SAMO_ENV=prod + real secrets (samohost never touches it)
 envDbVars         = ["DATABASE_URL"]                 # rewritten to the DBLab clone in previews (never touches prod DB)
 previewDbBackend  = "dblab"                          # previews = DBLab thin clones (owner non-negotiable)
 dbBackend         = "none"                           # prod DB is durable (samograph_prod), not samohost-cloned
+rlsUrlVar         = "DATABASE_URL"                   # doctor probes the runtime identity, never a separate admin URL
+rlsNonSuperuser   = true                              # production/preview runtime DB role must not be superuser/BYPASSRLS
+
+# Preview env files copy only the clone-rewritten DB URL. All signing secrets
+# are generated per preview below; production integrations and operator creds
+# are explicitly absent even if they exist in the production template.
+previewEnvAllowlist = ["DATABASE_URL"]
+previewEnvUnset = [
+  "HOST", "WEB_ORIGIN",
+  "RECALL_LIVE", "RECALL_AI", "RECALL_API_KEY", "PUBLIC_WEBHOOK_BASE",
+  "RESEND_API_KEY", "MAGIC_LINK_FROM",
+  "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_DOC_ID",
+  "SAMOGRAPH_PUBLIC_BASE",
+  "SAMOGRAPH_FRAME_TOKEN", "SAMOGRAPH_PRESENCE_TOKEN",
+  "SAMOGRAPH_PRESENCE_WRITE_TOKEN", "SAMOGRAPH_WEBHOOK_TOKEN",
+]
 
 # PR-B: auto-generate these signing secrets per preview env (stored in 0600 secrets.env as EnvironmentFile).
 # Exact names verified against packages/shared/config/env.ts APP_API_SIGNING_SECRETS +
@@ -54,9 +72,10 @@ defaultListener   = "web"
 name      = "web"
 unit      = "samograph-web"
 # PROD ExecStart confirmed READ-ONLY from VM (116.203.249.135, 2026-07-10):
-#   systemctl cat samograph-web → ExecStart=/opt/samograph/start-prod.sh
-# start-prod.sh starts: bun apps/app-api/server.ts (bg) + bun run start in apps/web (fg).
-execStart = "/opt/samograph/start-prod.sh"
+# The launcher is part of the checked-out release SHA. /usr/bin/bash is absolute
+# for systemd; scripts/start-hosted-web.sh resolves under WorkingDirectory, which
+# samohost sets to appDir in prod and the isolated checkout in previews.
+execStart = "/usr/bin/bash scripts/start-hosted-web.sh"
 
   [[services.listeners]]
   name       = "web"
@@ -71,10 +90,11 @@ execStart = "/opt/samograph/start-prod.sh"
   healthPath = "/health"
 
 # ---- service: live (samograph-live unit) ----
-# Single bun process (apps/ws-hub/dev-live-server.ts) binding three ports:
+# Single bun process (apps/ws-hub/dev-live-server.ts) binding two hosted ports:
 #   ws-hub   WS_HUB_PORT  = 8888   WebSocket hub for real-time call streams
 #   ingest   INGEST_PORT  = 8189   Recall webhook ingest endpoint
-#   dev-ctrl DEV_CTRL_PORT = 8790  Internal dev-inject controller (NOT routed externally)
+# The dev-control listener exists only under explicit SAMO_ENV=dev and is never
+# part of a production or preview service manifest.
 # Confirmed live: ss -tlnp shows :8888 and :8189 (bun pid 1552, samograph-live cgroup).
 
 [[services]]
@@ -97,12 +117,6 @@ execStart = "/usr/local/bin/bun apps/ws-hub/dev-live-server.ts"
   port       = 8189
   portEnv    = "INGEST_PORT"
   healthPath = "/health"
-
-  [[services.listeners]]
-  name    = "dev-ctrl"
-  port    = 8790
-  portEnv = "DEV_CTRL_PORT"
-  routed  = false              # internal-only; Caddy never routes public traffic here
 
 # ---- routes (Caddy first-match order; matches prod /etc/caddy/sites.d/00-main-samograph.caddy) ----
 

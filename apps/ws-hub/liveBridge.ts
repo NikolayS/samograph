@@ -56,6 +56,7 @@ import { startWsHubServer, stopServerBounded, type WsHubServerHandle } from "./s
 import { metricsHttpHandler } from "../../packages/shared/observe/metrics-http.ts";
 import type { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
 import type { FunnelSnapshot } from "../../packages/shared/observe/funnel.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
 
 /** Collaborators for {@link composeLiveStack}. */
 export interface LiveStackDeps {
@@ -108,6 +109,7 @@ export interface LiveStackHandle {
 
 /** Stand up the composed ingest + ws-hub live stack on a shared in-process Hub. */
 export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
+  const hostname = resolveLoopbackHostname(deps.hostname);
   const hub = deps.hub ?? new Hub();
   const caps = deps.caps ?? new ShareCaps();
   const readCaps = deps.readCaps ?? new ReadCaps();
@@ -136,7 +138,7 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
     caps,
     readCaps,
     port: deps.wsPort,
-    hostname: deps.hostname,
+    hostname,
     recheckIntervalMs: deps.recheckIntervalMs,
   });
 
@@ -195,7 +197,7 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
 
   const ingestServer = Bun.serve({
     port: deps.ingestPort ?? 0,
-    hostname: deps.hostname,
+    hostname,
     fetch: (req) => ingestFetch(req),
   });
   const ingestPort = ingestServer.port ?? deps.ingestPort ?? 0;

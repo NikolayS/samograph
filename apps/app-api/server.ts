@@ -33,6 +33,7 @@ import { connect } from "../../packages/shared/db/index.ts";
 import {
   assertNoDevDefaultSecrets,
   APP_API_SIGNING_SECRETS,
+  resolveSamoEnv,
   type EnvLike,
 } from "../../packages/shared/config/env.ts";
 import {
@@ -52,6 +53,11 @@ import {
 import { PgListenNotifyPublisher } from "../../packages/shared/transcript/publisher.ts";
 import { MetricsRegistry } from "../../packages/shared/observe/index.ts";
 import { createCachedFunnelSource } from "./metrics/funnelSource.ts";
+import { resolveLoopbackHostname } from "../../packages/shared/config/listen.ts";
+import {
+  previewJournalEmailSender,
+  resolveHostedWebOrigin,
+} from "./hosted-config.ts";
 
 /**
  * Prod email fallback: if `RESEND_API_KEY` is not configured there is NO dev
@@ -79,7 +85,10 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
   assertNoDevDefaultSecrets(env, APP_API_SIGNING_SECRETS);
 
   const port = Number(env.APP_API_PORT ?? 8787);
-  const webOrigin = env.WEB_ORIGIN ?? "https://samograph.dev";
+  // Caddy is the public ingress; the application socket must not be exposed
+  // directly on the VM network interface.
+  const hostname = resolveLoopbackHostname(env.HOST);
+  const webOrigin = resolveHostedWebOrigin(env);
   // Guaranteed non-dev-default + present by the fail-closed assert above.
   const sessionSecret = env.SESSION_SECRET as string;
   const magicLinkSecret = env.MAGIC_LINK_SECRET as string;
@@ -101,9 +110,15 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     logger: { error: (msg) => console.error(msg) },
   });
   funnelSource.start();
-  // REAL transactional email (Resend) when RESEND_API_KEY is set; otherwise the
-  // prod fallback throws on send (no silent drop, no dev fake in prod).
-  const sender = emailSenderFromEnv(env, unconfiguredEmailSender());
+  // REAL transactional email (Resend) when RESEND_API_KEY is set. Without it,
+  // production fails sends loudly while previews write the isolated one-time
+  // link to their operator journal (no prod credential and no public backdoor).
+  const sender = emailSenderFromEnv(
+    env,
+    resolveSamoEnv(env) === "preview"
+      ? previewJournalEmailSender()
+      : unconfiguredEmailSender(),
+  );
 
   // Validate PUBLIC_WEBHOOK_BASE once (fail fast on a malformed value).
   const webhookBase = publicWebhookBase(env);
@@ -177,7 +192,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     devShortcuts: undefined,
   });
 
-  const server = Bun.serve({ port, fetch: api.fetch });
+  const server = Bun.serve({ port, hostname, fetch: api.fetch });
   console.log(
     `\n[app-api] PROD server listening on http://localhost:${server.port} (SAMO_ENV=prod)\n` +
       `  routes: GET /health | POST /auth/magic-link | GET /auth/callback |\n` +
