@@ -23,6 +23,28 @@ describe("samohost hosting contract", () => {
     expect(JSON.parse(webPackage).scripts.start).toBe("next start --hostname 127.0.0.1");
   });
 
+  it("runs the hosted web stack from the checked-out release SHA", async () => {
+    const [manifest, launcher] = await Promise.all([
+      read(".samohost.toml"),
+      read("scripts/start-hosted-web.sh"),
+    ]);
+    expect(manifest).toContain('execStart = "/usr/bin/bash scripts/start-hosted-web.sh"');
+    expect(manifest).not.toContain("/opt/samograph/start-prod.sh");
+    expect(launcher).toContain("apps/app-api/server.ts");
+    expect(launcher).toContain("cd apps/web");
+    expect(launcher).toContain("wait -n");
+  });
+
+  it("derives preview auth callbacks from samohost's generated vhost", async () => {
+    const [manifest, hostedConfig] = await Promise.all([
+      read(".samohost.toml"),
+      read("apps/app-api/hosted-config.ts"),
+    ]);
+    expect(manifest).toContain('"HOST", "WEB_ORIGIN"');
+    expect(hostedConfig).toContain("env.BASE_URL");
+    expect(hostedConfig).toContain("previewJournalEmailSender");
+  });
+
   it("keeps dev control out of prod/preview and out of hosted listeners", async () => {
     const [live, manifest] = await Promise.all([
       read("apps/ws-hub/dev-live-server.ts"),

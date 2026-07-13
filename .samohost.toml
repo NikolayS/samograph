@@ -72,9 +72,10 @@ defaultListener   = "web"
 name      = "web"
 unit      = "samograph-web"
 # PROD ExecStart confirmed READ-ONLY from VM (116.203.249.135, 2026-07-10):
-#   systemctl cat samograph-web → ExecStart=/opt/samograph/start-prod.sh
-# start-prod.sh starts: bun apps/app-api/server.ts (bg) + bun run start in apps/web (fg).
-execStart = "/opt/samograph/start-prod.sh"
+# The launcher is part of the checked-out release SHA. /usr/bin/bash is absolute
+# for systemd; scripts/start-hosted-web.sh resolves under WorkingDirectory, which
+# samohost sets to appDir in prod and the isolated checkout in previews.
+execStart = "/usr/bin/bash scripts/start-hosted-web.sh"
 
   [[services.listeners]]
   name       = "web"
