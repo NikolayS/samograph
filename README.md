@@ -2,6 +2,10 @@
 
 > Build agents that show up to the meeting, not just the codebase.
 
+<p align="center">
+  <img src="docs/avatar.png" alt="samograph robot" width="420">
+</p>
+
 samograph lets your AI agent (Claude Code, Codex, and others) join Zoom and Google Meet calls as an active participant — listening, responding, and taking action in real time.
 
 Give this CLI, a meeting URL, and the needed tokens to your AI agent. samograph handles the meeting plumbing through Recall.ai: joining calls, streaming the live transcript, sending explicit chat messages, and inspecting the current call view on demand.
