@@ -108,29 +108,51 @@ export class AuthService {
     return { ok: true };
   }
 
-  /** GET /auth/callback: verify, consume (single-use), create/load user, set cookie. */
+  /** GET /auth/callback: verify, provision user (BEFORE consume), consume (single-use), set cookie. */
   async callback(token: string): Promise<CallbackResult> {
     const { keyring, linkStore, userStore, sessionSecret, clock } = this.deps;
     const now = clock();
 
-    // 1. Cryptographic verification (constant-time HMAC, KID, TTL).
+    // 1. Cryptographic verification (constant-time HMAC, KID, TTL). An expired
+    //    link short-circuits here as SAMO-AUTH-002 (never provisions).
     const verified = verifyMagicLinkToken(token, { keyring, now });
     if (!verified.ok) return this.fail(verified.code);
 
-    // 2. Single-use / replay / supersession — decided by server-side state.
+    // 2. Provision the user + their 1:1 tenant BEFORE consuming the single-use
+    //    link (issue #180). The token cryptographically binds this exact email,
+    //    and createOrLoadUser is idempotent, so provisioning first is safe. A
+    //    transient provisioning failure (e.g. the pre-tenant `INSERT INTO tenants`
+    //    hitting a DB/RLS error) must NOT burn the link: we map it to a retryable
+    //    SAMO-AUTH-500 and return WITHOUT consuming, so the link stays OUTSTANDING
+    //    and the user can click again once we recover. Never an unhandled throw.
+    let user: AuthUser;
+    try {
+      user = await userStore.createOrLoadUser(verified.claims.email);
+    } catch (err) {
+      // Pre-tenant path: no tenant context yet, so do NOT use the tenant-scoped
+      // structured logger (it fails closed without tenant_id). Plain console.error.
+      console.error("auth.callback: user provisioning failed", {
+        jti: verified.claims.jti,
+        err,
+      });
+      return this.fail("SAMO-AUTH-500");
+    }
+
+    // 3. Single-use / replay / supersession — decided by server-side state. Only
+    //    now, after provisioning succeeded, do we CONSUME (burn) the link.
     const consumed = await linkStore.consume(verified.claims.jti);
     switch (consumed.outcome) {
       case "consumed":
         break;
       case "already_consumed":
-        return this.fail("SAMO-AUTH-003"); // replay
+        return this.fail("SAMO-AUTH-003"); // replay — "already used"
       case "superseded":
+        return this.fail("SAMO-AUTH-003"); // a newer link replaced this one — "already used"
       case "not_found":
-        return this.fail("SAMO-AUTH-001"); // invalidated / unknown link
+        return this.fail("SAMO-AUTH-001"); // unknown link — no leak
     }
 
-    // 3. Create or load the user + their 1:1 tenant, then mint the session.
-    const user = await userStore.createOrLoadUser(verified.claims.email);
+    // 4. Mint the session cookie.
     const setCookie = issueSessionCookie(
       { userId: user.id, tenantId: user.tenantId },
       sessionSecret,

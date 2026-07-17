@@ -174,7 +174,9 @@ describe("AuthService.requestMagicLink", () => {
 
 describe("AuthService.callback", () => {
   it("GREEN: a fresh valid link sets a signed session cookie + creates user & tenant", async () => {
+    // No userStore override here, so the returned store is the default InMemory one.
     const { service, emailSender, userStore } = makeService();
+    const inMemUsers = (userStore as InMemoryUserStore).users;
     await service.requestMagicLink({ email: "new@example.com", ip: "1.1.1.1" });
     const token = tokenFor(emailSender, "new@example.com");
 
@@ -188,7 +190,7 @@ describe("AuthService.callback", () => {
     expect(res.setCookie).toContain("SameSite=Lax");
 
     // user + 1:1 tenant created
-    expect(userStore.users.size).toBe(1);
+    expect(inMemUsers.size).toBe(1);
     const user = res.user!;
     expect(user.email).toBe("new@example.com");
     expect(user.tenantId).toBeTruthy();

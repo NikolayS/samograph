@@ -51,4 +51,15 @@ export const AUTH_ERRORS: Record<AuthErrorCode, AuthErrorInfo> = {
     message: "You've been signed out. Please sign in again.",
     retryable: false,
   },
+  // An infra/provisioning failure AFTER a valid link verified (e.g. the pre-tenant
+  // bootstrap `INSERT INTO tenants` hits a DB/RLS error — #180). The callback maps
+  // it to a 500 with this code instead of an unhandled throw, and — crucially —
+  // the single-use link is left OUTSTANDING (provision runs BEFORE consume), so
+  // the user can simply click again once we recover. Retryable: our fault.
+  "SAMO-AUTH-500": {
+    code: "SAMO-AUTH-500",
+    httpStatus: 500,
+    message: "Something went wrong on our end — please try again.",
+    retryable: true,
+  },
 };
