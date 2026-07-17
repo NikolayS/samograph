@@ -1,20 +1,39 @@
 import { describe, it, expect } from "bun:test";
 import { SigningKeyring } from "./keyring.ts";
 import { InMemoryEmailSender } from "./email.ts";
-import { InMemoryMagicLinkStore, InMemoryUserStore } from "./stores.ts";
+import { InMemoryMagicLinkStore, InMemoryUserStore, type UserStore } from "./stores.ts";
 import { InMemoryRateLimiter } from "./rate-limit.ts";
 import { verifySession } from "./session.ts";
 import { AuthService } from "./service.ts";
 
 const SESSION_SECRET = "svc-session-secret";
 
+/**
+ * A UserStore whose provisioning can be toggled to throw, simulating a transient
+ * downstream failure (e.g. the prod RLS denial on `INSERT INTO tenants` behind
+ * issue #180). While `healthy` is false, `createOrLoadUser` throws; flip it true
+ * and it delegates to a real in-memory store.
+ */
+class ToggleableUserStore implements UserStore {
+  healthy = false;
+  readonly inner = new InMemoryUserStore();
+  async createOrLoadUser(email: string) {
+    if (!this.healthy) {
+      throw new Error("provisioning failed: RLS denied INSERT INTO tenants");
+    }
+    return this.inner.createOrLoadUser(email);
+  }
+}
+
 /** A service wired to in-memory fakes + a mutable clock; jti is deterministic. */
-function makeService(overrides: { rateLimiter?: InMemoryRateLimiter } = {}) {
+function makeService(
+  overrides: { rateLimiter?: InMemoryRateLimiter; userStore?: UserStore } = {},
+) {
   let now = Date.parse("2026-06-28T12:00:00.000Z");
   let n = 0;
   const emailSender = new InMemoryEmailSender();
   const linkStore = new InMemoryMagicLinkStore();
-  const userStore = new InMemoryUserStore();
+  const userStore = overrides.userStore ?? new InMemoryUserStore();
   const rateLimiter = overrides.rateLimiter ?? new InMemoryRateLimiter();
   const service = new AuthService({
     keyring: new SigningKeyring("k2", { k1: "old", k2: "new" }),
@@ -219,14 +238,58 @@ describe("AuthService.callback", () => {
     expect(first).not.toBe(second);
 
     // The older link was invalidated server-side at issue time of the newer.
+    // A superseded link is an "already used"-class outcome (SAMO-AUTH-003), NOT
+    // the generic invalid/tampered SAMO-AUTH-001 — issue #180 splits it out so
+    // the web can show the honest "already used" copy instead of "isn't valid".
     const older = await service.callback(first);
     expect(older.ok).toBe(false);
     expect(older.status).toBe(401);
-    expect(older.errorCode).toBe("SAMO-AUTH-001");
+    expect(older.errorCode).toBe("SAMO-AUTH-003");
 
     const newer = await service.callback(second);
     expect(newer.ok).toBe(true);
     expect(newer.status).toBe(200);
+  });
+
+  it("provisioning failure leaves the link OUTSTANDING; a retry after recovery signs in", async () => {
+    // issue #180 (a): the callback must PROVISION the user/tenant BEFORE consuming
+    // the single-use link, so a transient provisioning failure does NOT burn the
+    // link. The same token must still sign in once the store recovers.
+    const userStore = new ToggleableUserStore();
+    const { service, emailSender, linkStore } = makeService({ userStore });
+    await service.requestMagicLink({ email: "flaky@example.com", ip: "1.1.1.1" });
+    const token = tokenFor(emailSender, "flaky@example.com");
+
+    // First click while provisioning is down → mapped failure, link untouched.
+    const failed = await service.callback(token);
+    expect(failed.ok).toBe(false);
+    expect(failed.setCookie).toBeUndefined();
+    // The single-use link is still OUTSTANDING (never consumed) → retryable.
+    const rec = await linkStore.get("jti-1");
+    expect(rec?.status).toBe("outstanding");
+
+    // Store recovers; the SAME token now signs in with a real session.
+    userStore.healthy = true;
+    const ok = await service.callback(token);
+    expect(ok.ok).toBe(true);
+    expect(ok.status).toBe(200);
+    expect(ok.setCookie).toBeDefined();
+    expect(ok.user?.email).toBe("flaky@example.com");
+  });
+
+  it("an infra/provisioning failure resolves to a mapped SAMO-AUTH-500, not an unhandled throw", async () => {
+    // issue #180 (a): a downstream failure must resolve to a mapped 5xx code, not
+    // escape as an unhandled throw / raw 500 with no auth code.
+    const userStore = new ToggleableUserStore(); // stays unhealthy → always throws
+    const { service, emailSender } = makeService({ userStore });
+    await service.requestMagicLink({ email: "infra@example.com", ip: "1.1.1.1" });
+    const token = tokenFor(emailSender, "infra@example.com");
+
+    const res = await service.callback(token);
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(500);
+    expect(res.errorCode).toBe("SAMO-AUTH-500");
+    expect(res.setCookie).toBeUndefined();
   });
 
   it("tampered KID → 401 SAMO-AUTH-001", async () => {
