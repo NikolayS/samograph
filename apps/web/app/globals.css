@@ -1,12 +1,146 @@
+/* =============================================================================
+ * Greenroom — samograph.dev design tokens (issue #178)
+ *
+ * ONE source of truth for the palette. Every color in a style rule below is
+ * delivered through `var(--token)`; raw hex literals appear ONLY in the token
+ * registries (`:root` and the `data-theme` / `prefers-color-scheme` overrides).
+ * A future visual change touches this file, not scattered literals.
+ *
+ * Palette rationale:
+ *  - Two-green split: `--green` (bright evergreen) carries interactive accents
+ *    and the live pulse; `--green-deep` (deep evergreen) is the "ink-adjacent"
+ *    accent for links, headings and the live CTA. `--green-soft` is the pale
+ *    wash for hovers/tints.
+ *  - Pink is RATIONED to the "bot speaks" moment only — the streaming partial
+ *    caret and the speaking cue. It never becomes chrome.
+ *  - Full light AND dark support, in BOTH mechanisms: the OS preference
+ *    (`@media prefers-color-scheme`) AND an explicit, higher-specificity
+ *    `:root[data-theme="…"]` override so a user toggle always wins.
+ *
+ * Accessibility:
+ *  - `--ink` and `--muted` on `--ground` clear WCAG AA in both themes. Status is
+ *    never color-only: the chip carries a text label, the warning line a
+ *    `role="note"`, the live dot sits beside the word "Live".
+ *  - Filled controls pair `--green-deep`/`--pink` with `--on-green`/`--on-pink`.
+ *  - Motion (live pulse, streaming caret) is disabled under
+ *    `prefers-reduced-motion: reduce`.
+ * ========================================================================== */
+
 :root {
   color-scheme: light dark;
+
+  /* Surfaces & text */
+  --ground: #f4f8f5;
+  --surface: #ffffff;
+  --ink: #0f2e1e;
+  --muted: #566f61;
+  --line: #d7e6dc;
+
+  /* Two-green split (+ soft wash) */
+  --green: #16a34a;
+  --green-deep: #12813f;
+  --green-soft: #e5f5ec;
+
+  /* Rationed pink (bot-speaks moment) */
+  --pink: #c13b7f;
+  --pink-soft: #fbe6f1;
+
+  /* Semantic status */
+  --good: var(--green);
+  --warn: #9a6a12;
+  --crit: #b00020;
+
+  /* Foregrounds for filled accents */
+  --on-green: #ffffff;
+  --on-pink: #ffffff;
+
+  /* Per-kind status-chip tokens (callStatusView.ts `StatusKind`). These
+     reference the hue tokens above, so they re-resolve automatically per theme. */
+  --state-pending: var(--muted);
+  --state-joining: var(--green-deep);
+  --state-live: var(--green);
+  --state-ended: var(--muted);
+  --state-error: var(--crit);
+
+  /* Type */
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
 }
+
+/* Dark by OS preference. The explicit `data-theme` blocks below have higher
+   specificity and therefore override this in both directions. Only the base hue
+   tokens are redefined; the `var()`-chained `--good`/`--state-*` re-resolve. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ground: #0b1712;
+    --surface: #10201a;
+    --ink: #e7f2ec;
+    --muted: #9fb6aa;
+    --line: #22392e;
+    --green: #3ecf7f;
+    --green-deep: #6fe0a0;
+    --green-soft: #14291d;
+    --pink: #ef7ab0;
+    --pink-soft: #351826;
+    --warn: #e0a94a;
+    --crit: #ff6b7d;
+    --on-green: #06210f;
+    --on-pink: #2a0f1c;
+  }
+}
+
+/* Explicit user theme choice — wins over the OS preference above. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #f4f8f5;
+  --surface: #ffffff;
+  --ink: #0f2e1e;
+  --muted: #566f61;
+  --line: #d7e6dc;
+  --green: #16a34a;
+  --green-deep: #12813f;
+  --green-soft: #e5f5ec;
+  --pink: #c13b7f;
+  --pink-soft: #fbe6f1;
+  --warn: #9a6a12;
+  --crit: #b00020;
+  --on-green: #ffffff;
+  --on-pink: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0b1712;
+  --surface: #10201a;
+  --ink: #e7f2ec;
+  --muted: #9fb6aa;
+  --line: #22392e;
+  --green: #3ecf7f;
+  --green-deep: #6fe0a0;
+  --green-soft: #14291d;
+  --pink: #ef7ab0;
+  --pink-soft: #351826;
+  --warn: #e0a94a;
+  --crit: #ff6b7d;
+  --on-green: #06210f;
+  --on-pink: #2a0f1c;
+}
+
+/* =============================================================================
+ * Base elements
+ * ========================================================================== */
 
 body {
   margin: 0;
   padding: 2rem;
   line-height: 1.5;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body);
+  background: var(--ground);
+  color: var(--ink);
 }
 
 main,
@@ -15,32 +149,131 @@ section {
   margin: 0 auto;
 }
 
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+h1 {
+  letter-spacing: -0.01em;
+}
+
+a {
+  color: var(--green-deep);
+}
+
+a:hover {
+  color: var(--green);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
 label {
   display: block;
   margin-top: 1rem;
   font-weight: 600;
+  color: var(--ink);
 }
 
 input {
   display: block;
   width: 100%;
   margin-top: 0.25rem;
-  padding: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+input:focus-visible {
+  border-color: var(--green);
 }
 
 button {
   margin-top: 1rem;
   padding: 0.5rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+button:hover {
+  background: var(--green-soft);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
 }
 
 [role="alert"] {
-  color: #b00020;
+  color: var(--crit);
 }
 
-/* Dashboard — call list (SPEC §3 Story 1). Each row is a whole-row link into
-   its per-call transcript page; it must *read* as tappable, with an explicit
-   affordance so a first-time user knows to open it. Colors mix with
-   `currentColor` so the treatment adapts to the light/dark `color-scheme`. */
+/* =============================================================================
+ * Landing (SPEC §3 Story 1)
+ * ========================================================================== */
+
+.samograph-tagline {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--green-deep);
+  margin: 0.25rem 0 1rem;
+}
+
+.samograph-steps {
+  margin: 1.25rem 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  color: var(--ink);
+}
+
+.samograph-steps li::marker {
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* The landing's single call-to-action is the anchor right after the steps list
+   (`<a href="/auth">Get started</a>`) — targeted structurally so no component
+   markup changes. Rendered as the one primary, filled control on the page. */
+.samograph-steps + a {
+  display: inline-block;
+  margin-top: 0.75rem;
+  padding: 0.6rem 1.25rem;
+  font-weight: 600;
+  color: var(--on-green);
+  background: var(--green-deep);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  text-decoration: none;
+}
+
+.samograph-steps + a:hover {
+  color: var(--on-green);
+  background: var(--green);
+}
+
+/* =============================================================================
+ * Dashboard — call list (SPEC §3 Story 1). Each row is a whole-row link into
+ * its per-call transcript page; it must *read* as tappable.
+ * ========================================================================== */
+
 .samograph-call-list {
   list-style: none;
   padding: 0;
@@ -57,10 +290,11 @@ button {
   justify-content: space-between;
   gap: 0.35rem 1rem;
   padding: 0.75rem 1rem;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 10px;
   text-decoration: none;
-  color: inherit;
+  color: var(--ink);
   cursor: pointer;
   transition:
     background-color 120ms ease,
@@ -69,12 +303,12 @@ button {
 
 .samograph-call-row:hover,
 .samograph-call-row:focus-visible {
-  background: color-mix(in srgb, currentColor 7%, transparent);
-  border-color: color-mix(in srgb, currentColor 45%, transparent);
+  background: var(--green-soft);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
 }
 
 .samograph-call-row:focus-visible {
-  outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
+  outline: 2px solid var(--green);
   outline-offset: 2px;
 }
 
@@ -92,12 +326,17 @@ button {
 
 .samograph-call-status {
   font-size: 0.85rem;
-  opacity: 0.7;
+  color: var(--muted);
+}
+
+.samograph-call-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 .samograph-call-error {
   font-size: 0.85rem;
-  color: #b00020;
+  color: var(--crit);
 }
 
 /* Explicit call-to-action: "View transcript →", "Try again →", or the live cue.
@@ -110,12 +349,12 @@ button {
   font-size: 0.9rem;
   font-weight: 600;
   white-space: nowrap;
-  color: color-mix(in srgb, currentColor 72%, transparent);
+  color: color-mix(in srgb, var(--ink) 72%, transparent);
 }
 
 .samograph-call-row:hover .samograph-call-cta,
 .samograph-call-row:focus-visible .samograph-call-cta {
-  color: inherit;
+  color: var(--ink);
 }
 
 .samograph-call-cta-arrow {
@@ -128,43 +367,308 @@ button {
 }
 
 .samograph-call-cta-retry {
-  color: #b00020;
+  color: var(--crit);
 }
 
 /* Live cue: a pulsing "●" + "Live — watch transcript", green so it's clearly an
    active invitation (distinct from the red error/retry treatment). */
 .samograph-call-cta-live {
-  color: #12813f;
+  color: var(--green-deep);
 }
 
 .samograph-call-live-dot {
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 50%;
-  background: #16a34a;
+  background: var(--green);
   animation: samograph-live-pulse 1.6s ease-out infinite;
 }
 
 @keyframes samograph-live-pulse {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #16a34a 60%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 60%, transparent);
   }
   70% {
-    box-shadow: 0 0 0 0.5rem color-mix(in srgb, #16a34a 0%, transparent);
+    box-shadow: 0 0 0 0.5rem color-mix(in srgb, var(--green) 0%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #16a34a 0%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 0%, transparent);
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .samograph-call-row {
-    transition: none;
+/* Empty state */
+.samograph-empty-state {
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.samograph-empty-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.samograph-empty-hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* =============================================================================
+ * Per-call transcript page (SPEC §4.1, Stories 1/2/5)
+ * ========================================================================== */
+
+.samograph-percall {
+  margin-top: 0.5rem;
+}
+
+/* Status chip — `.samograph-status[data-status-kind]`. A left accent bar keyed
+   to the per-kind token, always paired with the text label (never color-only). */
+.samograph-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--state-pending);
+  border-radius: 10px;
+}
+
+.samograph-status[data-status-kind="pending"] {
+  border-left-color: var(--state-pending);
+}
+.samograph-status[data-status-kind="joining"] {
+  border-left-color: var(--state-joining);
+}
+.samograph-status[data-status-kind="live"] {
+  border-left-color: var(--state-live);
+}
+.samograph-status[data-status-kind="ended"] {
+  border-left-color: var(--state-ended);
+}
+.samograph-status[data-status-kind="error"] {
+  border-left-color: var(--state-error);
+}
+
+.samograph-status-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.samograph-status[data-status-kind="error"] .samograph-status-label {
+  color: var(--crit);
+}
+
+/* Live: a pulsing dot beside the "Live" label (the label still carries meaning
+   for color-blind / screen-reader users — the dot is decorative). */
+.samograph-status[data-status-kind="live"] .samograph-status-label::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: var(--green);
+  animation: samograph-live-pulse 1.6s ease-out infinite;
+}
+
+.samograph-status-message {
+  margin: 0;
+  color: var(--muted);
+}
+
+.samograph-status-code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Degraded / SAMOGRAPH-WARNING banner (SPEC §3 Story 5, §4.5). */
+.samograph-degraded-banner {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-radius: 8px;
+}
+
+.samograph-transcript-actions {
+  margin: 0.75rem 0;
+}
+
+.samograph-download-transcript {
+  display: inline-block;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--green-deep);
+  background: var(--green-soft);
+  border: 1px solid color-mix(in srgb, var(--green) 30%, var(--line));
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+.samograph-download-transcript:hover {
+  color: var(--green-deep);
+  border-color: var(--green);
+}
+
+/* Never-silent terminal card (SPEC §5.16). */
+.samograph-stream-error {
+  margin: 0.75rem 0;
+  padding: 0.9rem 1rem;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--crit) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--crit) 40%, var(--line));
+  border-radius: 10px;
+}
+
+.samograph-stream-error p {
+  margin: 0;
+}
+
+/* Transcript feed. A monospaced, tabular-nums column makes the leading
+   `[YYYY-MM-DD HH:MM:SS]` timestamp align into a fixed gutter across lines; a
+   left tally rail (a vertical rule + a per-line counter) tracks the flow. */
+.samograph-transcript {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  counter-reset: samograph-line;
+  /* The tally rail: one continuous 2px vertical rule at x=2.4rem. */
+  background: linear-gradient(var(--line), var(--line)) 2.4rem 0 / 2px 100%
+    no-repeat;
+}
+
+.samograph-transcript > li {
+  counter-increment: samograph-line;
+  position: relative;
+  padding: 0.15rem 0 0.15rem 3.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.55;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+/* Per-line tally number, right-aligned in the gutter left of the rail. */
+.samograph-transcript > li::before {
+  content: counter(samograph-line);
+  position: absolute;
+  left: 0;
+  top: 0.15rem;
+  width: 1.9rem;
+  text-align: right;
+  font-size: 0.78em;
+  color: var(--muted);
+}
+
+/* Streaming partial line: muted text + a rationed pink caret at the live edge —
+   the one place pink appears in the read-along. */
+.samograph-transcript > li.samograph-line-partial {
+  color: var(--muted);
+}
+
+.samograph-transcript > li.samograph-line-partial::after {
+  content: "";
+  display: inline-block;
+  width: 0.5ch;
+  height: 1.05em;
+  margin-left: 0.15em;
+  vertical-align: text-bottom;
+  background: var(--pink);
+  border-radius: 1px;
+  animation: samograph-caret 1s steps(1, end) infinite;
+}
+
+@keyframes samograph-caret {
+  50% {
+    opacity: 0;
   }
+}
+
+/* Inline SAMOGRAPH-WARNING system note (SPEC §4.5) — warn-toned, clearly not a
+   meeting utterance. `role="note"` carries the same distinction non-visually. */
+.samograph-warning-line {
+  margin: 0;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+/* =============================================================================
+ * Owner / share controls & read-only share page
+ * ========================================================================== */
+
+.samograph-controls,
+.samograph-owner-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.samograph-share-page-header {
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.samograph-share-disclosure {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* =============================================================================
+ * Presence pills — forward-looking hook for a per-participant / bot presence
+ * indicator. Not yet mounted in apps/web (the bot-camera presence page is
+ * `src/presence.ts`, out of scope for #178); tokenized here so it lands styled.
+ * ========================================================================== */
+
+.samograph-presence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.samograph-presence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--green-deep);
+  background: var(--green-soft);
+  border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line));
+  border-radius: 999px;
+}
+
+/* Pink is rationed to the speaking state, matching the transcript caret. */
+.samograph-presence-pill[data-state="speaking"] {
+  color: var(--pink);
+  background: var(--pink-soft);
+  border-color: color-mix(in srgb, var(--pink) 35%, var(--line));
+}
+
+/* =============================================================================
+ * Motion
+ * ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .samograph-call-row,
   .samograph-call-cta-arrow {
     transition: none;
   }
-  .samograph-call-live-dot {
+  .samograph-call-live-dot,
+  .samograph-status[data-status-kind="live"] .samograph-status-label::before,
+  .samograph-transcript > li.samograph-line-partial::after {
     animation: none;
   }
 }
