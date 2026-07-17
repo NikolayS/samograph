@@ -85,15 +85,29 @@ export function createAuthHandler(
 
     if (req.method === "GET" && url.pathname === "/auth/callback") {
       const token = url.searchParams.get("token");
-      // Missing token and any verification failure both return 401 with NO body
-      // (no leak of which check failed — SPEC §5.1).
+      // A missing token is the SAMO-AUTH-001 class: 401 with NO body (no leak).
       if (!token) return new Response(null, { status: 401 });
       const result = await service.callback(token);
-      if (!result.ok) return new Response(null, { status: result.status });
-      return new Response(null, {
-        status: 200,
-        headers: { "set-cookie": result.setCookie! },
-      });
+      if (result.ok) {
+        return new Response(null, {
+          status: 200,
+          headers: { "set-cookie": result.setCookie! },
+        });
+      }
+      // SAMO-AUTH-001 (invalid / tampered / unknown link) stays BODYLESS — never
+      // reveal that a token was well-formed-but-invalid (no enumeration leak). For
+      // the benign/infra buckets (002 expired, 003 already-used/superseded, 500
+      // our-fault) we emit the coarse code so the web can render the honest §5.16
+      // copy instead of the generic "isn't valid." (issue #180).
+      const code = result.errorCode!;
+      if (code === "SAMO-AUTH-001") {
+        return new Response(null, { status: result.status });
+      }
+      const info = AUTH_ERRORS[code];
+      return Response.json(
+        { code: info.code, message: info.message, retryable: info.retryable },
+        { status: info.httpStatus },
+      );
     }
 
     if (req.method === "POST" && url.pathname === "/auth/logout") {

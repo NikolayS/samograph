@@ -21,7 +21,16 @@ function makeHandler() {
     baseUrl: "https://samograph.dev",
     randomJti: () => `jti-${++n}`,
   });
-  return { handler: createAuthHandler(service), emailSender };
+  return {
+    handler: createAuthHandler(service),
+    emailSender,
+    setNow: (ms: number) => {
+      now = ms;
+    },
+    advance: (ms: number) => {
+      now += ms;
+    },
+  };
 }
 
 const post = (email: unknown, ip = "5.5.5.5") =>
@@ -106,7 +115,11 @@ describe("auth/http — GET /auth/callback", () => {
     expect(cookie).toContain("SameSite=Lax");
   });
 
-  it("returns 401 with NO body and NO cookie on replay", async () => {
+  it("returns 401 + SAMO-AUTH-003 body and NO cookie on replay (already used)", async () => {
+    // issue #180 (b): a REPLAY is an "already used" outcome — the callback must
+    // now carry the honest SAMO-AUTH-003 code so the web renders "This link was
+    // already used." instead of the generic "isn't valid." A bodyless 401 (the
+    // old behavior) made that copy unreachable.
     const { handler, emailSender } = makeHandler();
     await handler(post("rp@example.com"));
     const token = emailSender.sent[0].token;
@@ -115,7 +128,31 @@ describe("auth/http — GET /auth/callback", () => {
     const res = await handler(new Request(url)); // replay
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toBeNull();
-    expect(await res.text()).toBe("");
+    expect(await res.json()).toEqual({
+      code: "SAMO-AUTH-003",
+      message: "This link was already used.",
+      retryable: false,
+    });
+  });
+
+  it("returns 401 + SAMO-AUTH-002 body on an expired link", async () => {
+    // issue #180 (b): an EXPIRED link must surface SAMO-AUTH-002 so the web shows
+    // "This sign-in link has expired." rather than the generic invalid copy.
+    const { handler, emailSender, setNow } = makeHandler();
+    setNow(Date.parse("2026-06-28T14:46:00.000Z")); // exp = 15:01:00 (15-min TTL)
+    await handler(post("exp@example.com"));
+    const token = emailSender.sent[0].token;
+    setNow(Date.parse("2026-06-28T15:01:00.000Z")); // past exp
+    const res = await handler(
+      new Request(`https://samograph.dev/auth/callback?token=${encodeURIComponent(token)}`),
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await res.json()).toEqual({
+      code: "SAMO-AUTH-002",
+      message: "This sign-in link has expired.",
+      retryable: false,
+    });
   });
 
   it("returns 401 with no body when the token is missing or junk", async () => {
