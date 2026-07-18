@@ -27,6 +27,8 @@ serviceUnit       = "samograph-web"                  # legacy synthesis source (
 mainHost          = "samograph.samo.team"            # PROD public host
 mainListen        = "cp-http80"                      # control-plane HTTP:80 (TLS terminated upstream by CF)
 releaseTagPattern = "v*"                             # PROD ships ONLY on a new v* release tag (requires samohost#132)
+releaseTagFormat  = "date"                           # REQUIRED with releaseTagPattern (samohost toml.ts:1157)
+releaseCiWorkflow = ".github/workflows/ci.yml"       # REQUIRED + canonical (samohost toml.ts:1150-1162)
 envFile           = "/opt/samograph/app/.env"        # SAMO_ENV=prod + real secrets (samohost never touches it)
 envDbVars         = ["DATABASE_URL"]                 # rewritten to the DBLab clone in previews (never touches prod DB)
 previewDbBackend  = "dblab"                          # previews = DBLab thin clones (owner non-negotiable)
