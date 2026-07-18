@@ -28,7 +28,7 @@ never admitted the bot, host-denied entry, or a Recall-side failure (§5.2,
      across many tenants is a Recall/region incident — escalate.
 3. **Correlate with join latency.** If bots reach `JOINING` but never `IN_CALL`
    across a region, confirm the regional tunnel and orchestrator are healthy
-   (the bot may be joining but webhooks not arriving — see
+   (the bot may be joining but webhooks are not arriving — see
    [ingest-degraded.md](./ingest-degraded.md)).
 
 ## Recovery

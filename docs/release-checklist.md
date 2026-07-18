@@ -1,8 +1,8 @@
-# Release Checklist
+# Release checklist
 
 Use this checklist for each npm release.
 
-## Before Release
+## Before release
 
 - Confirm `main` is clean and up to date.
 - Run `bun test`.
@@ -30,7 +30,7 @@ Use this checklist for each npm release.
 - Create and publish a GitHub release tag matching the package version, for example `v0.4.1`.
 - Wait for the `Publish to npm` GitHub Actions workflow to pass.
 
-## After Publish
+## After publish
 
 - Verify npm has the new version:
 
@@ -50,7 +50,7 @@ Use this checklist for each npm release.
 - Confirm the package page shows Apache-2.0 license, homepage, README, and provenance.
 - Confirm GitHub Pages is healthy at `https://samoagent.dev/` (domain intentionally kept as-is during rename transition).
 
-## Secret Hygiene
+## Secret hygiene
 
 - Keep `NPM_TOKEN` only in GitHub Actions secrets.
 - Rotate `NPM_TOKEN` immediately if it is pasted into chat, logs, issues, PRs, or local shell history.
