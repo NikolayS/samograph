@@ -53,6 +53,7 @@ a call can be `IN_CALL` **and** degraded at the same time. See
 | Invariant | Why it matters | Doc |
 |---|---|---|
 | app-api sits behind a trusted edge that **overwrites** `X-Forwarded-For`; never exposed directly | `clientIp()` trusts the first XFF hop — without a trusted proxy the 20/hr per-IP magic-link limit is spoofable and direct callers collapse into one `unknown` bucket (§5.1 / SPEC.amendments item 11) | [trusted-proxy.md](./trusted-proxy.md) |
+| Run the superuser DB bootstrap **before** migrate, per env / per fresh DB | `bootstrap.sql` wires the app login role's `GRANT samograph_app` + `BYPASSRLS`; without it every redeploy / DBLab clone breaks sign-in (`SET ROLE`/pre-tenant INSERT throw `42501`). Broke prod twice — #186 / #180 (§5.10) | [db-bootstrap.md](./db-bootstrap.md) |
 
 ## Conventions
 

@@ -9,3 +9,9 @@ export {
   migrationVersions,
   type MigrateResult,
 } from "./migrate.ts";
+export {
+  BOOTSTRAP_SQL_PATH,
+  applyBootstrap,
+  assertRoleName,
+  renderBootstrapSql,
+} from "./bootstrap.ts";
