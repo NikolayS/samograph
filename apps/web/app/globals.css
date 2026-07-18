@@ -224,49 +224,213 @@ button:hover {
 }
 
 /* =============================================================================
- * Landing (SPEC §3 Story 1)
+ * Landing — the "Greenroom" hero (SPEC §3 Story 1, issue #182)
+ *
+ * A two-column hero: honest value prop + the four-step v1 flow + the single
+ * primary CTA on the left, an illustrative product-preview panel on the right.
+ * Wider than the default `main` (32rem) so the two columns breathe; collapses
+ * to one column on narrow viewports. All color via Greenroom tokens.
  * ========================================================================== */
 
-.samograph-tagline {
-  font-family: var(--font-display);
-  font-size: 1.35rem;
-  font-weight: 600;
-  color: var(--green-deep);
-  margin: 0.25rem 0 1rem;
+.samograph-landing {
+  max-width: 72rem;
 }
 
-.samograph-steps {
-  margin: 1.25rem 0;
-  padding-left: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+.samograph-hero {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+@media (min-width: 60rem) {
+  .samograph-hero {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 3rem;
+  }
+}
+
+/* --- Left column: copy, steps, CTA --- */
+
+.samograph-wordmark {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  color: var(--green-deep);
+}
+
+.samograph-hero-headline {
+  margin: 0 0 1rem;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
   color: var(--ink);
 }
 
-.samograph-steps li::marker {
-  color: var(--green);
-  font-weight: 700;
+.samograph-hero-subhead {
+  margin: 0 0 1.5rem;
+  max-width: 44ch;
+  font-size: 1.05rem;
+  color: var(--muted);
 }
 
-/* The landing's single call-to-action is the anchor right after the steps list
-   (`<a href="/auth">Get started</a>`) — targeted structurally so no component
-   markup changes. Rendered as the one primary, filled control on the page. */
-.samograph-steps + a {
-  display: inline-block;
-  margin-top: 0.75rem;
-  padding: 0.6rem 1.25rem;
-  font-weight: 600;
+/* Four-step flow as a styled sequence: green numbered pills instead of raw
+   list markers. Ordered (`<ol>`) so the sequence is meaningful to AT. */
+.samograph-hero-steps {
+  list-style: none;
+  counter-reset: samograph-hero-step;
+  margin: 0 0 1.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.samograph-hero-steps > li {
+  counter-increment: samograph-hero-step;
+  position: relative;
+  padding-left: 2.4rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.samograph-hero-steps > li::before {
+  content: counter(samograph-hero-step);
+  position: absolute;
+  left: 0;
+  top: 0.05em;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--green-deep);
+  background: var(--green-soft);
+  border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line));
+  border-radius: 999px;
+}
+
+/* The single primary call-to-action into the magic-link sign-in: one filled,
+   green control (not a plain link). Focus/hover states are visible. */
+.samograph-hero-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.5rem;
+  font-weight: 700;
+  font-size: 1.02rem;
   color: var(--on-green);
   background: var(--green-deep);
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 12px;
   text-decoration: none;
+  transition:
+    background-color 120ms ease,
+    transform 120ms ease;
 }
 
-.samograph-steps + a:hover {
+.samograph-hero-cta:hover {
   color: var(--on-green);
   background: var(--green);
+  transform: translateY(-1px);
+}
+
+.samograph-hero-cta:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+/* --- Right column: illustrative product-preview panel ---
+   Echoes the live-transcript look (mono lines, live dot, presence pill,
+   streaming partial caret) with clearly-labeled SAMPLE data. */
+.samograph-hero-preview {
+  margin: 0;
+  padding: 1rem 1.1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.samograph-hero-preview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.samograph-hero-preview-bar .samograph-presence {
+  margin: 0;
+}
+
+.samograph-hero-preview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--green-deep);
+}
+
+.samograph-hero-live-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--green);
+  animation: samograph-live-pulse 1.6s ease-out infinite;
+}
+
+.samograph-hero-transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.samograph-hero-transcript > li {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+/* Streaming partial line: muted text + the rationed pink caret at the live
+   edge — the same "bot speaks / live edge" pink used in the real transcript. */
+.samograph-hero-line-partial {
+  color: var(--muted);
+}
+
+.samograph-hero-line-partial::after {
+  content: "";
+  display: inline-block;
+  width: 0.5ch;
+  height: 1.05em;
+  margin-left: 0.15em;
+  vertical-align: text-bottom;
+  background: var(--pink);
+  border-radius: 1px;
+  animation: samograph-caret 1s steps(1, end) infinite;
+}
+
+.samograph-hero-preview-note {
+  margin-top: 0.85rem;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--muted);
 }
 
 /* =============================================================================
@@ -663,12 +827,15 @@ button:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .samograph-call-row,
-  .samograph-call-cta-arrow {
+  .samograph-call-cta-arrow,
+  .samograph-hero-cta {
     transition: none;
   }
   .samograph-call-live-dot,
   .samograph-status[data-status-kind="live"] .samograph-status-label::before,
-  .samograph-transcript > li.samograph-line-partial::after {
+  .samograph-transcript > li.samograph-line-partial::after,
+  .samograph-hero-live-dot,
+  .samograph-hero-line-partial::after {
     animation: none;
   }
 }
