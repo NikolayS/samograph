@@ -12,7 +12,8 @@
     "apps/bot-worker",
     "apps/bot-orchestrator",
     "packages/shared",
-    "packages/test-fakes/recall"
+    "packages/test-fakes/recall",
+    "packages/test-fakes/avatar"
   ],
   "bin": {
     "samograph": "dist/cli.js"
