@@ -24,6 +24,25 @@ function makeTranscriptEvent(
   };
 }
 
+/** An incoming meeting-chat event (Recall `participant_events.chat_message`, #188). */
+function makeChatEvent(
+  name: string,
+  text: string,
+  timestamp = "2024-01-15T10:30:45.000Z",
+  to = "everyone",
+): unknown {
+  return {
+    event: "participant_events.chat_message",
+    data: {
+      data: {
+        participant: { name, is_host: false, email: null },
+        timestamp: { absolute: timestamp, relative: 12 },
+        data: { text, to },
+      },
+    },
+  };
+}
+
 describe("webhook handler", () => {
   let tmp: string;
   let tf: string;
@@ -973,6 +992,80 @@ describe("webhook handler", () => {
       );
       expect(resp.status).toBe(403);
       expect(readFileSync(tf, "utf-8")).toBe("");
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("webhook handler — incoming meeting chat (#188)", () => {
+  let tmp: string;
+  let tf: string;
+
+  beforeEach(() => {
+    tmp = makeTmpDir();
+    tf = join(tmp, "transcript.txt");
+    writeFileSync(tf, "");
+  });
+  afterEach(() => {
+    cleanupTmpDir(tmp);
+  });
+
+  it("appends a chat_message event as a `(chat)` transcript line", async () => {
+    const line = await handleWebhook(
+      makeChatEvent("Alice", "hello everyone", "2026-03-20T14:05:30.123Z"),
+      tf,
+    );
+    expect(line).toBe("[2026-03-20 14:05:30] Alice (chat): hello everyone");
+    expect(readFileSync(tf, "utf-8").trim()).toBe(
+      "[2026-03-20 14:05:30] Alice (chat): hello everyone",
+    );
+  });
+
+  it("chat and speech interleave in the same transcript file, in delivery order", async () => {
+    await handleWebhook(
+      makeTranscriptEvent("Bob", ["good", "morning"], "2026-03-20T14:05:00.000Z"),
+      tf,
+    );
+    await handleWebhook(
+      makeChatEvent("Alice", "hi in chat", "2026-03-20T14:05:10.000Z"),
+      tf,
+    );
+    const lines = readFileSync(tf, "utf-8").split("\n").filter((l) => l);
+    expect(lines).toEqual([
+      "[2026-03-20 14:05:00] Bob: good morning",
+      "[2026-03-20 14:05:10] Alice (chat): hi in chat",
+    ]);
+  });
+
+  it("chat sender + text are sanitized onto one physical line", async () => {
+    await handleWebhook(
+      makeChatEvent("Al\nice", "multi\r\nline", "2026-03-20T14:05:30.000Z"),
+      tf,
+    );
+    expect(readFileSync(tf, "utf-8").trim()).toBe(
+      "[2026-03-20 14:05:30] Al ice (chat): multi line",
+    );
+  });
+
+  it("a chat message with empty text is not written", async () => {
+    await handleWebhook(makeChatEvent("Alice", "", "2026-03-20T14:05:30.000Z"), tf);
+    expect(readFileSync(tf, "utf-8")).toBe("");
+  });
+
+  it("Bun.serve POST /webhook appends an incoming chat line (flows to watch)", async () => {
+    const server = serve(0, tf, "secret-token");
+    try {
+      const resp = await fetch(`http://localhost:${server.port}/webhook?token=secret-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeChatEvent("Zed", "hello from zed", "2026-03-20T14:06:00.000Z")),
+      });
+      expect(resp.status).toBe(200);
+      expect(await resp.json()).toEqual({ ok: true });
+      expect(readFileSync(tf, "utf-8")).toContain(
+        "[2026-03-20 14:06:00] Zed (chat): hello from zed",
+      );
     } finally {
       server.stop(true);
     }

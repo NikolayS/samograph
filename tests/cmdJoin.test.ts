@@ -160,6 +160,23 @@ describe("cmdJoin payload + saved state", () => {
     expect(p.variant).toBeUndefined();
   });
 
+  it("subscribes participant_events.chat_message so incoming chat is delivered (#188)", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ name: "TARS" }), makeDeps(captured));
+
+    const rc = captured.payload.recording_config;
+    const webhookEp = rc.realtime_endpoints.find((e: any) =>
+      Array.isArray(e.events) && e.events.includes("transcript.data"),
+    );
+    expect(webhookEp).toBeDefined();
+    // chat rides the SAME webhook endpoint as transcript (one callback URL)
+    expect(webhookEp.events).toContain("participant_events.chat_message");
+    expect(webhookEp.events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
+  });
+
   it("--variant adds recall bot variant for output media rendering", async () => {
     const captured: { payload?: any } = {};
     await cmdJoin(joinArgs({ variant: "web_4_core" }), makeDeps(captured));
