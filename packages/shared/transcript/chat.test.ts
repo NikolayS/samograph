@@ -75,13 +75,13 @@ describe("normalizeTranscriptEvent — kind + chat marker (#188)", () => {
     ).toEqual({ kind: "chat", line: "[2025-12-31 23:59:59] Eve (chat): x" });
   });
 
-  it("missing / blank chat sender → '?'", () => {
+  it("missing / blank chat sender → '?' (marker still present)", () => {
     expect(
       normalizeTranscriptEvent(chatEvent({ name: null, text: "hi", at: "2026-01-01T00:00:00.000Z" })),
-    ).toEqual({ kind: "chat", line: "[2026-01-01 00:00:00] ?: hi" });
+    ).toEqual({ kind: "chat", line: "[2026-01-01 00:00:00] ? (chat): hi" });
     expect(
       normalizeTranscriptEvent(chatEvent({ name: "   ", text: "hi", at: "2026-01-01T00:00:00.000Z" })),
-    ).toEqual({ kind: "chat", line: "[2026-01-01 00:00:00] ?: hi" });
+    ).toEqual({ kind: "chat", line: "[2026-01-01 00:00:00] ? (chat): hi" });
   });
 
   it("collapses CR/LF + internal whitespace in the sender and text (one physical line)", () => {

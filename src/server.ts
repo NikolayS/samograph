@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { formatTranscriptLine } from "./transcript.ts";
+import { normalizeTranscriptEvent } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
   frameSourceAliases,
@@ -347,17 +347,20 @@ export function tokensEqual(
 
 /**
  * Process a webhook payload, appending a formatted transcript line to the
- * transcript file when the payload is a transcript.data event with words.
+ * transcript file when the payload is a spoken `transcript.data` event (with
+ * words) or an incoming `participant_events.chat_message` (#188), which is
+ * rendered with the ` (chat)` marker. Returns the appended line (or null when
+ * the payload is neither), so the caller can drive presence "heard" activity.
  */
 export async function handleWebhook(
   payload: unknown,
   transcriptPath: string,
 ): Promise<string | null> {
-  const line = formatTranscriptLine(payload);
-  if (line !== null) {
-    appendFileSync(transcriptPath, line + "\n");
+  const normalized = normalizeTranscriptEvent(payload);
+  if (normalized !== null) {
+    appendFileSync(transcriptPath, normalized.line + "\n");
   }
-  return line;
+  return normalized?.line ?? null;
 }
 
 export interface ServeOptions {

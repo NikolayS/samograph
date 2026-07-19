@@ -74,6 +74,13 @@ export function resolveNewTranscriptFile(
 export {
   sanitizeTranscriptField,
   normalizeTranscriptLine as formatTranscriptLine,
+  // The CLI/agent entry point that carries `kind` (speech | chat, #188) and
+  // renders incoming meeting chat as `[ts] <name> (chat): <text>`.
+  normalizeTranscriptEvent,
+  CHAT_LINE_MARKER,
+  CHAT_TRANSCRIPT_EVENT,
+  type NormalizedTranscriptLine,
+  type TranscriptLineKind,
 } from "../packages/shared/transcript/index.ts";
 
 function transcriptPathFromState(): string {

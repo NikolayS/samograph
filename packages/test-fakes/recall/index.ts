@@ -65,8 +65,23 @@ export interface TranscriptDataEvent {
   };
 }
 
+/** An incoming meeting-chat event (Recall `participant_events.chat_message`, #188). */
+export interface ChatMessageEvent {
+  event: "participant_events.chat_message";
+  data: {
+    data: {
+      participant: { name: string; is_host: boolean; email: string | null };
+      timestamp: { absolute: string; relative: number };
+      data: { text: string; to: string };
+    };
+  };
+}
+
 /** Any event the fake can wrap in a signed webhook envelope. */
-export type RecallEvent = BotStatusChangeEvent | TranscriptDataEvent;
+export type RecallEvent =
+  | BotStatusChangeEvent
+  | TranscriptDataEvent
+  | ChatMessageEvent;
 
 export interface RecallFakeOptions {
   seed: string;
@@ -106,6 +121,17 @@ export interface TranscriptDataOptions {
   words: string[];
   speaker?: string;
   /** ISO-8601 absolute timestamp for the words; deterministic default. */
+  at?: string;
+}
+
+export interface ChatMessageOptions {
+  text: string;
+  speaker?: string;
+  isHost?: boolean;
+  email?: string | null;
+  /** Chat recipient (`everyone` or a participant name); default `everyone`. */
+  to?: string;
+  /** ISO-8601 absolute timestamp for the message; deterministic default. */
   at?: string;
 }
 
@@ -191,6 +217,31 @@ export class RecallFake {
             text,
             start_timestamp: { absolute },
           })),
+        },
+      },
+    };
+  }
+
+  /**
+   * Synthesize an incoming `participant_events.chat_message` payload (#188),
+   * matching the shape the CLI webhook handler consumes: sender under
+   * `data.data.participant`, timestamp under `data.data.timestamp`, and the
+   * message body under `data.data.data.{text,to}`. Byte-stable given its args.
+   */
+  chatMessage(options: ChatMessageOptions): ChatMessageEvent {
+    const absolute = options.at ?? isoAt(90);
+    const relative = (Date.parse(absolute) - BASE_EPOCH_MS) / 1000;
+    return {
+      event: "participant_events.chat_message",
+      data: {
+        data: {
+          participant: {
+            name: options.speaker ?? DEFAULT_SPEAKER,
+            is_host: options.isHost ?? false,
+            email: options.email ?? null,
+          },
+          timestamp: { absolute, relative },
+          data: { text: options.text, to: options.to ?? "everyone" },
         },
       },
     };

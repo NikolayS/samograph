@@ -150,7 +150,11 @@ describe("cmdJoin payload + saved state", () => {
     );
     expect(webhookEp).toBeDefined();
     expect(webhookEp.url).toStartWith(WEBHOOK_PREFIX);
-    expect(webhookEp.events).toEqual(["transcript.data"]);
+    // The webhook endpoint now also carries incoming meeting chat (#188).
+    expect(webhookEp.events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
 
     expect(rc.video_mixed_flv).toBeUndefined();
     const rtmpEp = rc.realtime_endpoints.find((e: any) =>
