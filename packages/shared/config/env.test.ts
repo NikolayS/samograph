@@ -12,6 +12,7 @@ import {
   assertNoDevDefaultSecrets,
   usingDevDefaultSecrets,
   resolveSamoEnv,
+  resolveMagicLinkBaseUrl,
   DEV_DEFAULT_SECRETS,
   APP_API_SIGNING_SECRETS,
   WS_HUB_SIGNING_SECRETS,
@@ -38,6 +39,36 @@ describe("resolveSamoEnv — default prod (fail-safe)", () => {
   });
   it("is 'preview' for the exact value 'preview' (prod-mode, distinguishable)", () => {
     expect(resolveSamoEnv({ SAMO_ENV: "preview" })).toBe("preview");
+  });
+});
+
+describe("resolveMagicLinkBaseUrl — per-env callback base (#190)", () => {
+  const PROD = "https://samograph.samo.team";
+  const PREVIEW = "https://samograph-somebranch.samo.cat";
+  const DEFAULT = "https://samograph.dev";
+
+  it("prefers BASE_URL when it is set and non-empty (preview → its own host)", () => {
+    // samohost preview: BASE_URL = the env's own host, WEB_ORIGIN = prod.
+    expect(resolveMagicLinkBaseUrl({ BASE_URL: PREVIEW, WEB_ORIGIN: PROD }, DEFAULT)).toBe(PREVIEW);
+  });
+
+  it("trims surrounding whitespace on BASE_URL", () => {
+    expect(resolveMagicLinkBaseUrl({ BASE_URL: `  ${PREVIEW}  `, WEB_ORIGIN: PROD }, DEFAULT)).toBe(
+      PREVIEW,
+    );
+  });
+
+  it("falls back to WEB_ORIGIN when BASE_URL is empty or whitespace-only", () => {
+    expect(resolveMagicLinkBaseUrl({ BASE_URL: "", WEB_ORIGIN: PROD }, DEFAULT)).toBe(PROD);
+    expect(resolveMagicLinkBaseUrl({ BASE_URL: "   ", WEB_ORIGIN: PROD }, DEFAULT)).toBe(PROD);
+  });
+
+  it("falls back to WEB_ORIGIN when BASE_URL is absent (prod unchanged)", () => {
+    expect(resolveMagicLinkBaseUrl({ WEB_ORIGIN: PROD }, DEFAULT)).toBe(PROD);
+  });
+
+  it("falls back to the entrypoint default when neither BASE_URL nor WEB_ORIGIN is set", () => {
+    expect(resolveMagicLinkBaseUrl({}, DEFAULT)).toBe(DEFAULT);
   });
 });
 
