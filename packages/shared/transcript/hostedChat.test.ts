@@ -118,7 +118,7 @@ describe("formatTranscriptLineWithKind — the shared `Name (chat):` formatter (
 
   it("normalize→format round-trips to #189's chat line (single source of truth)", () => {
     const row = normalizeTranscriptEventRow(chatEvent({ name: "Alice", text: "hello everyone" }))!;
-    expect(formatTranscriptLineWithKind(row)).toBe(normalizeChatMessageLine(chatEvent({ name: "Alice", text: "hello everyone" })));
+    expect(formatTranscriptLineWithKind(row)).toBe(normalizeChatMessageLine(chatEvent({ name: "Alice", text: "hello everyone" }))!);
     expect(formatTranscriptLineWithKind(row)).toBe("[2026-01-01 00:01:30] Alice (chat): hello everyone");
   });
 });

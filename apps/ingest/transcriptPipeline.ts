@@ -17,8 +17,11 @@
  * `seq` allocation per call (see {@link createTranscriptPipeline}).
  */
 import type { SQL } from "bun";
-import { normalizeTranscriptLine } from "../../packages/shared/transcript/index.ts";
-import type { TranscriptPublisher } from "../../packages/shared/transcript/publisher.ts";
+import { normalizeTranscriptEventRow } from "../../packages/shared/transcript/index.ts";
+import type {
+  TranscriptLineFrame,
+  TranscriptPublisher,
+} from "../../packages/shared/transcript/publisher.ts";
 import type { Dispatch, ValidatedEvent } from "./webhook.ts";
 
 /** Counter port for `transcript_lines_total{region}` (§5.11). */
@@ -155,24 +158,30 @@ export function createTranscriptPipeline(
     tx: SQL,
     validated: ValidatedEvent,
   ): Promise<void> {
-    // §5.4 / §6.2 #1 — REUSE the normalizer. `null` ⇒ not a transcript line.
-    const line = normalizeTranscriptLine(validated.payload);
-    if (line === null) return;
+    // §5.4 / §6.2 #1 — REUSE the shared normalizer, now carrying the line KIND
+    // (#195). It returns marker-free structured columns for a `transcript.data`
+    // utterance (kind='speech') OR an incoming `participant_events.chat_message`
+    // (kind='chat'), and sanitizes every field (CR/LF collapse) so untrusted chat
+    // text cannot forge a spoken line. `null` ⇒ not a transcript-bearing event.
+    const row = normalizeTranscriptEventRow(validated.payload);
+    if (row === null) return;
 
-    const { ts, speaker, text } = splitCanonicalLine(line);
+    const { kind, ts, speaker, text } = row;
     const tsLiteral = utcLiteral(ts);
     const callId = validated.callId;
 
     // Serialize per-call seq allocation within the tx (see the doc comment).
     await tx`SELECT pg_advisory_xact_lock(hashtext(${callId}))`;
 
-    // Append-only insert allocating the next per-call seq atomically.
+    // Append-only insert allocating the next per-call seq atomically. `kind` is
+    // persisted alongside the line (migration 0008, DEFAULT 'speech'); the
+    // ` (chat)` marker is a render concern, never stored in `speaker`/`text`.
     const inserted = (await tx`
-      INSERT INTO transcripts (call_id, seq, ts, speaker, text)
+      INSERT INTO transcripts (call_id, seq, ts, speaker, text, kind)
       SELECT ${callId},
              COALESCE((SELECT MAX(seq) FROM transcripts WHERE call_id = ${callId}), 0) + 1,
              COALESCE(${tsLiteral}::timestamptz, now()),
-             ${speaker}, ${text}
+             ${speaker}, ${text}, ${kind}
       RETURNING seq`) as unknown as Array<{ seq: number | bigint }>;
     const seq = Number(inserted[0].seq);
 
@@ -190,16 +199,19 @@ export function createTranscriptPipeline(
     const region = regionRows[0]?.region ?? "unknown";
 
     // Publish on the per-call channel, on the SAME tx so a LISTEN/NOTIFY impl is
-    // exactly-once on commit. Then count the persisted line.
-    await deps.publisher.publish(
-      { type: "line", call_id: callId, seq, ts, speaker, text },
-      tx,
-    );
+    // exactly-once on commit. A chat line carries `kind='chat'` so the ws-hub /
+    // web render `Name (chat):`; a speech line omits `kind` (backward-compatible
+    // wire shape). Then count the persisted line.
+    const frame: TranscriptLineFrame = { type: "line", call_id: callId, seq, ts, speaker, text };
+    if (kind === "chat") frame.kind = "chat";
+    await deps.publisher.publish(frame, tx);
     deps.metrics.incTranscriptLines(region);
   }
 
+  // Act on the transcript-bearing events (spoken audio + incoming meeting chat,
+  // #195); `bot.status_change` flows to the lifecycle issue (#79), never here.
   const dispatch: Dispatch = (tx, validated) =>
-    validated.kind === "transcript.data"
+    validated.kind === "transcript.data" || validated.kind === "participant_events.chat_message"
       ? handleTranscriptEvent(tx, validated)
       : undefined;
 

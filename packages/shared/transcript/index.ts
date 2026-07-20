@@ -152,12 +152,87 @@ export function normalizeTranscriptEvent(
   return null;
 }
 
+/**
+ * The structured columns of ONE normalized transcript-bearing event — the shape
+ * the HOSTED ingest path persists (`transcripts.{ts,speaker,text,kind}`) and the
+ * wire/download re-render from. Unlike {@link normalizeTranscriptEvent} (which
+ * returns a pre-formatted line string), this keeps `speaker` MARKER-FREE and
+ * carries the `kind` separately, so the ` (chat)` marker is purely a render
+ * concern ({@link formatTranscriptLineWithKind}).
+ */
+export interface NormalizedTranscriptRow {
+  kind: TranscriptLineKind;
+  /** `YYYY-MM-DD HH:MM:SS` (may be "" when the source carried no timestamp). */
+  ts: string;
+  /** Sanitized sender/speaker; `"?"` when absent/blank. NO ` (chat)` marker. */
+  speaker: string;
+  /** Sanitized utterance / message text (one physical line). */
+  text: string;
+}
+
+/**
+ * Normalize a `transcript.data` (kind=speech) or `participant_events.chat_message`
+ * (kind=chat, #188) payload to structured {@link NormalizedTranscriptRow} columns,
+ * or `null` for anything else / empty (never throws). Every field is sanitized
+ * exactly like {@link normalizeTranscriptLine} / {@link normalizeChatMessageLine}
+ * ({@link sanitizeTranscriptField} — CR/LF + whitespace collapse, trim), so
+ * untrusted chat text cannot inject a line break or forge a second line; the
+ * timestamp slicing and `"?"` speaker default match those two byte-for-byte.
+ */
+export function normalizeTranscriptEventRow(payload: unknown): NormalizedTranscriptRow | null {
+  const p = (payload ?? {}) as { event?: string };
+  if (p.event === "transcript.data") {
+    const inner = (payload as TranscriptDataPayload).data?.data ?? {};
+    const words = inner.words ?? [];
+    if (!words.length) return null;
+    const text = sanitizeTranscriptField(words.map((w) => w?.text ?? "").join(" "));
+    const speaker = sanitizeTranscriptField(inner.participant?.name ?? "") || "?";
+    const absolute = words[0]?.start_timestamp?.absolute ?? "";
+    return { kind: "speech", ts: absolute.slice(0, 19).replace("T", " "), speaker, text };
+  }
+  if (p.event === CHAT_TRANSCRIPT_EVENT) {
+    const inner = (payload as ChatMessagePayload).data?.data ?? {};
+    const text = sanitizeTranscriptField(inner.data?.text ?? "");
+    if (!text) return null;
+    const speaker = sanitizeTranscriptField(inner.participant?.name ?? "") || "?";
+    const absolute = inner.timestamp?.absolute ?? "";
+    return { kind: "chat", ts: absolute.slice(0, 19).replace("T", " "), speaker, text };
+  }
+  return null;
+}
+
+/** Structured input to {@link formatTranscriptLineWithKind}. */
+export interface KindedLineInput {
+  ts: string;
+  speaker: string;
+  text: string;
+  /** `chat` renders the ` (chat)` marker; `speech`/absent render without it. */
+  kind?: TranscriptLineKind;
+}
+
+/**
+ * The ONE shared formatter for a canonical transcript line that carries a kind:
+ *
+ *   speech (or an absent kind) → `[ts] speaker: text`  (byte-identical to the CLI)
+ *   chat                       → `[ts] speaker (chat): text`  (#188/#195)
+ *
+ * The web live renderer AND the plain-text download reuse it, so `Name (chat):`
+ * has a single source of truth. The speaker is emitted verbatim (already
+ * sanitized/`?`-defaulted upstream); the caller owns any trailing "\n".
+ */
+export function formatTranscriptLineWithKind(input: KindedLineInput): string {
+  const marker = input.kind === "chat" ? CHAT_LINE_MARKER : "";
+  return `[${input.ts}] ${input.speaker}${marker}: ${input.text}`;
+}
+
 /** A stored transcript row rendered back to the canonical CLI line (Story 3). */
 export interface RenderableTranscriptLine {
   /** Either the canonical `YYYY-MM-DD HH:MM:SS` or an ISO `…THH:MM:SS.sssZ`. */
   ts: string;
   speaker: string | null;
   text: string;
+  /** Line kind (#195): a `chat` row renders the ` (chat)` marker after the name. */
+  kind?: TranscriptLineKind;
 }
 
 /**
@@ -172,15 +247,23 @@ function canonicalTs(ts: string): string {
 
 /**
  * Render one stored transcript row to the canonical CLI line
- *     [YYYY-MM-DD HH:MM:SS] Speaker: utterance
+ *     [YYYY-MM-DD HH:MM:SS] Speaker: utterance          (kind='speech'/absent)
+ *     [YYYY-MM-DD HH:MM:SS] Speaker (chat): utterance    (kind='chat', #195)
  * byte-identical to {@link normalizeTranscriptLine}: the `T`/millis/`Z` are
  * dropped from an ISO `ts`, and a null/blank speaker defaults to `"?"` exactly
  * as the normalizer does. Persisted `speaker`/`text` are already sanitized at
- * ingest, so no re-sanitization is applied (it would be a no-op).
+ * ingest, so no re-sanitization is applied (it would be a no-op). Delegates to
+ * {@link formatTranscriptLineWithKind} so the ` (chat)` marker has one source of
+ * truth shared with the live web renderer.
  */
 export function renderTranscriptLine(line: RenderableTranscriptLine): string {
   const speaker = (line.speaker ?? "").trim() || "?";
-  return `[${canonicalTs(line.ts)}] ${speaker}: ${line.text}`;
+  return formatTranscriptLineWithKind({
+    ts: canonicalTs(line.ts),
+    speaker,
+    text: line.text,
+    kind: line.kind,
+  });
 }
 
 /**
