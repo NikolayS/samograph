@@ -18,6 +18,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { sha256Hex } from "../../packages/shared/crypto.ts";
+import { perEnvBaseUrl } from "../../packages/shared/config/env.ts";
 import type { SQL } from "bun";
 import type { BotJoinMetrics } from "./botJoinMetrics.ts";
 
@@ -307,23 +308,38 @@ export function regionTunnelBase(region: string): string {
 }
 
 /**
- * The operator-configured public webhook base (§5.3), read from `PUBLIC_WEBHOOK_BASE`
- * (e.g. `https://samograph-main.samo.cat`). Returns the bare origin (path/trailing
- * slash stripped), or `undefined` when unset (the region's tunnel base applies).
- * A set-but-malformed or non-https value throws a clear error — a real bot must not
- * silently register an unreachable/insecure webhook destination.
+ * The public webhook base the Recall transcript webhook (which carries the per-call
+ * ingest secret) registers against (§5.3). Returns the bare origin (path/trailing
+ * slash stripped), or `undefined` when nothing is set (the region's tunnel base
+ * applies). A set-but-malformed or non-https value throws a clear error — a real
+ * bot must not silently register an unreachable/insecure webhook destination.
+ *
+ * PER-ENV (#193, same class as #190/#191): PREFER the per-env host samohost injects
+ * on previews as `BASE_URL` over the prod-pointed `PUBLIC_WEBHOOK_BASE`. Without
+ * this, a preview bot registers its transcript webhook against prod
+ * (`samograph.samo.team`) and its live transcript lands in prod's stream — the
+ * preview's own transcript comes back empty. Prod sets neither a preview `BASE_URL`
+ * nor a divergent `PUBLIC_WEBHOOK_BASE`, so prod resolves to `PUBLIC_WEBHOOK_BASE`
+ * exactly as before. The https validation covers whichever source wins.
+ *
+ * SECURITY: resolved from the TRUSTED process env at startup, NEVER a request
+ * `Host` / `X-Forwarded-Host` (spoofable behind a proxy) — a webhook carrying the
+ * ingest secret must never target an attacker-controlled host (cf. resolveSamoEnv).
  */
 export function publicWebhookBase(env: Record<string, string | undefined> = process.env): string | undefined {
-  const raw = (env.PUBLIC_WEBHOOK_BASE ?? "").trim();
+  // Prefer BASE_URL (the preview's own host) over PUBLIC_WEBHOOK_BASE (prod).
+  const perEnv = perEnvBaseUrl(env);
+  const source = perEnv ? "BASE_URL" : "PUBLIC_WEBHOOK_BASE";
+  const raw = (perEnv ?? env.PUBLIC_WEBHOOK_BASE ?? "").trim();
   if (!raw) return undefined;
   let parsed: URL;
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error(`PUBLIC_WEBHOOK_BASE is not a valid URL: ${raw}`);
+    throw new Error(`${source} is not a valid URL: ${raw}`);
   }
   if (parsed.protocol !== "https:") {
-    throw new Error(`PUBLIC_WEBHOOK_BASE must be an https:// URL (got ${parsed.protocol}//…)`);
+    throw new Error(`${source} must be an https:// URL (got ${parsed.protocol}//…)`);
   }
   return parsed.origin;
 }

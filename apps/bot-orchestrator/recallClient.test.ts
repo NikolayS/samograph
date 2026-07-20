@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { RECALL_BASE } from "../../src/config.ts";
-import { BOT_NAME, type CreateBotRequest } from "./index.ts";
+import { BOT_NAME, publicWebhookBase, type CreateBotRequest } from "./index.ts";
 import { mapLifecycleCode } from "../ingest/botLifecycle.ts";
 import {
   isRecallLive,
@@ -180,6 +180,49 @@ describe("getRecallClient — flag ON issues the real POST /bot/ (no egress, stu
     expect(calls[0]!.url).toBe(`${RECALL_BASE}/bot/bot_live_1/send_chat_message/`);
     expect(calls[0]!.body).toEqual({ message: "hi" });
     expect(calls[1]!.url).toBe(`${RECALL_BASE}/bot/bot_live_1/leave_call/`);
+  });
+});
+
+describe("per-env webhook base flows into the created-bot realtime endpoint (#193)", () => {
+  // The base app-api resolves at startup (server.ts) from the process env: on a
+  // preview samohost injects BASE_URL=<the env's own host> while PUBLIC_WEBHOOK_BASE
+  // stays prod. That resolved base is what the create-bot realtime endpoint must
+  // carry — otherwise the preview bot streams its transcript to prod's webhook.
+  const PREVIEW = "https://samograph-b.samo.cat";
+  const PROD = "https://samograph.samo.team";
+  const KEY = "recall-key-live-123";
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.RECALL_API_KEY;
+    process.env.RECALL_API_KEY = KEY;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RECALL_API_KEY;
+    else process.env.RECALL_API_KEY = saved;
+  });
+
+  it("registers realtime_endpoints[0].url on the BASE_URL host, never prod", async () => {
+    // 1) Resolve the base exactly as server.ts does — preview BASE_URL wins.
+    const base = publicWebhookBase({ BASE_URL: PREVIEW, PUBLIC_WEBHOOK_BASE: PROD });
+    expect(base).toBe(PREVIEW);
+
+    // 2) Drive the real create-bot path (stub fetch, no egress) with that base.
+    const { fetchFn, calls } = makeStubFetch(() => jsonResponse({ id: "bot_live_1" }));
+    const client = getRecallClient({
+      env: { RECALL_LIVE: "1", RECALL_API_KEY: KEY },
+      fetch: fetchFn,
+    });
+    await client.createBot(reqWith(base!, SECRET));
+
+    // 3) The POSTed realtime endpoint carries the preview host, not prod.
+    const body = calls[0]!.body as Record<string, any>;
+    const url = body.recording_config.realtime_endpoints[0].url as string;
+    expect(url).toBe(`${PREVIEW}/webhook?t=${SECRET}`);
+    expect(url.startsWith(PROD)).toBe(false);
+
+    // 4) buildRealCreateBotPayload directly agrees (the pure shape assertion).
+    const payload = buildRealCreateBotPayload(reqWith(base!, SECRET)) as Record<string, any>;
+    expect(payload.recording_config.realtime_endpoints[0].url).toBe(`${PREVIEW}/webhook?t=${SECRET}`);
   });
 });
 

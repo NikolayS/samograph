@@ -94,11 +94,29 @@ export function resolveSamoEnv(env: EnvLike): SamoEnv {
  * against an attacker-controlled host.
  */
 export function resolveMagicLinkBaseUrl(env: EnvLike, webOriginDefault: string): string {
+  // Preserve the pre-#190 fallback EXACTLY: the per-env host (BASE_URL) when
+  // samohost set one, else WEB_ORIGIN when present, else the caller's default
+  // (prod: samograph.dev; dev: localhost).
+  return perEnvBaseUrl(env) ?? env.WEB_ORIGIN ?? webOriginDefault;
+}
+
+/**
+ * The per-env public host samohost injects on previews as `BASE_URL` (e.g.
+ * `https://samograph-somebranch.samo.cat`), trimmed — or `undefined` when it is
+ * absent/blank (prod, dev, and any env samohost did not template). This is the
+ * shared #190/#191 primitive: previews get their OWN https host via `BASE_URL`
+ * while the prod-pointed defaults (`WEB_ORIGIN`, `PUBLIC_WEBHOOK_BASE`) stay put,
+ * so every per-env-aware URL (magic-link callback base, Recall webhook base)
+ * prefers it uniformly. This value performs NO scheme validation — callers that
+ * need https (e.g. the ingest-secret-carrying webhook) validate the result.
+ *
+ * SECURITY: a TRUSTED env value resolved from the process env at startup, NOT the
+ * request `Host` / `X-Forwarded-Host`, which are spoofable behind a proxy (same
+ * threat model as {@link resolveSamoEnv}).
+ */
+export function perEnvBaseUrl(env: EnvLike): string | undefined {
   const baseUrl = env.BASE_URL?.trim();
-  if (baseUrl) return baseUrl;
-  // Preserve the pre-#190 fallback EXACTLY: WEB_ORIGIN when present, else the
-  // caller's default (prod: samograph.dev; dev: localhost).
-  return env.WEB_ORIGIN ?? webOriginDefault;
+  return baseUrl ? baseUrl : undefined;
 }
 
 /**
