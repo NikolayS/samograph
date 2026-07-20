@@ -320,6 +320,45 @@ describe("configurable public webhook base (§5.2; issue #88 VM deploy)", () => 
   });
 });
 
+describe("publicWebhookBase — per-env host preference (#193; same class as #190/#191)", () => {
+  const PREVIEW = "https://samograph-b.samo.cat";
+  const PROD = "https://samograph.samo.team";
+
+  it("(a) prefers BASE_URL over PUBLIC_WEBHOOK_BASE (preview → its own host)", () => {
+    // samohost preview shape: BASE_URL = the env's own https host, while
+    // PUBLIC_WEBHOOK_BASE stays pointed at prod. The webhook that carries the
+    // ingest secret MUST register against the preview host or the live transcript
+    // lands in prod's stream (an empty preview transcript).
+    expect(publicWebhookBase({ BASE_URL: PREVIEW, PUBLIC_WEBHOOK_BASE: PROD })).toBe(PREVIEW);
+  });
+
+  it("(c) falls back to PUBLIC_WEBHOOK_BASE when BASE_URL is unset/empty (prod unchanged)", () => {
+    // Prod sets neither a preview BASE_URL nor a divergent PUBLIC_WEBHOOK_BASE, so
+    // prod behavior is IDENTICAL to before this change.
+    expect(publicWebhookBase({ PUBLIC_WEBHOOK_BASE: PROD })).toBe(PROD);
+    expect(publicWebhookBase({ BASE_URL: "", PUBLIC_WEBHOOK_BASE: PROD })).toBe(PROD);
+    expect(publicWebhookBase({ BASE_URL: "   ", PUBLIC_WEBHOOK_BASE: PROD })).toBe(PROD);
+  });
+
+  it("(d) rejects a non-https / malformed BASE_URL (existing https validation preserved)", () => {
+    // A webhook carrying the ingest secret must never target an insecure/malformed
+    // host — the same fail-closed https guard the function already applied to
+    // PUBLIC_WEBHOOK_BASE now covers the preferred BASE_URL.
+    expect(() =>
+      publicWebhookBase({ BASE_URL: "http://insecure", PUBLIC_WEBHOOK_BASE: PROD }),
+    ).toThrow(/https/);
+    expect(() =>
+      publicWebhookBase({ BASE_URL: "not a url", PUBLIC_WEBHOOK_BASE: PROD }),
+    ).toThrow(/BASE_URL/);
+  });
+
+  it("trims surrounding whitespace on BASE_URL and returns the bare origin", () => {
+    expect(publicWebhookBase({ BASE_URL: `  ${PREVIEW}/ignored  `, PUBLIC_WEBHOOK_BASE: PROD })).toBe(
+      PREVIEW,
+    );
+  });
+});
+
 describe("orchestrateJoin — createBot path (§5.2, §5.3, §4.4)", () => {
   it("mints secret, persists ONLY the hash, calls createBot, flips PENDING→JOINING", async () => {
     const secret = "fixed-deterministic-ingest-secret-000000000";
