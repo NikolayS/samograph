@@ -79,21 +79,42 @@ export async function replayTranscripts(
   return rows.map(mapRow);
 }
 
+/** Options for {@link fetchFullTranscript} (the `.txt` download read). */
+export interface FullTranscriptOptions {
+  /**
+   * Exclude typed meeting-chat comments (#197). When true the read filters to
+   * `kind = 'speech'` on the COLUMN — spoken lines only — so a "download without
+   * comments" can neither drop a genuine speech line that mentions "(chat)" nor
+   * keep a crafted chat line dressed up as speech. Default (false) is the full
+   * transcript, byte-identical to the pre-#197 download.
+   */
+  excludeComments?: boolean;
+}
+
 /**
  * The WHOLE finalized transcript of a call, ascending by `seq` — every line,
  * no window (Story 3: the downloadable transcript is the full call, not the
- * ~200-line backfill tail). RLS-scoped like the other reads: a foreign call
- * returns nothing. Runs after the tenancy gate has set `app.tenant_id`.
+ * ~200-line backfill tail). With {@link FullTranscriptOptions.excludeComments}
+ * the read is filtered to spoken lines (`kind='speech'`) by the COLUMN (#197).
+ * RLS-scoped like the other reads: a foreign call returns nothing. Runs after
+ * the tenancy gate has set `app.tenant_id`.
  */
 export async function fetchFullTranscript(
   tx: SQL,
   callId: string,
+  opts: FullTranscriptOptions = {},
 ): Promise<TranscriptLine[]> {
-  const rows = (await tx`
-    SELECT seq, ts, speaker, text, kind
-    FROM transcripts
-    WHERE call_id = ${callId}
-    ORDER BY seq ASC`) as unknown as TranscriptRow[];
+  const rows = (opts.excludeComments
+    ? await tx`
+        SELECT seq, ts, speaker, text, kind
+        FROM transcripts
+        WHERE call_id = ${callId} AND kind = 'speech'
+        ORDER BY seq ASC`
+    : await tx`
+        SELECT seq, ts, speaker, text, kind
+        FROM transcripts
+        WHERE call_id = ${callId}
+        ORDER BY seq ASC`) as unknown as TranscriptRow[];
   return rows.map(mapRow);
 }
 
