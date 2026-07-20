@@ -32,6 +32,7 @@ import {
 import { connect } from "../../packages/shared/db/index.ts";
 import {
   assertNoDevDefaultSecrets,
+  resolveMagicLinkBaseUrl,
   APP_API_SIGNING_SECRETS,
   type EnvLike,
 } from "../../packages/shared/config/env.ts";
@@ -79,7 +80,10 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
   assertNoDevDefaultSecrets(env, APP_API_SIGNING_SECRETS);
 
   const port = Number(env.APP_API_PORT ?? 8787);
-  const webOrigin = env.WEB_ORIGIN ?? "https://samograph.dev";
+  // #190: build the magic-link callback against THIS env's own public host —
+  // BASE_URL when samohost set it (previews), else WEB_ORIGIN (prod). Trusted env
+  // value only, never the request Host header.
+  const webOrigin = resolveMagicLinkBaseUrl(env, "https://samograph.dev");
   // Guaranteed non-dev-default + present by the fail-closed assert above.
   const sessionSecret = env.SESSION_SECRET as string;
   const magicLinkSecret = env.MAGIC_LINK_SECRET as string;

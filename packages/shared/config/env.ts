@@ -76,6 +76,32 @@ export function resolveSamoEnv(env: EnvLike): SamoEnv {
 }
 
 /**
+ * Resolve the public origin the magic-link callback URL is built against, per env
+ * (#190 — preview sign-in bounce).
+ *
+ * Each env MUST send its magic-link callback to ITS OWN public host, or a preview
+ * sign-in click lands on prod (`samograph.samo.team`) and the session cookie is
+ * set on the wrong origin. samohost injects `BASE_URL=<the env's own https host>`
+ * (e.g. `https://samograph-somebranch.samo.cat`) into every preview env's
+ * generated secrets.env while leaving `WEB_ORIGIN` pointed at prod, so we PREFER
+ * `BASE_URL` when it is set and non-empty and fall back to `WEB_ORIGIN` (then the
+ * entrypoint's own default) otherwise. Prod — which sets neither `BASE_URL` nor a
+ * divergent `WEB_ORIGIN` — is unaffected.
+ *
+ * SECURITY: this is a TRUSTED env value resolved from the process env at startup,
+ * NOT the request `Host` / `X-Forwarded-Host`, which are spoofable behind a proxy
+ * (same threat model as {@link resolveSamoEnv}). A magic link must never be minted
+ * against an attacker-controlled host.
+ */
+export function resolveMagicLinkBaseUrl(env: EnvLike, webOriginDefault: string): string {
+  const baseUrl = env.BASE_URL?.trim();
+  if (baseUrl) return baseUrl;
+  // Preserve the pre-#190 fallback EXACTLY: WEB_ORIGIN when present, else the
+  // caller's default (prod: samograph.dev; dev: localhost).
+  return env.WEB_ORIGIN ?? webOriginDefault;
+}
+
+/**
  * Names of the signing secrets that are MISSING or still equal to their
  * committed dev-default literal, in a stable order. `[]` means all are real.
  * Used by BOTH the prod fail-closed throw and the dev `usingDevSecrets` warn.

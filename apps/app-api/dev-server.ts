@@ -27,6 +27,7 @@ import {
 import { connect } from "../../packages/shared/db/index.ts";
 import {
   resolveSamoEnv,
+  resolveMagicLinkBaseUrl,
   usingDevDefaultSecrets,
   APP_API_SIGNING_SECRETS,
   type EnvLike,
@@ -102,7 +103,9 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
   assertDevEnv(env);
 
   const PORT = Number(env.APP_API_PORT ?? 8787);
-  const WEB_ORIGIN = env.WEB_ORIGIN ?? "http://localhost:3000";
+  // #190: same per-env callback base as prod — BASE_URL when set, else WEB_ORIGIN
+  // (local dev sets neither, so this stays http://localhost:3000).
+  const WEB_ORIGIN = resolveMagicLinkBaseUrl(env, "http://localhost:3000");
   const SESSION_SECRET = env.SESSION_SECRET ?? "dev-only-session-secret-change-me";
   const MAGIC_KID = env.MAGIC_LINK_KID ?? "dev-kid-1";
   const MAGIC_SECRET = env.MAGIC_LINK_SECRET ?? "dev-only-magic-link-secret-change-me";
