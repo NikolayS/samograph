@@ -326,15 +326,25 @@ export function PerCallTranscript({
       <DegradedBanner degraded={state.degraded} />
 
       <div className="samograph-transcript-actions">
-        {/* Story 3: the full transcript as a plain-text download. In share mode
-            the href carries the `share` token so an anonymous viewer downloads
-            exactly what they can read. Same origin — Caddy routes it to ws-hub. */}
+        {/* Story 3 + #197: the transcript as a plain-text download, offered two
+            ways — the FULL call (speech + typed chat comments) and a SPEECH-ONLY
+            variant (`?comments=exclude`, filtered server-side on the `kind`
+            column). In share mode each href carries the `share` token so an
+            anonymous viewer downloads exactly what they can read. Same origin —
+            Caddy routes it to ws-hub. */}
         <a
           className="samograph-download-transcript"
           href={transcriptDownloadHref(callId, auth)}
           download
         >
           Download transcript
+        </a>
+        <a
+          className="samograph-download-transcript-speech"
+          href={transcriptDownloadHref(callId, auth, { excludeComments: true })}
+          download
+        >
+          Download (speech only)
         </a>
       </div>
 

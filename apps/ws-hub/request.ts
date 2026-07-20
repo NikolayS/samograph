@@ -51,6 +51,17 @@ export function readCallCredentials(
   };
 }
 
+/**
+ * Whether the `.txt` download should EXCLUDE chat comments (#197). Only the
+ * explicit opt-in `?comments=exclude` filters to spoken lines (kind='speech');
+ * every other value — including absent — keeps the FULL transcript, so the
+ * default download is unchanged. The filter is applied on the `kind` COLUMN by
+ * the caller, never by parsing rendered text.
+ */
+export function parseExcludeComments(url: URL): boolean {
+  return url.searchParams.get("comments") === "exclude";
+}
+
 /** Parse a non-negative integer `?since_seq`; anything else → `null` (no cursor). */
 export function parseSinceSeq(url: URL): number | null {
   const raw = url.searchParams.get("since_seq");

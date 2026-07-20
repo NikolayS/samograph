@@ -88,18 +88,35 @@ async function throwTyped(res: Response, fallbackCode: string): Promise<never> {
   throw new AppApiError(code, message, retryable, res.status);
 }
 
+/** Options for {@link transcriptDownloadHref}. */
+export interface TranscriptDownloadOptions {
+  /**
+   * Exclude typed meeting-chat comments (#197) — the "speech only" download.
+   * Adds `?comments=exclude`, which the ws-hub applies on the `kind` column.
+   * Default (false/absent) is the FULL transcript, URL unchanged.
+   */
+  excludeComments?: boolean;
+}
+
 /**
  * Build the `GET /calls/:id/transcript.txt` DOWNLOAD URL (Story 3). Same-origin
  * by default (`baseUrl=""`); Caddy routes `/calls/:id/transcript*` to ws-hub. In
  * share mode the persisted `share` token rides as `?token=` so an anonymous
- * viewer can download exactly what they can read (§5.7).
+ * viewer can download exactly what they can read (§5.7). With
+ * {@link TranscriptDownloadOptions.excludeComments} the URL carries
+ * `?comments=exclude` for the speech-only download (#197).
  */
 export function transcriptDownloadHref(
   callId: string,
   auth: StreamAuth,
+  opts: TranscriptDownloadOptions = {},
   baseUrl = "",
 ): string {
-  return `${baseUrl}/calls/${encodeURIComponent(callId)}/transcript.txt${queryFor(auth)}`;
+  const params = new URLSearchParams();
+  if (opts.excludeComments) params.set("comments", "exclude");
+  if (auth.kind === "share") params.set("token", auth.token);
+  const q = params.toString();
+  return `${baseUrl}/calls/${encodeURIComponent(callId)}/transcript.txt${q ? `?${q}` : ""}`;
 }
 
 /** Append the auth/replay query a request needs (share token, `?since_seq`). */

@@ -20,7 +20,12 @@ import type { AuthorizeDeps, AuthorizeResult } from "../../packages/shared/auth/
 import { authorizeCall } from "../../packages/shared/auth/index.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { renderTranscriptText } from "../../packages/shared/transcript/index.ts";
-import { parseSinceSeq, readCallCredentials, type CallCredentials } from "./request.ts";
+import {
+  parseSinceSeq,
+  parseExcludeComments,
+  readCallCredentials,
+  type CallCredentials,
+} from "./request.ts";
 import {
   RequestRateCaps,
   shareCapKey,
@@ -164,6 +169,10 @@ export function createTranscriptHandler(
  * identical to the CLI writer / `renderTranscriptText`, SPEC §5.4), with a
  * `Content-Disposition: attachment` filename so the browser saves a file.
  *
+ * `?comments=exclude` (#197) filters the download to spoken lines only
+ * (`kind='speech'`) via the COLUMN — a "download without chat comments"; any
+ * other value (or none) yields the FULL transcript, so the default is unchanged.
+ *
  * Authorization goes through the SAME single tenancy gate as the read/stream
  * (`authorizeCall`, §5.6) behind the SAME session/share credentials, and the
  * read is RLS-scoped to the call's tenant. DENY → the same bodyless 403.
@@ -182,6 +191,7 @@ export function createTranscriptTextHandler(
     if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
 
     const callId = decodeURIComponent(match[1]);
+    const excludeComments = parseExcludeComments(url);
     const credentials = readCallCredentials(req, url, cookieName);
 
     const outcome = await deps.sql.begin(async (tx): Promise<ReadOutcome> => {
@@ -194,7 +204,10 @@ export function createTranscriptTextHandler(
       if (!authz.authorized) return { kind: "denied" };
       const rate = checkRestRate(deps, authz, credentials);
       if (!rate.allowed) return { kind: "rate_limited", retryAfterMs: rate.retryAfterMs };
-      return { kind: "ok", lines: await fetchFullTranscript(tx as unknown as SQL, callId) };
+      return {
+        kind: "ok",
+        lines: await fetchFullTranscript(tx as unknown as SQL, callId, { excludeComments }),
+      };
     });
 
     if (outcome.kind === "denied") return denied();
