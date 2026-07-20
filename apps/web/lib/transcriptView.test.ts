@@ -184,4 +184,34 @@ describe("formatRenderLine — byte-identical to the CLI (SPEC §5.4)", () => {
       formatRenderLine({ seq: 2, ts: TS, speaker: "SAMOGRAPH-WARNING", text: "tunnel recovered" }),
     ).toBe("[2026-01-01 00:01:30] SAMOGRAPH-WARNING: tunnel recovered");
   });
+
+  it("renders a chat line with the ` (chat)` marker after the name (#195)", () => {
+    expect(
+      formatRenderLine({ seq: 3, ts: TS, speaker: "Alice", text: "hello everyone", kind: "chat" }),
+    ).toBe("[2026-01-01 00:01:30] Alice (chat): hello everyone");
+  });
+
+  it("a speech (or kind-less) line renders with NO marker — backward compatible", () => {
+    expect(formatRenderLine({ seq: 4, ts: TS, speaker: "Bob", text: "spoke", kind: "speech" })).toBe(
+      "[2026-01-01 00:01:30] Bob: spoke",
+    );
+  });
+});
+
+describe("transcriptReducer — chat lines carry kind end-to-end (#195)", () => {
+  it("a chat line event finalizes to a line whose kind='chat' (rendered with the marker)", () => {
+    const next = reduce(initialTranscriptState("IN_CALL"), [
+      { type: "line", seq: 1, ts: TS, speaker: "Alice", text: "typed this", final: true, kind: "chat" },
+    ]);
+    expect(next.lines).toEqual([{ seq: 1, ts: TS, speaker: "Alice", text: "typed this", kind: "chat" }]);
+    expect(formatRenderLine(next.lines[0])).toBe("[2026-01-01 00:01:30] Alice (chat): typed this");
+  });
+
+  it("a speech line event finalizes WITHOUT a kind field (byte-identical to pre-#195)", () => {
+    const next = reduce(initialTranscriptState("IN_CALL"), [
+      { type: "line", seq: 2, ts: TS, speaker: "Bob", text: "spoke", final: true },
+    ]);
+    expect(next.lines).toEqual([{ seq: 2, ts: TS, speaker: "Bob", text: "spoke" }]);
+    expect("kind" in next.lines[0]).toBe(false);
+  });
 });

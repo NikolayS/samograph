@@ -11,6 +11,7 @@
  * backend track and live in `apps/ws-hub`, not here.
  */
 import type { SQL } from "bun";
+import type { TranscriptLineKind } from "./index.ts";
 
 /** A persisted transcript line fanned out on a call's channel (§5.4/§5.10 shape). */
 export interface TranscriptLineFrame {
@@ -23,6 +24,13 @@ export interface TranscriptLineFrame {
   speaker: string;
   /** The utterance only — `[ts] speaker: text` re-renders the CLI line. */
   text: string;
+  /**
+   * Line kind (#195): a `chat` frame re-renders as `[ts] speaker (chat): text`.
+   * OMITTED for a spoken line (kind='speech') so the wire shape stays byte-
+   * identical to pre-#195. The `pg_notify` SIGNAL never carries it — the ws-hub
+   * fan-in re-hydrates `kind` from the persisted `transcripts.kind` column.
+   */
+  kind?: TranscriptLineKind;
 }
 
 /**

@@ -10,7 +10,11 @@
  *
  * STUB: signatures only — behavioral bodies land in the GREEN commit.
  */
+import { formatTranscriptLineWithKind } from "../../../packages/shared/transcript/index.ts";
 import type { CallStatus } from "./appApiClient.ts";
+
+/** Whether a line is spoken audio ('speech') or a typed meeting-chat message ('chat', #195). */
+export type TranscriptLineKind = "speech" | "chat";
 
 /** Append-only transcript line, canonical shape (SPEC §4.2, §5.4). */
 export interface TranscriptLine {
@@ -20,6 +24,11 @@ export interface TranscriptLine {
   ts: string;
   speaker: string;
   text: string;
+  /**
+   * Line kind (#195): a `chat` line renders `[ts] speaker (chat): text`. OMITTED
+   * for a spoken line so the shape stays byte-identical to pre-#195.
+   */
+  kind?: TranscriptLineKind;
 }
 
 /** The speaker label that marks a system tunnel/ingest warning line (§4.5). */
@@ -27,7 +36,7 @@ export const SAMOGRAPH_WARNING_SPEAKER = "SAMOGRAPH-WARNING";
 
 /** Events the per-call page consumes from `/calls/:id/stream` (SPEC §5.5). */
 export type TranscriptStreamEvent =
-  | { type: "line"; seq: number; ts: string; speaker: string; text: string; final: boolean }
+  | { type: "line"; seq: number; ts: string; speaker: string; text: string; final: boolean; kind?: TranscriptLineKind }
   | { type: "status"; status: CallStatus }
   | { type: "degraded"; degraded: boolean }
   | { type: "gap"; sinceSeq: number; untilSeq: number }
@@ -82,9 +91,19 @@ export function initialTranscriptState(
   };
 }
 
-/** Render a line in the canonical CLI format `[ts] Speaker: text` (SPEC §5.4). */
+/**
+ * Render a line in the canonical CLI format `[ts] Speaker: text` (SPEC §5.4), or
+ * `[ts] Speaker (chat): text` for a chat line (#195). Delegates to the ONE shared
+ * formatter ({@link formatTranscriptLineWithKind}) so the ` (chat)` marker has a
+ * single source of truth across the CLI, the hosted ingest, and this web renderer.
+ */
 export function formatRenderLine(line: TranscriptLine): string {
-  return `[${line.ts}] ${line.speaker}: ${line.text}`;
+  return formatTranscriptLineWithKind({
+    ts: line.ts,
+    speaker: line.speaker,
+    text: line.text,
+    kind: line.kind,
+  });
 }
 
 function lineFromEvent(event: {
@@ -92,8 +111,13 @@ function lineFromEvent(event: {
   ts: string;
   speaker: string;
   text: string;
+  kind?: TranscriptLineKind;
 }): TranscriptLine {
-  return { seq: event.seq, ts: event.ts, speaker: event.speaker, text: event.text };
+  const line: TranscriptLine = { seq: event.seq, ts: event.ts, speaker: event.speaker, text: event.text };
+  // Only a chat line carries `kind` (#195); a speech line has no `kind` key so
+  // its shape stays byte-identical to pre-#195.
+  if (event.kind === "chat") line.kind = "chat";
+  return line;
 }
 
 /**

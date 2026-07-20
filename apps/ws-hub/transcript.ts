@@ -28,6 +28,12 @@ export interface TranscriptLine {
   ts: string;
   speaker: string | null;
   text: string;
+  /**
+   * Line kind (#195): 'chat' re-renders as `[ts] speaker (chat): text`. OMITTED
+   * for a spoken line so the replay/backfill wire shape stays byte-identical to
+   * pre-#195 (a `chat` marker is a render concern, never stored in speaker/text).
+   */
+  kind?: "chat" | "speech";
 }
 
 /** A raw `transcripts` row as returned by the driver. */
@@ -36,11 +42,12 @@ interface TranscriptRow {
   ts: Date | string;
   speaker: string | null;
   text: string;
+  kind?: string | null;
 }
 
 /** Normalize a driver row into a JSON-stable {@link TranscriptLine}. */
 function mapRow(row: TranscriptRow): TranscriptLine {
-  return {
+  const line: TranscriptLine = {
     // `seq` is a Postgres bigint; coerce to a JS number (call seqs are well
     // within Number.MAX_SAFE_INTEGER) so the wire shape is plain JSON.
     seq: Number(row.seq),
@@ -48,6 +55,9 @@ function mapRow(row: TranscriptRow): TranscriptLine {
     speaker: row.speaker ?? null,
     text: row.text,
   };
+  // Only a chat line carries `kind` on the wire (#195); speech omits it.
+  if (row.kind === "chat") line.kind = "chat";
+  return line;
 }
 
 /**
@@ -62,7 +72,7 @@ export async function replayTranscripts(
   sinceSeq: number,
 ): Promise<TranscriptLine[]> {
   const rows = (await tx`
-    SELECT seq, ts, speaker, text
+    SELECT seq, ts, speaker, text, kind
     FROM transcripts
     WHERE call_id = ${callId} AND seq > ${sinceSeq}
     ORDER BY seq ASC`) as unknown as TranscriptRow[];
@@ -80,7 +90,7 @@ export async function fetchFullTranscript(
   callId: string,
 ): Promise<TranscriptLine[]> {
   const rows = (await tx`
-    SELECT seq, ts, speaker, text
+    SELECT seq, ts, speaker, text, kind
     FROM transcripts
     WHERE call_id = ${callId}
     ORDER BY seq ASC`) as unknown as TranscriptRow[];
@@ -98,9 +108,9 @@ export async function backfillRecent(
   limit: number = DEFAULT_BACKFILL_LIMIT,
 ): Promise<TranscriptLine[]> {
   const rows = (await tx`
-    SELECT seq, ts, speaker, text
+    SELECT seq, ts, speaker, text, kind
     FROM (
-      SELECT seq, ts, speaker, text
+      SELECT seq, ts, speaker, text, kind
       FROM transcripts
       WHERE call_id = ${callId}
       ORDER BY seq DESC

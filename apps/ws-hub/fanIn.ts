@@ -68,6 +68,8 @@ interface TranscriptRow {
   ts: Date | string;
   speaker: string | null;
   text: string;
+  /** Line kind (#195): 'speech' (default) or 'chat'. */
+  kind?: string | null;
 }
 
 /**
@@ -85,11 +87,11 @@ export async function fetchLineFrame(
     await tx.unsafe("SET LOCAL ROLE samograph_app");
     await setTenant(tx as unknown as SQL, tenantId);
     const rows = (await tx`
-      SELECT ts, speaker, text FROM transcripts
+      SELECT ts, speaker, text, kind FROM transcripts
       WHERE call_id = ${callId} AND seq = ${seq}`) as unknown as TranscriptRow[];
     if (rows.length === 0) return null;
     const row = rows[0];
-    return {
+    const frame: TranscriptLineFrame = {
       type: "line",
       call_id: callId,
       seq,
@@ -97,6 +99,11 @@ export async function fetchLineFrame(
       speaker: row.speaker ?? "",
       text: row.text,
     };
+    // Re-hydrate the KIND the ingest pipeline persisted (#195): a chat line
+    // carries `kind='chat'` so the stream renders `Name (chat):`; a spoken line
+    // omits `kind` entirely (backward-compatible frame shape).
+    if (row.kind === "chat") frame.kind = "chat";
+    return frame;
   });
 }
 

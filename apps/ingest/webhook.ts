@@ -73,7 +73,7 @@ export interface WebhookSecretProvider {
 
 /** A validated, authentic, tenant-scoped event handed to the dispatch seam. */
 export interface ValidatedEvent {
-  kind: "transcript.data" | "bot.status_change";
+  kind: "transcript.data" | "bot.status_change" | "participant_events.chat_message";
   /** The authenticated `?bot=` (= `calls.recall_bot_id`). */
   botId: string;
   callId: string;
@@ -122,10 +122,12 @@ export const WEBHOOK_MAX_BYTES = 1024 * 1024;
 
 const KIND_TRANSCRIPT = "transcript.data";
 const KIND_STATUS = "bot.status_change";
+/** Incoming meeting chat (`participant_events.chat_message`, #188/#195). */
+const KIND_CHAT = "participant_events.chat_message";
 
 interface ParsedEnvelope {
   recallEventId: string;
-  kind: "transcript.data" | "bot.status_change";
+  kind: "transcript.data" | "bot.status_change" | "participant_events.chat_message";
   /** `data.bot_id` for a status change (the body's self-claimed identity), else null. */
   bodyBotId: string | null;
   payload: { event: string; data: unknown };
@@ -149,7 +151,10 @@ function parseEnvelope(rawBody: string, headerEventId: string | null): ParsedEnv
   if (typeof value !== "object" || value === null) return null;
   const obj = value as Record<string, unknown>;
   const event = obj.event;
-  if (event !== KIND_TRANSCRIPT && event !== KIND_STATUS) return null;
+  // Accept spoken transcript, bot status, AND incoming meeting chat (#195). Any
+  // other event kind is dropped (fail closed) — the realtime endpoint we register
+  // only subscribes to `transcript.data` + `participant_events.chat_message`.
+  if (event !== KIND_TRANSCRIPT && event !== KIND_STATUS && event !== KIND_CHAT) return null;
   // Real Recall (and the fake) always send a `data` object; its absence is malformed.
   if (typeof obj.data !== "object" || obj.data === null) return null;
 

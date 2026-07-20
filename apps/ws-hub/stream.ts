@@ -341,9 +341,13 @@ export class StreamConnection {
   sendBackfill(lines: TranscriptLine[]): void {
     if (this.closed) return;
     for (const line of lines) {
-      this.socket.send(
-        JSON.stringify({ type: "line", seq: line.seq, ts: line.ts, speaker: line.speaker, text: line.text, final: true }),
-      );
+      // A chat line carries `kind='chat'` so the client renders `Name (chat):`;
+      // a spoken line omits `kind` (backward-compatible wire shape, #195).
+      const frame: Record<string, unknown> = {
+        type: "line", seq: line.seq, ts: line.ts, speaker: line.speaker, text: line.text, final: true,
+      };
+      if (line.kind === "chat") frame.kind = "chat";
+      this.socket.send(JSON.stringify(frame));
       if (line.seq > this.lastSeq) this.lastSeq = line.seq;
     }
   }
@@ -373,10 +377,14 @@ export class StreamConnection {
       if (!isData(frame)) continue;
       if (frame.seq > this.lastSeq) {
         // The hub only carries finalized lines — mark `final` so the client
-        // appends it instead of holding it as a single replaceable partial.
-        this.socket.send(
-          JSON.stringify({ type: "line", seq: frame.seq, ts: frame.ts, speaker: frame.speaker, text: frame.text, final: true }),
-        );
+        // appends it instead of holding it as a single replaceable partial. A
+        // live chat frame (re-hydrated with `kind='chat'` by the fan-in, #195)
+        // carries the kind through; a spoken frame omits it (byte-identical wire).
+        const out: Record<string, unknown> = {
+          type: "line", seq: frame.seq, ts: frame.ts, speaker: frame.speaker, text: frame.text, final: true,
+        };
+        if ((frame as { kind?: unknown }).kind === "chat") out.kind = "chat";
+        this.socket.send(JSON.stringify(out));
         this.lastSeq = frame.seq;
       }
     }

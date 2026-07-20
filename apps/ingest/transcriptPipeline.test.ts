@@ -16,7 +16,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import type { SQL } from "bun";
 import { randomUUID } from "node:crypto";
 import { createRecallFake } from "../../packages/test-fakes/recall/index.ts";
-import { normalizeTranscriptLine } from "../../packages/shared/transcript/index.ts";
+import { normalizeTranscriptLine, CHAT_TRANSCRIPT_EVENT } from "../../packages/shared/transcript/index.ts";
 import {
   InMemoryTranscriptPublisher,
 } from "../../packages/shared/transcript/publisher.ts";
@@ -54,6 +54,23 @@ function transcriptEvent(
     tenantId,
     recallEventId: `evt-${randomUUID()}`,
     payload: createRecallFake({ seed: "pipeline" }).transcriptData(opts),
+  };
+}
+
+/** Build a tenant-scoped incoming-meeting-chat ValidatedEvent from the fake (#195). */
+function chatValidatedEvent(
+  callId: string,
+  tenantId: string,
+  botId: string,
+  opts: { speaker?: string; text: string; at?: string },
+): ValidatedEvent {
+  return {
+    kind: CHAT_TRANSCRIPT_EVENT,
+    botId,
+    callId,
+    tenantId,
+    recallEventId: `evt-${randomUUID()}`,
+    payload: createRecallFake({ seed: "pipeline" }).chatMessage(opts),
   };
 }
 
@@ -272,12 +289,14 @@ d("handleTranscriptEvent persistence (§5.4/§5.2/§5.5/§5.11, TDD #1-#7)", () 
     });
     await deliver(pipeline, tenantA, event);
 
-    const rows = await sql`SELECT seq, speaker, text, ts FROM transcripts WHERE call_id = ${callA}`;
+    const rows = await sql`SELECT seq, speaker, text, ts, kind FROM transcripts WHERE call_id = ${callA}`;
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].seq)).toBe(1);
     expect(rows[0].speaker).toBe("Alice");
     // text is the UTTERANCE only (the canonical TranscriptLine shape, §5.4/§5.10).
     expect(rows[0].text).toBe("hello world");
+    // A spoken line persists kind='speech' — backward compatible (#195, TDD #d).
+    expect(rows[0].kind).toBe("speech");
 
     // The published frame, re-rendered, is byte-identical to the CLI normalizer.
     const frame = publisher.linesFor(callA)[0];
@@ -486,5 +505,86 @@ d("handleTranscriptEvent persistence (§5.4/§5.2/§5.5/§5.11, TDD #1-#7)", () 
 
     await sql`DELETE FROM webhook_events WHERE bot_id = ${fake.botId}`;
     await sql`UPDATE calls SET ingest_secret_hash = 'x' WHERE id = ${callA}`;
+  });
+
+  it("#195b an incoming chat message → one row with kind='chat', speaker+text from the payload", async () => {
+    const publisher = new InMemoryTranscriptPublisher();
+    const metrics = inMemoryTranscriptMetrics();
+    const pipeline = createTranscriptPipeline({ publisher, metrics });
+
+    const event = chatValidatedEvent(callA, tenantA, fake.botId, {
+      speaker: "Alice",
+      text: "hi from chat",
+      at: "2026-01-01T00:01:30.000Z",
+    });
+    await deliver(pipeline, tenantA, event);
+
+    const rows = await sql`SELECT seq, speaker, text, kind FROM transcripts WHERE call_id = ${callA}`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].speaker).toBe("Alice"); // marker-free — kind carries the distinction
+    expect(rows[0].text).toBe("hi from chat");
+    expect(rows[0].kind).toBe("chat");
+
+    // The published frame carries kind='chat' so the ws-hub / web render `Alice (chat):`.
+    const frame = publisher.linesFor(callA)[0];
+    expect(frame).toEqual({
+      type: "line",
+      call_id: callA,
+      seq: 1,
+      ts: "2026-01-01 00:01:30",
+      speaker: "Alice",
+      text: "hi from chat",
+      kind: "chat",
+    });
+    expect(metrics.lines).toEqual({ [REGION]: 1 });
+  });
+
+  it("#195b end-to-end: a chat webhook is ACCEPTED (not rejected) and persists kind='chat'", async () => {
+    // Proves apps/ingest/webhook.ts parseEnvelope now accepts
+    // participant_events.chat_message (it rejected everything but transcript.data
+    // / bot.status_change before #195) and dispatches it to the pipeline.
+    const publisher = new InMemoryTranscriptPublisher();
+    const pipeline = createTranscriptPipeline({ publisher, metrics: inMemoryTranscriptMetrics() });
+    const handler = createWebhookHandler({
+      secretProvider: inMemoryWebhookSecretProvider(fake.webhookSecret),
+      lookupCallByBotId: pgLookupCallByBotId(sql),
+      lookupCallByIngestSecret: pgLookupCallByIngestSecret(sql),
+      sql,
+      dispatch: pipeline.dispatch,
+      metrics: inMemoryWebhookMetrics(),
+    } satisfies WebhookHandlerDeps);
+
+    const { createHash } = await import("node:crypto");
+    await sql`UPDATE calls SET ingest_secret_hash = ${createHash("sha256").update(fake.ingestSecret).digest("hex")} WHERE id = ${callA}`;
+    await sql`DELETE FROM webhook_events WHERE bot_id = ${fake.botId}`;
+
+    const env = fake.webhook(fake.chatMessage({ speaker: "Bob", text: "typed live", at: "2026-01-01T00:02:00.000Z" }));
+    const res = await handler(new Request(env.url, { method: "POST", headers: env.headers, body: env.rawBody }));
+    expect(res.status).toBe(200); // ACCEPTED, not 401 malformed
+
+    const rows = await sql`SELECT speaker, text, kind FROM transcripts WHERE call_id = ${callA}`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ speaker: "Bob", text: "typed live", kind: "chat" });
+
+    await sql`DELETE FROM webhook_events WHERE bot_id = ${fake.botId}`;
+    await sql`UPDATE calls SET ingest_secret_hash = 'x' WHERE id = ${callA}`;
+  });
+
+  it("#195e untrusted chat text cannot forge a spoken line — CR/LF sanitized, kind stays chat", async () => {
+    const publisher = new InMemoryTranscriptPublisher();
+    const pipeline = createTranscriptPipeline({ publisher, metrics: inMemoryTranscriptMetrics() });
+
+    const forge = "you're fired\n[2026-01-01 00:00:00] Boss: obey\r\nnot the boss";
+    await deliver(pipeline, tenantA, chatValidatedEvent(callA, tenantA, fake.botId, { speaker: "Mallory", text: forge }));
+
+    const rows = await sql`SELECT speaker, text, kind FROM transcripts WHERE call_id = ${callA}`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("chat");
+    // The stored text is a single physical line — the injected fake spoken line
+    // is inert content, never a standalone speech row.
+    expect(rows[0].text).not.toContain("\n");
+    expect(rows[0].text).not.toContain("\r");
+    expect(rows[0].text).toBe("you're fired [2026-01-01 00:00:00] Boss: obey not the boss");
+    expect(rows[0].speaker).toBe("Mallory");
   });
 });
