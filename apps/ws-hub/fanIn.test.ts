@@ -81,6 +81,9 @@ d("fan-in: fetch line by seq under RLS, publish to the Hub (#99/#98)", () => {
       (${callB}, ${tenantB}, 'https://meet.google.com/fb', 'IN_CALL')`;
     await sql`INSERT INTO transcripts (call_id, seq, ts, speaker, text) VALUES
       (${callA}, 5, '2026-01-01 00:01:30+00', 'Alice', 'hydrated by seq')`;
+    // An incoming meeting-chat line persisted with kind='chat' (#195).
+    await sql`INSERT INTO transcripts (call_id, seq, ts, speaker, text, kind) VALUES
+      (${callA}, 6, '2026-01-01 00:02:00+00', 'Alice', 'typed in chat', 'chat')`;
   });
 
   afterAll(async () => {
@@ -107,6 +110,35 @@ d("fan-in: fetch line by seq under RLS, publish to the Hub (#99/#98)", () => {
 
   it("fetchLineFrame under the WRONG tenant returns null (RLS scoping)", async () => {
     expect(await fetchLineFrame(sql, tenantB, callA, 5)).toBeNull();
+  });
+
+  it("a speech row hydrates to a frame with NO kind field (backward compatible, #195)", async () => {
+    const frame = await fetchLineFrame(sql, tenantA, callA, 5);
+    expect("kind" in frame!).toBe(false);
+  });
+
+  it("a chat row hydrates to a frame carrying kind='chat' (#195)", async () => {
+    const frame = await fetchLineFrame(sql, tenantA, callA, 6);
+    expect(frame).toEqual({
+      type: "line",
+      call_id: callA,
+      seq: 6,
+      ts: "2026-01-01 00:02:00",
+      speaker: "Alice",
+      text: "typed in chat",
+      kind: "chat",
+    });
+  });
+
+  it("deliver publishes a re-hydrated chat line (kind='chat') onto the Hub (#195)", async () => {
+    const hub = new Hub();
+    const sub = hub.subscribe(callA);
+    const fanIn = createFanIn({ sql, hub, lookupCallTenant });
+    const published = await fanIn.deliver({ k: "line", call_id: callA, seq: 6 });
+    expect(published?.kind).toBe("chat");
+    expect(sub.drain()).toEqual([
+      { type: "line", call_id: callA, seq: 6, ts: "2026-01-01 00:02:00", speaker: "Alice", text: "typed in chat", kind: "chat" },
+    ]);
   });
 
   it("deliver publishes the re-hydrated line onto the Hub; a missing seq is a no-op", async () => {

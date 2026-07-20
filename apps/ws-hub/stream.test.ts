@@ -184,6 +184,23 @@ describe("StreamConnection backfill-then-live (no DB)", () => {
     expect(socket.frames().filter((f) => f.type === "line")).toHaveLength(5);
   });
 
+  it("carries kind='chat' through backfill AND live, and omits kind for speech (#195)", () => {
+    const { hub, socket, conn } = setup();
+    // A chat line in the backfill/replay tail keeps its kind on the wire.
+    conn.sendBackfill([{ seq: 1, ts: "2026-01-01T00:00:00.000Z", speaker: "Alice", text: "typed", kind: "chat" }]);
+    // A live chat frame published onto the hub is serialized with kind='chat'.
+    hub.publish("call-1", { type: "line", seq: 2, ts: "2026-01-01T00:00:01.000Z", speaker: "Alice", text: "again", kind: "chat" } as never);
+    // A live SPEECH frame (no kind) stays byte-identical — no kind key on the wire.
+    hub.publish("call-1", liveFrame(3));
+    conn.flush();
+
+    const lines = socket.frames().filter((f) => f.type === "line");
+    expect(lines[0]).toMatchObject({ seq: 1, kind: "chat", final: true });
+    expect(lines[1]).toMatchObject({ seq: 2, kind: "chat", final: true });
+    // The speech frame carries NO kind key (backward compatible wire shape).
+    expect("kind" in lines[2]).toBe(false);
+  });
+
   it("a second flush only delivers strictly-newer seqs (no re-send, no gap)", () => {
     const { hub, socket, conn } = setup();
     conn.sendBackfill([line(10)]);

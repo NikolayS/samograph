@@ -126,10 +126,12 @@ describe("buildRealCreateBotPayload — exact §5.9 + Deepgram + webhook shape",
     const ep = payload.recording_config.realtime_endpoints[0];
     expect(ep.type).toBe("webhook");
     expect(ep.url).toBe(`${PUBLIC}/webhook?t=${SECRET}`);
-    // Real Recall rejects `bot.status_change` on a real-time endpoint with HTTP 400
-    // ("not a valid choice") — real-time endpoints accept transcript events ONLY.
-    // The events array must be EXACTLY ["transcript.data"] (the proven CLI shape).
-    expect(ep.events).toEqual(["transcript.data"]);
+    // Real-time endpoints accept transcript + participant events (NOT
+    // `bot.status_change`, which 400s "not a valid choice"). The hosted bot
+    // subscribes to spoken transcript AND incoming meeting chat (#188/#195), so
+    // the web transcript can show `Name (chat):` — exactly the proven CLI shape
+    // (`src/commands/join.ts`, which registers both on the realtime endpoint).
+    expect(ep.events).toEqual(["transcript.data", "participant_events.chat_message"]);
   });
 });
 
@@ -161,8 +163,12 @@ describe("getRecallClient — flag ON issues the real POST /bot/ (no egress, stu
     expect(body.bot_name).toBe("samograph (recording)");
     expect(body.recording_config.transcript.provider.deepgram_streaming).toBeDefined();
     expect(body.recording_config.realtime_endpoints[0].url).toBe(`${PUBLIC}/webhook?t=${SECRET}`);
-    // Only transcript events on the real-time endpoint — `bot.status_change` here 400s.
-    expect(body.recording_config.realtime_endpoints[0].events).toEqual(["transcript.data"]);
+    // Transcript + incoming meeting-chat events on the real-time endpoint
+    // (#188/#195); `bot.status_change` is NOT here (it 400s on realtime).
+    expect(body.recording_config.realtime_endpoints[0].events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
 
     // The Recall-assigned id from the response, and the canonical §5.3 webhook URL.
     expect(created.id).toBe("bot_live_1");
