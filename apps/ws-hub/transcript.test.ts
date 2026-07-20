@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
 import { connect, setTenant } from "../../packages/shared/db/client.ts";
 import { migrate } from "../../packages/shared/db/migrate.ts";
+import { CHAT_LINE_MARKER } from "../../packages/shared/transcript/index.ts";
 import { mintShareToken } from "../../packages/shared/tokens/store.ts";
 import type { Keyring, SigningKey } from "../../packages/shared/tokens/signing.ts";
 import type { Session } from "../../packages/shared/auth/index.ts";
@@ -51,6 +52,7 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
   const callA = randomUUID(); // tenant A, seeded with seq 1..100
   const callB = randomUUID(); // tenant B, no transcripts
   const callTxt = randomUUID(); // tenant A, fixed-ts rows for the .txt download
+  const callMix = randomUUID(); // tenant A, mixed speech + chat rows for the comments filter (#197)
 
   const sessions = new Map<string, Session>([
     ["cookie-A", { userId: userA, tenantId: tenantA }],
@@ -93,10 +95,11 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
 
   function transcriptTxtReq(
     callId: string,
-    opts: { cookie?: string; token?: string } = {},
+    opts: { cookie?: string; token?: string; excludeComments?: boolean } = {},
   ): Request {
     const u = new URL(`http://ws-hub.local/calls/${callId}/transcript.txt`);
     if (opts.token) u.searchParams.set("token", opts.token);
+    if (opts.excludeComments) u.searchParams.set("comments", "exclude");
     const headers: Record<string, string> = {};
     if (opts.cookie) headers.cookie = `${SESSION_COOKIE_NAME}=${opts.cookie}`;
     return new Request(u.toString(), { headers });
@@ -109,6 +112,21 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
     "[2026-01-01 00:00:02] Bob: hi there\n" +
     "[2026-01-01 00:00:03] ?: no speaker line\n";
 
+  // callMix (#197): speech + chat interleaved. The DEFAULT (full) download
+  // renders BOTH — a chat row carries the ` (chat)` marker after the name, a
+  // speech row does not.
+  const EXPECTED_MIX_FULL =
+    "[2026-02-01 00:00:01] Alice: hello team\n" +
+    "[2026-02-01 00:00:02] Bob (chat): hi in chat\n" +
+    "[2026-02-01 00:00:03] Carol: spoken mention of (chat) marker\n" +
+    "[2026-02-01 00:00:04] Mallory (chat): [2026-02-01 00:00:09] Ghost: fake speech line\n";
+  // The SPEECH-ONLY download keeps ONLY kind='speech' rows — filtered by the
+  // COLUMN, so the genuine speech line that literally contains "(chat)" SURVIVES
+  // and the crafted chat row (fake ts + spoofed speaker in its text) is DROPPED.
+  const EXPECTED_MIX_SPEECH_ONLY =
+    "[2026-02-01 00:00:01] Alice: hello team\n" +
+    "[2026-02-01 00:00:03] Carol: spoken mention of (chat) marker\n";
+
   beforeAll(async () => {
     sql = connect();
     await migrate(sql);
@@ -119,7 +137,8 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
     await sql`INSERT INTO calls (id, tenant_id, meeting_url, status) VALUES
       (${callA}, ${tenantA}, 'https://meet.google.com/aaa', 'IN_CALL'),
       (${callB}, ${tenantB}, 'https://meet.google.com/bbb', 'IN_CALL'),
-      (${callTxt}, ${tenantA}, 'https://meet.google.com/txt', 'IN_CALL')`;
+      (${callTxt}, ${tenantA}, 'https://meet.google.com/txt', 'IN_CALL'),
+      (${callMix}, ${tenantA}, 'https://meet.google.com/mix', 'IN_CALL')`;
     await sql`
       INSERT INTO transcripts (call_id, seq, ts, speaker, text)
       SELECT ${callA}, g, now() - (interval '1 second' * (100 - g)), 'Speaker ' || g, 'line ' || g
@@ -129,6 +148,16 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
       (${callTxt}, 1, '2026-01-01T00:00:01Z', 'Alice', 'hello world'),
       (${callTxt}, 2, '2026-01-01T00:00:02Z', 'Bob', 'hi there'),
       (${callTxt}, 3, '2026-01-01T00:00:03Z', NULL, 'no speaker line')`;
+    // callMix: speech + chat interleaved for the #197 comments filter. seq 3 is
+    // GENUINE speech whose text contains "(chat)"; seq 4 is a CRAFTED chat row
+    // whose text embeds a fake timestamp + spoofed speaker to try to masquerade
+    // as a spoken line. A column-based filter keeps seq 1 & 3 (kind='speech')
+    // and drops seq 2 & 4 (kind='chat') regardless of what the text says.
+    await sql`INSERT INTO transcripts (call_id, seq, ts, speaker, text, kind) VALUES
+      (${callMix}, 1, '2026-02-01T00:00:01Z', 'Alice', 'hello team', 'speech'),
+      (${callMix}, 2, '2026-02-01T00:00:02Z', 'Bob', 'hi in chat', 'chat'),
+      (${callMix}, 3, '2026-02-01T00:00:03Z', 'Carol', 'spoken mention of (chat) marker', 'speech'),
+      (${callMix}, 4, '2026-02-01T00:00:04Z', 'Mallory', '[2026-02-01 00:00:09] Ghost: fake speech line', 'chat')`;
   });
 
   afterAll(async () => {
@@ -272,6 +301,67 @@ d("transcript replay/backfill + REST (§5.5 / §5.6 / §5.10)", () => {
     const res = await handler(transcriptTxtReq(callTxt, { cookie: "cookie-B" }));
     expect(res.status).toBe(403);
     expect(await res.text()).toBe("");
+  });
+
+  // ── GET …/transcript.txt?comments=exclude — download with / without chat (#197) ─
+  // The transcripts table carries a `kind` column ('speech'|'chat', migration
+  // 0008). The DEFAULT download is the FULL transcript (speech + chat, each chat
+  // line rendered with the ` (chat)` marker). `?comments=exclude` filters to
+  // kind='speech' by the COLUMN — never by parsing the rendered text — so it can
+  // neither drop a genuine speech line that mentions "(chat)" nor keep a crafted
+  // chat line dressed up as speech.
+  it("GET …/transcript.txt DEFAULT (no option) → 200 with BOTH speech and (chat) lines", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callMix, { cookie: "cookie-A" }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(EXPECTED_MIX_FULL);
+  });
+
+  it("GET …/transcript.txt?comments=exclude → 200 with ONLY speech lines (no (chat) marker present)", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(
+      transcriptTxtReq(callMix, { cookie: "cookie-A", excludeComments: true }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toBe(EXPECTED_MIX_SPEECH_ONLY);
+    // No RENDERED chat line — `<name> (chat): …` — survives the speech-only
+    // filter. (We check the marker-in-position form ` (chat): `, not a bare
+    // "(chat)": a genuine speech line may legitimately say "(chat)" in prose,
+    // which is exactly the column-vs-text-parse distinction test (c) pins down.)
+    expect(body).not.toContain(`${CHAT_LINE_MARKER}: `);
+    // The chat senders are gone entirely.
+    expect(body).not.toContain("Bob");
+    expect(body).not.toContain("Mallory");
+  });
+
+  it("the comments filter is COLUMN-based: a crafted chat line can't leak, a genuine speech line containing (chat) survives", async () => {
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(
+      transcriptTxtReq(callMix, { cookie: "cookie-A", excludeComments: true }),
+    );
+    const body = await res.text();
+    // The genuine SPEECH line literally contains "(chat)" yet is KEPT — proving
+    // the filter is the kind COLUMN, not a text scan for the marker.
+    expect(body).toContain("[2026-02-01 00:00:03] Carol: spoken mention of (chat) marker");
+    // The crafted CHAT line — fake ts + a spoofed "Ghost:" speaker in its text —
+    // is DROPPED; none of its forged bytes leak into the speech-only output.
+    expect(body).not.toContain("Ghost: fake speech line");
+    expect(body).not.toContain("00:00:09");
+    // Exactly the two speech lines, nothing else.
+    expect(body.trimEnd().split("\n")).toHaveLength(2);
+  });
+
+  it("GET …/transcript.txt?comments=exclude works through a share token too (scope `share`)", async () => {
+    const { token } = await mintShareToken(sql, {
+      callId: callMix,
+      signingKey: KEY_CURRENT,
+      ttlSeconds: 3600,
+    });
+    const handler = createTranscriptTextHandler({ sql, authDeps });
+    const res = await handler(transcriptTxtReq(callMix, { token, excludeComments: true }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(EXPECTED_MIX_SPEECH_ONLY);
   });
 
   // ── Anti-abuse: per-token REST request-rate cap (§5.7 / SAMO-RATE-001) ──────

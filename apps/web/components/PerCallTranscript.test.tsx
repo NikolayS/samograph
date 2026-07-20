@@ -402,4 +402,38 @@ describe("PerCallTranscript — failed calls display the persisted error reason 
     const link = getByRole("link", { name: /download transcript/i }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/calls/call_9/transcript.txt?token=shr_abc");
   });
+
+  // #197 — the page offers BOTH the full download and a speech-only download
+  // (chat comments filtered out server-side via `?comments=exclude`).
+  it("offers BOTH a full download and a speech-only download at the right URLs (session)", () => {
+    const client = createFakeTranscriptStreamClient({ callDetail: detail() });
+    const { getByRole } = render(
+      <PerCallTranscript streamClient={client} auth={{ kind: "session" }} callId="call_1" />,
+    );
+    const full = getByRole("link", { name: /download transcript/i }) as HTMLAnchorElement;
+    expect(full.getAttribute("href")).toBe("/calls/call_1/transcript.txt");
+    expect(full.hasAttribute("download")).toBe(true);
+    const speechOnly = getByRole("link", { name: /speech only/i }) as HTMLAnchorElement;
+    expect(speechOnly.getAttribute("href")).toBe(
+      "/calls/call_1/transcript.txt?comments=exclude",
+    );
+    expect(speechOnly.hasAttribute("download")).toBe(true);
+  });
+
+  it("carries the share ?token on BOTH downloads in share mode", () => {
+    const client = createFakeTranscriptStreamClient({ callDetail: detail() });
+    const { getByRole } = render(
+      <PerCallTranscript
+        streamClient={client}
+        auth={{ kind: "share", token: "shr_abc" }}
+        callId="call_9"
+      />,
+    );
+    const full = getByRole("link", { name: /download transcript/i }) as HTMLAnchorElement;
+    expect(full.getAttribute("href")).toBe("/calls/call_9/transcript.txt?token=shr_abc");
+    const speechOnly = getByRole("link", { name: /speech only/i }) as HTMLAnchorElement;
+    expect(speechOnly.getAttribute("href")).toBe(
+      "/calls/call_9/transcript.txt?comments=exclude&token=shr_abc",
+    );
+  });
 });
