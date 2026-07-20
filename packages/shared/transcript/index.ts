@@ -63,6 +63,95 @@ export function normalizeTranscriptLine(payload: unknown): string | null {
   return `[${ts}] ${speaker}: ${text}`;
 }
 
+/**
+ * The Recall realtime event carrying an INCOMING meeting-chat message (#188),
+ * supported on Google Meet + Zoom. Shape: `data.data.participant.{name,...}`,
+ * `data.data.timestamp.{absolute,relative}`, `data.data.data.{text,to}`.
+ */
+export const CHAT_TRANSCRIPT_EVENT = "participant_events.chat_message";
+
+/**
+ * Whether a transcript line is spoken audio (`transcript.data`) or a typed
+ * meeting-chat message (`participant_events.chat_message`, #188). The kind is
+ * carried in-memory; on disk the transcript is plain text, so a `chat` line is
+ * encoded solely by the ` (chat)` marker ({@link CHAT_LINE_MARKER}) placed right
+ * after the speaker name. A later download filter (with / without comments) can
+ * distinguish the two purely from that marker.
+ */
+export type TranscriptLineKind = "speech" | "chat";
+
+/** The exact marker inserted after the name to encode a chat line on disk. */
+export const CHAT_LINE_MARKER = " (chat)";
+
+/** A normalized transcript line plus its {@link TranscriptLineKind}. */
+export interface NormalizedTranscriptLine {
+  kind: TranscriptLineKind;
+  /**
+   * The canonical on-disk / wire line (the caller appends the trailing "\n"):
+   *   speech → `[YYYY-MM-DD HH:MM:SS] <name>: <text>`
+   *   chat   → `[YYYY-MM-DD HH:MM:SS] <name> (chat): <text>`
+   */
+  line: string;
+}
+
+interface ChatMessagePayload {
+  event?: string;
+  data?: {
+    data?: {
+      participant?: { name?: string };
+      timestamp?: { absolute?: string };
+      data?: { text?: string; to?: string };
+    };
+  };
+}
+
+/**
+ * Normalize one Recall `participant_events.chat_message` payload (#188) to the
+ * canonical chat line
+ *     [YYYY-MM-DD HH:MM:SS] <name> (chat): <text>
+ * or `null` when the payload is not a chat message or carries no text (never
+ * throws). Timestamp slicing and the `?` speaker default are byte-identical to
+ * {@link normalizeTranscriptLine}, so chat and speech share one framing apart
+ * from the ` (chat)` marker after the name.
+ */
+export function normalizeChatMessageLine(payload: unknown): string | null {
+  const p = (payload ?? {}) as ChatMessagePayload;
+  if (p.event !== CHAT_TRANSCRIPT_EVENT) {
+    return null;
+  }
+  const inner = p.data?.data ?? {};
+  const text = sanitizeTranscriptField(inner.data?.text ?? "");
+  if (!text) {
+    return null;
+  }
+  const speaker = sanitizeTranscriptField(inner.participant?.name ?? "") || "?";
+  const absolute = inner.timestamp?.absolute ?? "";
+  const ts = absolute.slice(0, 19).replace("T", " ");
+  return `[${ts}] ${speaker}${CHAT_LINE_MARKER}: ${text}`;
+}
+
+/**
+ * Normalize any transcript-bearing Recall event to a
+ * {@link NormalizedTranscriptLine} — a `transcript.data` utterance (kind
+ * `speech`) or a `participant_events.chat_message` (kind `chat`, #188) — or
+ * `null` for anything else (never throws). This is the CLI/agent entry point
+ * that carries `kind` through; {@link normalizeTranscriptLine} deliberately
+ * stays speech-only so the hosted ingest path (which reuses it) is unaffected.
+ */
+export function normalizeTranscriptEvent(
+  payload: unknown,
+): NormalizedTranscriptLine | null {
+  const speech = normalizeTranscriptLine(payload);
+  if (speech !== null) {
+    return { kind: "speech", line: speech };
+  }
+  const chat = normalizeChatMessageLine(payload);
+  if (chat !== null) {
+    return { kind: "chat", line: chat };
+  }
+  return null;
+}
+
 /** A stored transcript row rendered back to the canonical CLI line (Story 3). */
 export interface RenderableTranscriptLine {
   /** Either the canonical `YYYY-MM-DD HH:MM:SS` or an ISO `…THH:MM:SS.sssZ`. */

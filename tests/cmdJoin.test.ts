@@ -150,7 +150,11 @@ describe("cmdJoin payload + saved state", () => {
     );
     expect(webhookEp).toBeDefined();
     expect(webhookEp.url).toStartWith(WEBHOOK_PREFIX);
-    expect(webhookEp.events).toEqual(["transcript.data"]);
+    // The webhook endpoint now also carries incoming meeting chat (#188).
+    expect(webhookEp.events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
 
     expect(rc.video_mixed_flv).toBeUndefined();
     const rtmpEp = rc.realtime_endpoints.find((e: any) =>
@@ -158,6 +162,23 @@ describe("cmdJoin payload + saved state", () => {
     );
     expect(rtmpEp).toBeUndefined();
     expect(p.variant).toBeUndefined();
+  });
+
+  it("subscribes participant_events.chat_message so incoming chat is delivered (#188)", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ name: "TARS" }), makeDeps(captured));
+
+    const rc = captured.payload.recording_config;
+    const webhookEp = rc.realtime_endpoints.find((e: any) =>
+      Array.isArray(e.events) && e.events.includes("transcript.data"),
+    );
+    expect(webhookEp).toBeDefined();
+    // chat rides the SAME webhook endpoint as transcript (one callback URL)
+    expect(webhookEp.events).toContain("participant_events.chat_message");
+    expect(webhookEp.events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
   });
 
   it("--variant adds recall bot variant for output media rendering", async () => {

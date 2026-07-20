@@ -2,7 +2,22 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, appendFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { watch } from "../src/transcript.ts";
+import { handleWebhook } from "../src/server.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
+
+/** An incoming meeting-chat event (Recall `participant_events.chat_message`, #188). */
+function chatEvent(name: string, text: string, at: string): unknown {
+  return {
+    event: "participant_events.chat_message",
+    data: {
+      data: {
+        participant: { name, is_host: false, email: null },
+        timestamp: { absolute: at, relative: 3 },
+        data: { text, to: "everyone" },
+      },
+    },
+  };
+}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -70,6 +85,25 @@ describe("cmdWatch", () => {
       unlinkSync(sf);
     })();
     await withTimeout(watch(FAST), 4000);
+  });
+
+  it("streams an incoming meeting-chat line inline with speech (#188)", async () => {
+    writeFileSync(tf, "");
+    writeFileSync(sf, JSON.stringify({ transcript_file: tf }));
+    const out = await captureStdout(async () => {
+      void (async () => {
+        await sleep(80);
+        appendFileSync(tf, "[2026-05-28 10:00:01] Bob: good morning\n");
+        // The webhook handler is what appends incoming chat to the same file
+        // that `watch` tails — so a `(chat)` line must reach the stream.
+        await handleWebhook(chatEvent("Alice", "hi in chat", "2026-05-28T10:00:03.000Z"), tf);
+        await sleep(60);
+        appendFileSync(tf, "[2026-05-28 10:00:10] SAMOGRAPH_CALL_ENDED\n");
+      })();
+      await withTimeout(watch(FAST), 4000);
+    });
+    expect(out).toContain("Bob: good morning");
+    expect(out).toContain("[2026-05-28 10:00:03] Alice (chat): hi in chat");
   });
 
   it("prints lines before sentinel", async () => {

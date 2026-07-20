@@ -460,7 +460,9 @@ export async function cmdJoin(
     {
       type: "webhook",
       url: webhookUrl,
-      events: ["transcript.data"],
+      // Incoming meeting chat (#188) rides the same webhook callback as the
+      // transcript; the server renders it into the transcript as `(chat)`.
+      events: ["transcript.data", "participant_events.chat_message"],
     },
   ];
 
