@@ -122,6 +122,20 @@ samograph leave
 
 `leave` removes the bot, stops local helper processes, writes the `SAMOCALL_CALL_ENDED` sentinel, and lets `watch` exit cleanly.
 
+## Deploying
+
+samograph deploys automatically. **You never SSH into the VM.**
+
+1. Push your change to `main` on `NikolayS/samograph`.
+2. Wait for GitHub Actions CI to go **green** on that commit.
+3. The samohost control plane polls `main` every ~3 min and, once CI is green on your commit, deploys it to the VM for you.
+
+**Do not** add SSH keys to, or SSH into, the samograph VM to deploy. The control plane uses its *own* SSH into the VM as internal plumbing — that already exists and works, and is not a developer/agent step.
+
+Notes:
+- A commit whose CI is red / pending / missing is **skipped** (never deployed) — a deploy requires CI green on the pushed commit.
+- To confirm a deploy landed: prod (https://samograph.samo.team) serves your new commit and returns 200. Deploy state is tracked in samohost.
+
 ## Merge Gate (samorev)
 
 Every pull request must pass our review gate before it is merged. The gate is
