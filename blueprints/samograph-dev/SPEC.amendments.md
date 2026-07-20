@@ -7,7 +7,8 @@ spec, and explains why. These are reviewed decisions — not silent drift.
 
 > Sections: **[Sprint 1 — "the seams"](#sprint-1--the-seams)** ·
 > **[Sprint 2 — "the live transcript"](#sprint-2--the-live-transcript)** ·
-> **[Sprint 3 — "multi-region"](#sprint-3--multi-region)**.
+> **[Sprint 3 — "multi-region"](#sprint-3--multi-region)** ·
+> **[Sprint 4 — "hosting & polish"](#sprint-4--hosting--polish)**.
 
 ---
 
@@ -717,5 +718,154 @@ they keep surfacing the §4.5 warning until recovery.
 health/latency source feeding `regionsFromEnv`/deps. The code + tests land now; the
 deploy is not a launch gate (§8). `apps/bot-orchestrator/index.ts`,
 `apps/bot-orchestrator/index.test.ts`.
+
+---
+
+## Sprint 4 — "hosting & polish"
+
+This section records the **intentional** deviations/extensions from `SPEC.md` made
+during Sprint 4 (hosting the build on the 3-tier preview→prod topology, plus the
+product-surface polish that ships with v1): incoming meeting chat folded into the
+transcript, the "Greenroom" design system, per-env host derivation for callbacks
+and webhooks, an encoded DB bootstrap for the non-superuser login role, and the
+3-tier deploy machinery. Same legend (**Extension** / **Clarification** /
+**Superset** / **Deviation (v1)**). Genuine gaps/follow-ups stay GitHub issues, not
+amendments.
+
+---
+
+### S4-1. §5.4 — incoming meeting chat is folded into the transcript, rendered `Name (chat):`; backed by `transcripts.kind` (`'speech'|'chat'`) — *Extension*
+
+**Amends:** §5.4 (transcript normalizer / canonical line), which is speech-only.
+Migration `0008` adds `transcripts.kind`.
+
+**What differs:** §5.4 defines the transcript as a stream of spoken utterances
+(`[ts] Speaker: utterance`). v1 additionally ingests **incoming meeting chat**
+messages and folds them into the same transcript stream, rendered distinctly as
+`Name (chat): message` so a reader can tell a typed chat line from a spoken one.
+Persistence carries the discriminator: migration `0008` adds a `kind` column to
+`transcripts` (`'speech' | 'chat'`, defaulting to `'speech'`), so speech and chat
+share the append-only table and ordering but stay distinguishable on read. The
+transcript **download** endpoint gains a with/without-comments toggle so an export
+can include or exclude the chat lines (#197).
+
+**Why:** In real calls, substantive content (links, names, questions) arrives in the
+meeting chat, not only in speech; dropping it made the transcript lossy. Folding it
+into the one ordered stream — rather than a second parallel surface — keeps the live
+read-along and the export coherent, while `kind` preserves the speech/chat
+distinction end-to-end. **PRs:** #189 (CLI), #196 (hosted), #197 (download
+with/without comments). `apps/ingest/transcriptPipeline.ts`, `apps/ws-hub/fanIn.ts`,
+`apps/web/lib/transcriptView.ts`.
+
+---
+
+### S4-2. §2 / §8 — a named "Greenroom" design system, beyond the bare "marketing landing" — *Extension*
+
+**Amends:** §2 (scope phases) / §8 (implementation plan), which scope the product
+surface as a bare "marketing landing" plus the app.
+
+**What differs:** v1 ships a named **"Greenroom"** brand/design system rather than an
+unstyled landing: a white/green palette with **rationed pink** accents, full
+**light + dark** design tokens, and a shared component styling layer. It spans design
+tokens + core styling (#179), the landing **hero** (#183), **dashboard** polish
+(#155), and a **robot avatar** for the bot's presence identity (#177). The SPEC
+names only a marketing landing; the design system, tokenized theming, and the
+dashboard/avatar polish are additive product surface.
+
+**Why:** A coherent, themeable visual identity is what makes the hosted product feel
+shippable and is cheap to carry as tokens rather than one-off CSS; light/dark tokens
+also keep the live pages legible in both modes. No SPEC behavior changes — this is
+presentation-layer scope beyond the literal "landing." **PRs:** #179 (tokens + core
+styling), #183 (landing hero), #155 (dashboard polish), #177 (robot avatar).
+
+---
+
+### S4-3. §5.1 / §5.3 — magic-link callback and the Recall webhook are registered against the **per-env host**, preferring a trusted per-env `BASE_URL` over the prod-pinned var — *Extension*
+
+**Amends:** §5.1 (magic-link callback URL) and §5.3 (webhook ingest) / S2-10
+(`publicWebhookBase`).
+
+**What differs:** Under the 3-tier deploy (S4-5), a request can land on any of prod,
+`samograph-main`, or a branch preview host. Two outbound URLs that were previously
+pinned to the prod host are now derived from the **per-env host**:
+
+1. **Magic-link callback (§5.1).** The auth callback link now targets the host the
+   request arrived on instead of unconditionally bouncing to prod, so a login begun
+   on a preview completes on that same preview (#191).
+2. **Recall transcript webhook (§5.3 / S2-10 `publicWebhookBase`).** The webhook URL
+   registered with Recall is built against the per-env host, so a bot launched from a
+   preview delivers `transcript.data` back to *that* preview's ingest, not prod
+   (#194).
+
+Both prefer a **trusted per-env `BASE_URL`** (set by the deploy for the env) over the
+prod-pinned variable, falling back to the pinned value only when the per-env one is
+absent.
+
+**Why:** With prod-pinned URLs, a preview would send its login callbacks and its
+webhook deliveries to prod — breaking preview auth and routing a preview bot's
+transcript to the wrong environment. Deriving from a per-env, deploy-set `BASE_URL`
+makes each tier self-contained. The per-env value must be **set by the trusted
+deploy** (not client-derived) to stay unforgeable, consistent with the trusted-proxy
+posture (amendment #11). **PRs:** #191 (callback host), #194 (webhook host).
+
+---
+
+### S4-4. §5.10 / amendment #4 — a superuser, idempotent `bootstrap.sql` encodes the non-superuser `samograph_app` login-role wiring; a test reproduces prod's non-superuser topology — *Superset*
+
+**Amends:** §5.10 (data model / RLS runtime role) and **amendment #4** (routes run
+under the non-superuser `samograph_app` role).
+
+**What differs:** Amendment #4 established that tenant-scoped routes run under a
+`NOLOGIN`, non-superuser `samograph_app` role, but the wiring that *provisions* that
+role in a real deployment was previously assumed/manual. v1 encodes it as a
+**superuser-run, idempotent `bootstrap.sql`**: it provisions the login role and its
+grants — GRANT of the `samograph_app` role membership onto the actual **login** role,
+plus `BYPASSRLS` on that login role — so the runtime topology is reproducible rather
+than hand-applied. A test reproduces **prod's non-superuser topology** (connecting as
+the non-superuser login role, not a superuser) so the RLS/role behavior is verified
+against the shape prod actually runs, not a superuser shortcut (#187).
+
+**Why:** Amendment #4's guarantee only holds if the role/grant wiring is actually in
+place; leaving it manual meant prod could drift from the tested shape (and a
+superuser test connection would mask an RLS gap — exactly what amendment #4's own
+`http.db.test.ts` warns about). Encoding it in an idempotent bootstrap and testing
+against the non-superuser login role closes that gap and makes the deployment
+reproducible. Strictly beneficial superset. **PR:** #187. `bootstrap.sql`.
+
+---
+
+### S4-5. §4.3 / §8 — a 3-tier preview→prod deploy model via samohost `.samohost.toml` (tag→prod / main→preview / branch→DBLab-clone preview) — *Extension*
+
+**Amends:** §4.3 (single named-tunnel regional ingress) / §8 (implementation +
+launch plan) — partially anticipated by **S3-1** (tunnel = posture, not the
+functional requirement).
+
+**What differs:** The SPEC frames deployment as a single-region tunnel'd ingress. v1
+adds a **3-tier preview→prod** deploy model, declared in-repo via `.samohost.toml`
+and driven through CI:
+
+- a **release tag** (`v*`) → **production** (`samograph.samo.team`, prod DB);
+- **merge to `main`** → the canonical **main preview** (`samograph-main.samo.cat`,
+  its own DBLab clone);
+- **push to any dev branch** → an **ephemeral branch preview**
+  (`samograph-<branch>.samo.cat`) on its own **DBLab thin-clone**, torn down when the
+  branch is merged/deleted.
+
+Prod deploys **only on a tag**, never on a `main` or branch push. **PRs:** #171,
+#172, #185.
+
+**Scope note — the tag-gate register is a control-plane operator step, not in-repo.**
+`.samohost.toml` and the CI triggers are in the repo, but the samohost control-plane
+side that *registers/enforces* the tag→prod gate (the operator wiring on the VM that
+decides a given tag is allowed to cut prod over) lives on the host, outside this
+repo. The in-repo artifacts declare the topology; the operator step provisions it.
+
+**Why:** Hosting the build for owner testing needs isolated, production-like
+environments per branch/PR without touching live prod, and a prod cutover that is
+deliberate (tag-gated) rather than an accidental consequence of a merge — the exact
+mapping the root `CLAUDE.md` deployment-topology section calls the target. DBLab
+thin-clones make per-preview databases cheap. This realizes S3-1's reading (the
+functional requirement is a reachable public ingress, over whatever topology the env
+uses) as concrete deploy machinery. **PRs:** #171, #172, #185. `.samohost.toml`.
 
 ---
