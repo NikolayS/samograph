@@ -39,7 +39,12 @@ import {
   sanitizeFailureReason,
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
-import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
+import {
+  getRecallClient,
+  getCallRecordingControl,
+  isRecallLive,
+  liveRecallClient,
+} from "../bot-orchestrator/recallClient.ts";
 import { liveRecallBotActions } from "../bot-orchestrator/recallBotActions.ts";
 import {
   startStatusPoller,
@@ -202,6 +207,9 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
     emailSender: sender,
     webOrigin: WEB_ORIGIN,
     enqueue,
+    // §5.14 per-call delete: force-leave a live bot + erase its Recall recording
+    // (the in-repo fake locally; real acts only when RECALL_LIVE).
+    recall: getCallRecordingControl(),
     linkStore: new InMemoryMagicLinkStore(),
     registry, // §5.11 GET /metrics scrape source (issue #108)
     // LOCAL-ONLY: strip Secure so cookies store over http, expose /__dev route.

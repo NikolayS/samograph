@@ -186,6 +186,21 @@ export class RecallFake {
     return { id: this.botId };
   }
 
+  /**
+   * Force the bot to leave the call (§5.14 per-call GDPR erasure force-leaves a
+   * still-live bot BEFORE deleting the row). Network-free, key-free no-op: the
+   * byte-stable fake has no real bot in a real call. Mirrors the real
+   * `leave_call` act (see `apps/bot-orchestrator/recallBotActions.ts`).
+   */
+  async leaveCall(_botId: string): Promise<void> {}
+
+  /**
+   * Erase the bot's Recall recording/media (§5.14 GDPR — per-call erasure asks
+   * Recall to delete its stored recording). Network-free, key-free no-op: the
+   * byte-stable fake owns no real recording. Mirrors the real `delete_media` act.
+   */
+  async deleteRecording(_botId: string): Promise<void> {}
+
   /** Synthesize a byte-stable bot-lifecycle status-change event. */
   lifecycle(code: LifecycleCode, options: LifecycleOptions = {}): BotStatusChangeEvent {
     const sub_code =

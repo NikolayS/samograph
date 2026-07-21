@@ -5,11 +5,14 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { OwnerCallView } from "../../../components/OwnerCallView.tsx";
 import { createHttpTranscriptStreamClient } from "../../../lib/transcriptStreamClient.ts";
 import { createHttpShareApiClient } from "../../../lib/shareApiClient.ts";
+import { createHttpAppApiClient } from "../../../lib/appApiClient.ts";
 
 // Real seams; exercised in this issue only through the fakes (the ws-hub + share
 // backend land separately). Module-scoped so identity is stable across renders.
 const streamClient = createHttpTranscriptStreamClient();
 const shareClient = createHttpShareApiClient();
+// App-api client for the per-call Delete action (`DELETE /calls/:id`, §5.14).
+const appClient = createHttpAppApiClient();
 
 function OwnerCallInner({ callId }: { callId: string }) {
   const router = useRouter();
@@ -21,6 +24,7 @@ function OwnerCallInner({ callId }: { callId: string }) {
     <OwnerCallView
       streamClient={streamClient}
       shareClient={shareClient}
+      appClient={appClient}
       callId={callId}
       meetingUrl={meetingUrl}
       redirect={(path) => router.push(path)}

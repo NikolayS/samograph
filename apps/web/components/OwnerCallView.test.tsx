@@ -3,6 +3,7 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { OwnerCallView } from "./OwnerCallView.tsx";
 import { createFakeTranscriptStreamClient } from "../lib/fakeTranscriptStreamClient.ts";
 import { createFakeShareApiClient } from "../lib/fakeShareApiClient.ts";
+import { createFakeAppApiClient } from "../lib/fakeAppApiClient.ts";
 import type { CallDetail } from "../lib/transcriptStreamClient.ts";
 import { installDom } from "../test/setup.tsx";
 
@@ -24,17 +25,19 @@ function renderOwner(
 ) {
   const stream = createFakeTranscriptStreamClient({ callDetail: detail() });
   const share = createFakeShareApiClient();
+  const app = createFakeAppApiClient();
   const redirected: string[] = [];
   const utils = render(
     <OwnerCallView
       streamClient={stream}
       shareClient={share}
+      appClient={app}
       callId="call_1"
       meetingUrl={MEETING_URL}
       redirect={over.redirect ?? ((p) => redirected.push(p))}
     />,
   );
-  return { stream, share, redirected, ...utils };
+  return { stream, share, app, redirected, ...utils };
 }
 
 describe("OwnerCallView — owner per-call page (SPEC §4.1, Stories 1/2/4)", () => {
@@ -74,5 +77,38 @@ describe("OwnerCallView — owner per-call page (SPEC §4.1, Stories 1/2/4)", ()
   it("subscribes as the owner session (no share token)", () => {
     const { stream } = renderOwner();
     expect(stream.connects[0]?.auth).toEqual({ kind: "session" });
+  });
+
+  // ── Delete a call (SPEC §5.14 GDPR per-call erasure) ────────────────────────
+  it("Delete requires confirmation: the first click does NOT hit the endpoint", async () => {
+    const { app, getByRole, findByText } = renderOwner();
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+    // A confirmation prompt appears; no DELETE has been sent yet.
+    expect(await findByText(/can.t be undone/i)).toBeDefined();
+    expect(app.requests.some((r) => r.method === "DELETE")).toBe(false);
+  });
+
+  it("Cancel dismisses the confirmation without deleting", async () => {
+    const { app, getByRole, findByRole, queryByText } = renderOwner();
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+    fireEvent.click(await findByRole("button", { name: "Cancel" }));
+    expect(queryByText(/can.t be undone/i)).toBeNull();
+    expect(app.requests.some((r) => r.method === "DELETE")).toBe(false);
+  });
+
+  it("Confirm delete hits DELETE /calls/:id and returns to the dashboard", async () => {
+    const redirected: string[] = [];
+    const { app, getByRole, findByRole } = renderOwner({
+      redirect: (p) => redirected.push(p),
+    });
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+    const confirm = await findByRole("button", { name: "Confirm delete" });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect(
+      app.requests.some((r) => r.path === "/calls/call_1" && r.method === "DELETE"),
+    ).toBe(true);
+    expect(redirected).toEqual(["/dashboard"]);
   });
 });

@@ -110,6 +110,7 @@ describe("recallBotWorkerPort (call-id keyed BotWorkerPort over the bot-id actio
       async leave(botId) {
         leaves.push(botId);
       },
+      async deleteRecording() {},
     };
   }
 

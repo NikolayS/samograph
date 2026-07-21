@@ -20,6 +20,15 @@ describe("Recall fake — deterministic, seedable, network-free (SPEC §6.1)", (
     expect(createRecallFake({ seed: "alpha" }).botId).toBe("bot_5d8b6dab");
   });
 
+  it("deleteRecording()/leaveCall() are network-free no-ops for GDPR erasure (§5.14)", async () => {
+    const fake = createRecallFake({ seed: SEED });
+    // The per-call GDPR delete flow (§5.14) asks Recall to erase the recording
+    // and force-leaves a still-live bot; against the fake both resolve with no
+    // network, no key — the byte-stable fake owns no real recording to delete.
+    await expect(fake.deleteRecording(fake.botId)).resolves.toBeUndefined();
+    await expect(fake.leaveCall(fake.botId)).resolves.toBeUndefined();
+  });
+
   it("emits a BYTE-STABLE in_call_recording event for a given seed (§6.2 #8 acceptance)", () => {
     const fake = createRecallFake({ seed: SEED });
     const event = fake.lifecycle("in_call_recording");

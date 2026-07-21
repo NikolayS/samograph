@@ -61,6 +61,7 @@ function spyActions(): BotActions & {
     async leave(botId: string) {
       spy.leaves.push(botId);
     },
+    async deleteRecording() {},
   };
   return spy;
 }
