@@ -32,6 +32,7 @@ import { composeLiveStack } from "./liveBridge.ts";
 import { startLiveWatchdogBridge } from "./watchdogBridge.ts";
 import {
   assertNoDevDefaultSecrets,
+  resolveProbeBase,
   usingDevDefaultSecrets,
   WS_HUB_SIGNING_SECRETS,
 } from "../../packages/shared/config/env.ts";
@@ -94,16 +95,22 @@ const stack = composeLiveStack({
 });
 
 // ── OUTAGE watchdog (Story 5, §4.5/§4.6): probe the public ingress /health ────
-// Probe target: PUBLIC_WEBHOOK_BASE + /health — the SAME public base Recall
-// posts webhooks to, fronting THIS process's ingest (which returns the byte-
-// exact §4.5 marker). A failing round-trip means webhooks are being lost, so on
-// 2 consecutive failures the watchdog sets `calls.ingest_degraded=true` for
-// every IN_CALL call in the region and lands ONE `SAMOGRAPH-WARNING: tunnel
+// Probe target: THIS env's own public ingress + /health — the SAME public base
+// Recall posts webhooks to, fronting THIS process's ingest (which returns the
+// byte-exact §4.5 marker). A failing round-trip means webhooks are being lost,
+// so on 2 consecutive failures the watchdog sets `calls.ingest_degraded=true`
+// for every IN_CALL call in the region and lands ONE `SAMOGRAPH-WARNING: tunnel
 // unreachable …` line on each call's live stream (via the SAME in-process Hub);
-// recovery lands one recovered line and clears the flag. Without a public base
-// (pure-local demo) it probes the loopback ingest directly — same marker path.
+// recovery lands one recovered line and clears the flag.
+//
+// PER-ENV INVARIANT (#191/#194 — the last residual, #206): the probe base is
+// resolved by `resolveProbeBase`, which PREFERS the env's own `BASE_URL`
+// (samohost injects it on previews) over the prod-pointed `PUBLIC_WEBHOOK_BASE`,
+// then falls back to the loopback ingest (pure-local demo). Probing raw
+// PUBLIC_WEBHOOK_BASE would make a preview watchdog probe PROD's /health — reading
+// HEALTHY while the preview's own webhooks are silently lost. Trusted env only.
 const REGION_ID = process.env.SAMOGRAPH_REGION ?? "us-east";
-const PROBE_BASE = (process.env.PUBLIC_WEBHOOK_BASE ?? stack.ingest.url).replace(/\/+$/, "");
+const PROBE_BASE = resolveProbeBase(process.env, stack.ingest.url);
 const watchdog = await startLiveWatchdogBridge({
   sql,
   fanIn: stack.fanIn,
