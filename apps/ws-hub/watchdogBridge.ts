@@ -80,7 +80,8 @@ export interface LiveWatchdogDeps {
   fanIn: FanIn;
   /** The region this process watches (`us-east` in v1, §4.7). */
   regionId: string;
-  /** Probe base: `PUBLIC_WEBHOOK_BASE` (its `/health` returns the §4.5 marker). */
+  /** Probe base: this env's own public ingress (`resolveProbeBase` — `BASE_URL`
+   * over `PUBLIC_WEBHOOK_BASE`, #206); its `/health` returns the §4.5 marker. */
   probeBase: string;
   /** Leader identity persisted in `regions`; defaults to a fresh UUID. */
   replicaId?: string;

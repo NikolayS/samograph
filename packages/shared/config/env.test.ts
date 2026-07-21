@@ -13,6 +13,7 @@ import {
   usingDevDefaultSecrets,
   resolveSamoEnv,
   resolveMagicLinkBaseUrl,
+  resolveProbeBase,
   DEV_DEFAULT_SECRETS,
   APP_API_SIGNING_SECRETS,
   WS_HUB_SIGNING_SECRETS,
@@ -69,6 +70,38 @@ describe("resolveMagicLinkBaseUrl — per-env callback base (#190)", () => {
 
   it("falls back to the entrypoint default when neither BASE_URL nor WEB_ORIGIN is set", () => {
     expect(resolveMagicLinkBaseUrl({}, DEFAULT)).toBe(DEFAULT);
+  });
+});
+
+describe("resolveProbeBase — per-env outage-probe base (#191/#194 residual, #206)", () => {
+  const PREVIEW = "https://samograph-b.samo.cat";
+  const PROD = "https://samograph.samo.team";
+  const INGEST = "http://localhost:8089";
+
+  it("prefers BASE_URL over PUBLIC_WEBHOOK_BASE (preview probes its OWN ingress)", () => {
+    // samohost preview shape: BASE_URL = the env's own https host, while
+    // PUBLIC_WEBHOOK_BASE stays pointed at prod. The outage watchdog MUST probe
+    // the preview's own /health — probing prod's would read HEALTHY while the
+    // preview's own webhooks are silently lost (the whole point of the watchdog).
+    expect(resolveProbeBase({ BASE_URL: PREVIEW, PUBLIC_WEBHOOK_BASE: PROD }, INGEST)).toBe(PREVIEW);
+  });
+
+  it("falls back to PUBLIC_WEBHOOK_BASE when BASE_URL is unset/empty (prod unchanged)", () => {
+    // Prod sets neither a preview BASE_URL nor a divergent PUBLIC_WEBHOOK_BASE, so
+    // prod behavior is IDENTICAL to before this change.
+    expect(resolveProbeBase({ PUBLIC_WEBHOOK_BASE: PROD }, INGEST)).toBe(PROD);
+    expect(resolveProbeBase({ BASE_URL: "", PUBLIC_WEBHOOK_BASE: PROD }, INGEST)).toBe(PROD);
+    expect(resolveProbeBase({ BASE_URL: "   ", PUBLIC_WEBHOOK_BASE: PROD }, INGEST)).toBe(PROD);
+  });
+
+  it("falls back to the loopback ingest URL when neither per-env host is set (pure-local demo)", () => {
+    expect(resolveProbeBase({}, INGEST)).toBe(INGEST);
+  });
+
+  it("strips trailing slashes from whichever source wins (caller appends /health)", () => {
+    expect(resolveProbeBase({ BASE_URL: `${PREVIEW}/` }, INGEST)).toBe(PREVIEW);
+    expect(resolveProbeBase({ PUBLIC_WEBHOOK_BASE: `${PROD}///` }, INGEST)).toBe(PROD);
+    expect(resolveProbeBase({}, `${INGEST}/`)).toBe(INGEST);
   });
 });
 

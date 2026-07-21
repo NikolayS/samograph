@@ -101,6 +101,30 @@ export function resolveMagicLinkBaseUrl(env: EnvLike, webOriginDefault: string):
 }
 
 /**
+ * Resolve the OUTAGE-watchdog probe base, per env — the public ingress whose
+ * `/health` the region watchdog probes to detect a lost-webhook outage
+ * (§4.5/§4.6). This is the LAST residual of the #191/#194 per-env base-URL bug
+ * class (magic-link callback base #190, Recall webhook base #193 already fixed).
+ *
+ * PER-ENV: the probe MUST hit THIS env's OWN public ingress, not prod. samohost
+ * injects `BASE_URL=<the env's own https host>` on previews while leaving the
+ * prod-pointed `PUBLIC_WEBHOOK_BASE` in place, so we PREFER {@link perEnvBaseUrl}
+ * (`BASE_URL`), then `PUBLIC_WEBHOOK_BASE`, then the caller's loopback ingest URL
+ * (`ingestFallbackUrl`, the pure-local demo with neither set). Without this, a
+ * preview watchdog probes prod's `/health`, reads HEALTHY, and never fires while
+ * the preview's own webhooks are silently dropped. Prod — which sets neither a
+ * preview `BASE_URL` nor a divergent `PUBLIC_WEBHOOK_BASE` — is unaffected.
+ * Trailing slashes are stripped (the caller appends `/health`).
+ *
+ * SECURITY: a TRUSTED env value resolved from the process env at startup, NOT the
+ * request `Host` / `X-Forwarded-Host` (spoofable behind a proxy) — same threat
+ * model as {@link resolveSamoEnv} / {@link perEnvBaseUrl}.
+ */
+export function resolveProbeBase(env: EnvLike, ingestFallbackUrl: string): string {
+  return (perEnvBaseUrl(env) ?? env.PUBLIC_WEBHOOK_BASE ?? ingestFallbackUrl).replace(/\/+$/, "");
+}
+
+/**
  * The per-env public host samohost injects on previews as `BASE_URL` (e.g.
  * `https://samograph-somebranch.samo.cat`), trimmed — or `undefined` when it is
  * absent/blank (prod, dev, and any env samohost did not template). This is the
