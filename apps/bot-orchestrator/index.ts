@@ -56,6 +56,17 @@ export const BOT_NAME = "samograph (recording)";
 export interface OrchestratorJob {
   callId: string;
   meetingUrl: string;
+  /**
+   * The tenant's EFFECTIVE Deepgram keyterms for this call (§5.12): the resolved
+   * dictionary preset ∪ user terms. Absent ⇒ no keyterm prompting (the pre-settings
+   * default). app-api resolves this from the tenant's saved settings at create time.
+   */
+  keyterms?: string[];
+  /**
+   * The tenant's transcription language (§5.12): a specific Deepgram code or
+   * `multi` (multilingual auto-detect). Absent ⇒ `multi` (the pre-settings default).
+   */
+  language?: string;
 }
 
 /**
@@ -67,6 +78,10 @@ export interface CreateBotRequest {
   meetingUrl: string;
   botName: string;
   buildWebhookUrl: (recallBotId: string) => string;
+  /** Per-tenant Deepgram keyterms (§5.12). Omitted ⇒ no keyterm prompting. */
+  keyterms?: string[];
+  /** Per-tenant Deepgram language (§5.12). Omitted ⇒ `multi` (auto-detect). */
+  language?: string;
 }
 
 export interface CreatedBot {
@@ -388,6 +403,10 @@ export async function orchestrateJoin(
   const created = await deps.recall.createBot({
     meetingUrl: job.meetingUrl,
     botName: BOT_NAME,
+    // §5.12: carry the tenant's dictionary keyterms + language into the bot's
+    // Deepgram config (the fake + real clients both build the payload from these).
+    keyterms: job.keyterms,
+    language: job.language,
     buildWebhookUrl: (recallBotId) => buildWebhookUrl(base, recallBotId, ingestSecret),
   });
   logger.info("orchestrate.bot_created", {

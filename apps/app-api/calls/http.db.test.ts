@@ -143,8 +143,9 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
     expect(audit[0].action).toBe("call.create");
     expect(audit[0].tenant_id).toBe(tenantA);
 
-    // The orchestrator seam was enqueued with exactly this call + url.
-    expect(jobs).toEqual([{ callId: body.id, meetingUrl: MEET_URL }]);
+    // The orchestrator seam was enqueued with exactly this call + url, plus the
+    // tenant's §5.12 transcription settings (defaults: multilingual, no keyterms).
+    expect(jobs).toEqual([{ callId: body.id, meetingUrl: MEET_URL, keyterms: [], language: "multi" }]);
   });
 
   // ── §8 / §5.16: per-tenant bot-creation guardrail against the REAL create path ──
@@ -382,7 +383,7 @@ d("/calls HTTP adapter (DB-backed, §5.2 / §5.6 / §5.10)", () => {
     const res = await handler(req("POST", "/calls", { cookie: cookieA, body: { meeting_url: MEET_URL } }));
     expect(res.status).toBe(201);
     const { id } = (await res.json()) as { id: string };
-    expect(jobs).toEqual([{ callId: id, meetingUrl: MEET_URL }]);
+    expect(jobs).toEqual([{ callId: id, meetingUrl: MEET_URL, keyterms: [], language: "multi" }]);
 
     const fake = createRecallFake({ seed: id });
     const row = await sql`
