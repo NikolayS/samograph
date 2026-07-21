@@ -142,7 +142,7 @@ d("activation-funnel DB feed — exact stage counts (§5.11 / §9)", () => {
       magicLinkKid: "k",
       magicLinkSecret: "m".repeat(32),
       tokenKeyring: { current: { kid: "t", secret: "t".repeat(32) } },
-      emailSender: { async sendMagicLink() {} },
+      emailSender: { async sendMagicLink() {}, async sendAccountDeletion() {} },
       webOrigin: "http://localhost:3000",
       enqueue: () => {},
       registry,

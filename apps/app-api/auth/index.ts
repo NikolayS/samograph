@@ -27,6 +27,7 @@ export {
 export {
   type EmailSender,
   type MagicLinkEmail,
+  type AccountDeletionEmail,
   InMemoryEmailSender,
 } from "./email.ts";
 export {

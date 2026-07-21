@@ -70,6 +70,12 @@ export interface FakeAppApiClientOptions {
    * assert the per-call delete's error path.
    */
   failDeleteCallWith?: FailSpec & { status?: number };
+  /**
+   * When set, `deleteAccount` rejects with this typed error AFTER recording the
+   * request — simulates a server-side rejection (e.g. a 403/401) so a test can
+   * assert the danger-zone error path (no redirect, error surfaced).
+   */
+  failDeleteAccountWith?: FailSpec & { status?: number };
 }
 
 export class FakeAppApiClient implements AppApiClient {
@@ -166,6 +172,16 @@ export class FakeAppApiClient implements AppApiClient {
     // reflects the erasure (§5.14), mirroring the server's row delete.
     const idx = this.calls.findIndex((c) => c.id === callId);
     if (idx !== -1) this.calls.splice(idx, 1);
+  }
+
+  async deleteAccount(): Promise<void> {
+    this.requests.push({ path: "/account", method: "DELETE", body: {} });
+    const fail = this.options.failDeleteAccountWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
+    }
+    // Success: the whole account is gone — drop the in-memory call list too.
+    this.calls.length = 0;
   }
 
   async listCalls(): Promise<Call[]> {

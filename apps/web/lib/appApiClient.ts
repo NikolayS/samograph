@@ -66,6 +66,13 @@ export interface AppApiClient {
    */
   deleteCall(callId: string): Promise<void>;
   /**
+   * `DELETE /account` — permanently erase the WHOLE account: every call and its
+   * data, all share links, and the Recall recordings; revokes all sessions and
+   * emails a confirmation (SPEC §5.14 GDPR account erasure). Owner-only; the
+   * server clears the session cookie. Throws `AppApiError` on failure.
+   */
+  deleteAccount(): Promise<void>;
+  /**
    * DEV-ONLY: the most recent magic link for `email` from app-api's
    * `GET /__dev/last-magic-link`, or `null` (production, no link yet, any error).
    * Lets local testing proceed without a real inbox; a no-op in production.
@@ -136,6 +143,15 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
         credentials: "same-origin",
       });
       // 204 No Content on success; a cross-tenant/unknown call is 404 (RLS-hidden).
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
+    },
+    async deleteAccount() {
+      const res = await fetch(`${baseUrl}/account`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      // 200 on success (the server clears the session cookie); a stale/dead
+      // session is 401. Surface any failure as a typed error, never a hang.
       if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
     },
     async listCalls() {

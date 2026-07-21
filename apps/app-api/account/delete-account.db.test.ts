@@ -110,8 +110,8 @@ d("DELETE /account — full account GDPR erasure (§5.14, RLS-enforced §5.10)",
   });
 
   afterAll(async () => {
-    if (createdUsers.length) {
-      await sql`DELETE FROM users WHERE id = ANY(${createdUsers})`;
+    for (const userId of createdUsers) {
+      await sql`DELETE FROM users WHERE id = ${userId}`;
     }
     await sql.close();
   });

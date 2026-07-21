@@ -28,6 +28,7 @@ import {
   PostgresMagicLinkStore,
   type EmailSender,
   type MagicLinkEmail,
+  type AccountDeletionEmail,
 } from "./auth/index.ts";
 import { connect } from "../../packages/shared/db/index.ts";
 import {
@@ -67,6 +68,11 @@ import { createCachedFunnelSource } from "./metrics/funnelSource.ts";
 function unconfiguredEmailSender(): EmailSender {
   return {
     async sendMagicLink(_email: MagicLinkEmail): Promise<void> {
+      throw new Error(
+        "no email transport configured in prod: set RESEND_API_KEY + MAGIC_LINK_FROM",
+      );
+    },
+    async sendAccountDeletion(_email: AccountDeletionEmail): Promise<void> {
       throw new Error(
         "no email transport configured in prod: set RESEND_API_KEY + MAGIC_LINK_FROM",
       );
