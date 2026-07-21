@@ -17,7 +17,7 @@ import { validateMeetingUrl } from "./validateMeetingUrl.ts";
 
 export interface RecordedRequest {
   path: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   body: Record<string, unknown>;
 }
 
@@ -64,6 +64,12 @@ export interface FakeAppApiClientOptions {
    * — lets a test assert the button STILL redirects on a best-effort failure.
    */
   failLogoutWith?: FailSpec & { status?: number };
+  /**
+   * When set, `deleteCall` rejects with this typed error AFTER recording the
+   * request — simulates a server-side rejection (e.g. a 404/403) so a test can
+   * assert the per-call delete's error path.
+   */
+  failDeleteCallWith?: FailSpec & { status?: number };
 }
 
 export class FakeAppApiClient implements AppApiClient {
@@ -144,6 +150,22 @@ export class FakeAppApiClient implements AppApiClient {
     };
     this.calls.unshift(call);
     return call;
+  }
+
+  async deleteCall(callId: string): Promise<void> {
+    this.requests.push({
+      path: `/calls/${callId}`,
+      method: "DELETE",
+      body: {},
+    });
+    const fail = this.options.failDeleteCallWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
+    }
+    // Success: drop the call from the in-memory list so a subsequent listCalls
+    // reflects the erasure (§5.14), mirroring the server's row delete.
+    const idx = this.calls.findIndex((c) => c.id === callId);
+    if (idx !== -1) this.calls.splice(idx, 1);
   }
 
   async listCalls(): Promise<Call[]> {

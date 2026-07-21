@@ -22,6 +22,7 @@ import {
   type FetchFn,
 } from "../../src/recall.ts";
 import { createRecallFake } from "../../packages/test-fakes/recall/index.ts";
+import { liveRecallBotActions } from "./recallBotActions.ts";
 import type { RecallClient, CreateBotRequest, CreatedBot } from "./index.ts";
 
 /** Injectable seams for the factory; all default to the production environment. */
@@ -151,5 +152,35 @@ export function getRecallClient(deps: RecallClientDeps = {}): RecallClient {
       const { id } = createRecallFake({ seed }).createBot();
       return { id, webhookUrl: req.buildWebhookUrl(id) };
     },
+  };
+}
+
+/**
+ * The Recall control the per-call GDPR delete flow (§5.14 `DELETE /calls/:id`)
+ * uses: force-leave a still-live bot (the SAME `leave_call` act `act:leave` /
+ * `samograph leave` use) and erase its recording at Recall (`delete_media`). A
+ * narrow port so the app-api route depends on only what it needs.
+ */
+export interface CallRecordingControl {
+  /** Force the bot out of the call cleanly (`leave_call`, §5.9). */
+  leave(botId: string): Promise<void>;
+  /** Erase the bot's recorded media at Recall (`delete_media`, §5.14). */
+  deleteRecording(botId: string): Promise<void>;
+}
+
+/**
+ * Choose the {@link CallRecordingControl} for `DELETE /calls/:id`. Live → the
+ * real {@link liveRecallBotActions} (calls `leave_call` / `delete_media` against
+ * the Recall API, key read internally). Otherwise → the deterministic in-repo
+ * RecallFake, whose `leaveCall` / `deleteRecording` are network-free, key-free
+ * no-ops (§6.1) — so a preview/local delete never touches real Recall.
+ */
+export function getCallRecordingControl(deps: RecallClientDeps = {}): CallRecordingControl {
+  const env = deps.env ?? process.env;
+  if (isRecallLive(env)) return liveRecallBotActions({ env, fetch: deps.fetch });
+  const fake = createRecallFake({ seed: deps.seed ?? "samograph-fake" });
+  return {
+    leave: (botId) => fake.leaveCall(botId),
+    deleteRecording: (botId) => fake.deleteRecording(botId),
   };
 }

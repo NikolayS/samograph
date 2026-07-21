@@ -60,6 +60,12 @@ export interface AppApiClient {
   /** `GET /calls` — the caller's tenant's calls (newest first); throws on 401. */
   listCalls(): Promise<Call[]>;
   /**
+   * `DELETE /calls/:id` — permanently erase ONE call and all of its data
+   * (transcript, share links, recording) — SPEC §5.14 GDPR per-call erasure.
+   * Owner-only; throws `AppApiError` on failure.
+   */
+  deleteCall(callId: string): Promise<void>;
+  /**
    * DEV-ONLY: the most recent magic link for `email` from app-api's
    * `GET /__dev/last-magic-link`, or `null` (production, no link yet, any error).
    * Lets local testing proceed without a real inbox; a no-op in production.
@@ -123,6 +129,14 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
       if (!res.ok) await throwTyped(res, "SAMO-CALL-URL");
       const data = (await res.json()) as { id: string; status: CallStatus };
       return toCall(data.id, input.meetingUrl, data.status);
+    },
+    async deleteCall(callId) {
+      const res = await fetch(`${baseUrl}/calls/${encodeURIComponent(callId)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      // 204 No Content on success; a cross-tenant/unknown call is 404 (RLS-hidden).
+      if (!res.ok) await throwTyped(res, "SAMO-AUTHZ-001");
     },
     async listCalls() {
       const res = await fetch(`${baseUrl}/calls`, { credentials: "same-origin" });

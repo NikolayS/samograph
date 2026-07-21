@@ -33,6 +33,13 @@ export interface BotActions {
   sendChat(botId: string, message: string): Promise<void>;
   /** Make the bot leave the call cleanly (`leave_call`, §5.9). */
   leave(botId: string): Promise<void>;
+  /**
+   * Erase the bot's recorded media at Recall (`delete_media`, §5.14 GDPR per-call
+   * erasure). A POST to `${RECALL_BASE}/bot/<bot_id>/delete_media/` — Recall's
+   * documented endpoint to delete a bot's stored recording/transcript. Same
+   * key-boundary + no-body-echo rules as the other acts.
+   */
+  deleteRecording(botId: string): Promise<void>;
 }
 
 /** Injectable seams (the `liveBotStatusSource` pattern in `statusPoller.ts`). */
@@ -65,6 +72,7 @@ export function liveRecallBotActions(deps: LiveRecallBotActionsDeps = {}): BotAc
   return {
     sendChat: (botId, message) => post(botId, "send_chat_message", { message }),
     leave: (botId) => post(botId, "leave_call"),
+    deleteRecording: (botId) => post(botId, "delete_media"),
   };
 }
 

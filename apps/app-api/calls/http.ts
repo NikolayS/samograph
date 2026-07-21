@@ -27,6 +27,7 @@ import {
 } from "../auth/session.ts";
 import { AUTH_ERRORS } from "../auth/errors.ts";
 import type { OrchestratorJob } from "../../bot-orchestrator/index.ts";
+import type { CallRecordingControl } from "../../bot-orchestrator/recallClient.ts";
 import { validateMeetingUrl } from "./validate.ts";
 import { errorResponse, CALL_URL_INVALID } from "./errors.ts";
 import { InMemoryRateLimiter, type RateLimiter } from "../auth/rate-limit.ts";
@@ -116,8 +117,33 @@ export interface CallsHandlerDeps {
    * {@link InMemoryRateLimiter}. A shared-state impl can replace it across replicas.
    */
   rateLimiter?: RateLimiter;
+  /**
+   * Recall control for the per-call GDPR delete (§5.14 `DELETE /calls/:id`):
+   * force-leave a still-live bot + erase its Recall recording. Injected so the
+   * route is testable with an in-memory spy (real wiring: `getCallRecordingControl`).
+   * Absent ⇒ the DB erasure still happens but the Recall side effects are skipped.
+   */
+  recall?: CallRecordingControl;
   /** Epoch-ms clock; defaults to the wall clock. */
   now?: () => number;
+}
+
+/**
+ * The TERMINAL call statuses (§5.2 / the 0002 `reset_ingest_degraded` trigger):
+ * a call in one of these has NO live bot. Any OTHER status (`PENDING`, `JOINING`,
+ * `IN_CALL`) is treated as LIVE for the §5.14 delete, so its bot is force-left
+ * BEFORE the row is purged.
+ */
+const TERMINAL_CALL_STATUSES = new Set([
+  "ENDED",
+  "COULD_NOT_JOIN",
+  "COULD_NOT_RECORD",
+  "BOT_REMOVED",
+]);
+
+/** True when the call may still have a bot in the meeting (non-terminal, §5.14). */
+function callMayBeLive(status: string): boolean {
+  return !TERMINAL_CALL_STATUSES.has(status);
 }
 
 /**
@@ -231,6 +257,11 @@ export function createCallsHandler(
   const keyring = deps.keyring ?? PLACEHOLDER_KEYRING;
   const shareTtlSeconds = deps.shareTtlSeconds ?? DEFAULT_SHARE_TTL_SECONDS;
   const rateLimiter = deps.rateLimiter ?? new InMemoryRateLimiter();
+  // §5.14: force-leave a live bot + erase its Recall recording. A no-op default so
+  // an unwired handler still performs the DB erasure (production wires the real
+  // control via `getCallRecordingControl`).
+  const recall: CallRecordingControl =
+    deps.recall ?? { async leave() {}, async deleteRecording() {} };
   const nowSec = (): number | undefined => (deps.now ? Math.floor(deps.now() / 1000) : undefined);
   // Epoch-MILLISECONDS clock for the session TTL. `deps.now` is already ms (unlike
   // `nowSec`, which the TOKEN path floors to seconds). NEVER feed `nowSec()` to
@@ -620,6 +651,74 @@ export function createCallsHandler(
       });
       if (!result) return denied();
       return Response.json(result, { status: 200 });
+    }
+
+    // ── DELETE /calls/:id — per-call GDPR erasure (§5.14). Owner-only. ─────────
+    // Erases ONE call and ALL of its child data (transcripts, capability/share
+    // tokens, its workers row), asks Recall to delete the recording, force-leaves
+    // a still-LIVE bot FIRST, retains a `deleted_calls` tombstone, and writes a
+    // `call_deleted` audit entry — all RLS-scoped as `samograph_app`, so a
+    // cross-tenant delete is invisible → 404 (deliberately NOT the share routes'
+    // 403: a delete must not leak the existence of another tenant's call).
+    if (req.method === "DELETE" && match) {
+      const callId = decodeURIComponent(match[1]);
+      // A deleted-tenant owner cookie → 401 clear-cookie (#114); a share-credential
+      // attempt on this owner-only route → 403; a fully anonymous one → 401.
+      const session = await resolveOwnerSession(cookie);
+      if (session.kind === "stale") return sessionInvalidResponse();
+      const claims = session.kind === "ok" ? session.claims : null;
+      if (!claims) return hasShareCredential(req, url) ? denied() : unauthenticated();
+
+      // 1) Authorize (owner session → `read` on its OWN call) and read the bot id +
+      //    status, RLS-scoped. A cross-tenant / unknown call is HIDDEN by RLS →
+      //    not authorized → null → 404 (no existence leak).
+      const found = await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
+        if (!authz.authorized || !authz.scopes.includes("read")) return null;
+        const rows = (await tx`SELECT status, recall_bot_id FROM calls WHERE id = ${callId}`) as unknown as Array<{
+          status: string;
+          recall_bot_id: string | null;
+        }>;
+        if (!rows.length) return null;
+        return { tenantId: authz.tenantId, status: rows[0].status, botId: rows[0].recall_bot_id };
+      });
+      if (!found) return new Response(null, { status: 404 });
+
+      // 2) Recall side effects BEFORE the row is purged (§5.14). A still-LIVE bot
+      //    is force-left FIRST (the SAME `leave_call` path `act:leave` / `samograph
+      //    leave` use), THEN its recording is erased. Done outside the DB tx so no
+      //    network call holds a transaction open; the row still exists here, which
+      //    is what the live-call test's leave-time snapshot proves.
+      const botId = found.botId;
+      if (botId) {
+        if (callMayBeLive(found.status)) await recall.leave(botId);
+        await recall.deleteRecording(botId);
+      }
+
+      // 3) Purge the call + its children + retain the tombstone + audit, in ONE
+      //    RLS-scoped transaction. The audit + tombstone are written while the call
+      //    row still exists (audit_log.call_id is nulled by the calls ON DELETE SET
+      //    NULL FK when the row goes — the DURABLE per-call record is the no-FK
+      //    `deleted_calls` tombstone). Explicit child deletes in FK-safe order
+      //    (children → parent) under RLS; the final calls delete cascades any table
+      //    not enumerated here.
+      const actor = `user:${claims.userId}`;
+      await sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE samograph_app");
+        await setTenant(tx, found.tenantId);
+        await tx`
+          INSERT INTO audit_log (tenant_id, call_id, actor, action)
+          VALUES (${found.tenantId}, ${callId}, ${actor}, 'call_deleted')`;
+        await tx`
+          INSERT INTO deleted_calls (call_id, tenant_id, deleted_by)
+          VALUES (${callId}, ${found.tenantId}, ${actor})`;
+        await tx`DELETE FROM transcripts WHERE call_id = ${callId}`;
+        await tx`DELETE FROM tokens WHERE call_id = ${callId}`;
+        await tx`DELETE FROM workers WHERE call_id = ${callId}`;
+        await tx`DELETE FROM calls WHERE id = ${callId}`;
+      });
+      return new Response(null, { status: 204 });
     }
 
     return new Response("not found", { status: 404 });

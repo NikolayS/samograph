@@ -17,9 +17,12 @@ const d = HAVE_DB ? describe : describe.skip;
 // The tenant-scoped tables that MUST carry an RLS policy (§5.10). `users` and
 // `regions` are not tenant-scoped and are intentionally excluded. `webhook_events`
 // is tenant-scoped via its call's tenant (recall_bot_id join, 0003 / §5.3).
+// `deleted_calls` is the §5.14 per-call erasure tombstone — tenant-scoped by its
+// own `tenant_id` (0009), same isolation contract as `audit_log`.
 const TENANT_SCOPED = [
   "audit_log",
   "calls",
+  "deleted_calls",
   "tenants",
   "tokens",
   "transcripts",

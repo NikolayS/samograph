@@ -43,7 +43,12 @@ import {
   sanitizeFailureReason,
   type OrchestratorJob,
 } from "../bot-orchestrator/index.ts";
-import { getRecallClient, isRecallLive, liveRecallClient } from "../bot-orchestrator/recallClient.ts";
+import {
+  getRecallClient,
+  getCallRecordingControl,
+  isRecallLive,
+  liveRecallClient,
+} from "../bot-orchestrator/recallClient.ts";
 import { liveRecallBotActions } from "../bot-orchestrator/recallBotActions.ts";
 import {
   startStatusPoller,
@@ -170,6 +175,9 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     emailSender: sender,
     webOrigin,
     enqueue,
+    // §5.14 per-call delete: force-leave a live bot + erase its Recall recording.
+    // Real acts when RECALL_LIVE, else the in-repo fake (no key, no network).
+    recall: getCallRecordingControl(),
     registry, // §5.11 GET /metrics scrape source (issue #108)
     funnel: funnelSource.thunk, // §9 activation-funnel gauges at /metrics (issue #16)
     // PROD: restart/replica-safe magic-link store (issue #62). Migration 0007
