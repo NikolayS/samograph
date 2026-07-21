@@ -174,6 +174,13 @@ export class RecallFake {
   /** Per-call plaintext IngestSecret (`?t=`) — pure of the seed (§4.2). */
   readonly ingestSecret: string;
 
+  /**
+   * The payload the LAST {@link createBot} call received, or `null` if none was
+   * passed. Lets a test assert the per-tenant Deepgram config (keyterms/language,
+   * §5.12) the orchestrator built actually reached the Recall create path.
+   */
+  lastCreateBotPayload: Record<string, unknown> | null = null;
+
   constructor(options: RecallFakeOptions) {
     this.seed = options.seed;
     this.botId = `bot_${fnv1a32(options.seed)}`;
@@ -181,8 +188,14 @@ export class RecallFake {
     this.ingestSecret = `ingsec_${fnv1a32(`ingest-secret|${options.seed}`)}`;
   }
 
-  /** Recall `POST /bot/` response shape (`{ id }`), as `src/recall.ts` uses. */
-  createBot(): { id: string } {
+  /**
+   * Recall `POST /bot/` response shape (`{ id }`), as `src/recall.ts` uses. The
+   * optional `payload` (the create-bot request body) is RECORDED on
+   * {@link lastCreateBotPayload} so tests can assert the exact Deepgram config
+   * (§5.12) — the id itself stays a pure function of the seed (§6.1).
+   */
+  createBot(payload?: Record<string, unknown>): { id: string } {
+    this.lastCreateBotPayload = payload ?? null;
     return { id: this.botId };
   }
 

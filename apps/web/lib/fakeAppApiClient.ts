@@ -11,15 +11,39 @@ import {
   type AppApiClient,
   type Call,
   type CreateCallInput,
+  type HostedSettings,
   type RequestMagicLinkInput,
+  type SettingsOptions,
+  type SettingsSnapshot,
 } from "./appApiClient.ts";
 import { validateMeetingUrl } from "./validateMeetingUrl.ts";
 
 export interface RecordedRequest {
   path: string;
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   body: Record<string, unknown>;
 }
+
+/** The §5.12 defaults the fake serves before anything is saved. */
+const DEFAULT_FAKE_SETTINGS: HostedSettings = {
+  dictionaryPreset: "none",
+  keyterms: [],
+  language: "multi",
+  chime: "blip",
+};
+
+/** A representative option catalog (mirrors the server's `settingsOptions`). */
+const FAKE_SETTINGS_OPTIONS: SettingsOptions = {
+  chimes: ["blip", "two-tone", "bell", "glass", "marimba"],
+  languages: [
+    { code: "multi", label: "Multilingual (auto-detect)" },
+    { code: "en", label: "English" },
+    { code: "es", label: "Spanish" },
+    { code: "fr", label: "French" },
+    { code: "de", label: "German" },
+  ],
+  presets: ["none", "postgresfm"],
+};
 
 export interface FailSpec {
   code: string;
@@ -70,6 +94,18 @@ export interface FakeAppApiClientOptions {
    * assert the per-call delete's error path.
    */
   failDeleteCallWith?: FailSpec & { status?: number };
+  /** Seed the tenant's hosted settings (§5.12); defaults to {@link DEFAULT_FAKE_SETTINGS}. */
+  seedSettings?: HostedSettings;
+  /**
+   * When set, `getSettings` rejects with this typed error AFTER recording the
+   * request — e.g. a 401 to exercise the settings page's auth-gate redirect.
+   */
+  failGetSettingsWith?: FailSpec & { status?: number };
+  /**
+   * When set, `saveSettings` rejects with this typed error AFTER recording the
+   * request — e.g. a 400 (SAMO-SETTINGS-INVALID) or a 401.
+   */
+  failSaveSettingsWith?: FailSpec & { status?: number };
 }
 
 export class FakeAppApiClient implements AppApiClient {
@@ -77,10 +113,12 @@ export class FakeAppApiClient implements AppApiClient {
   private callCounter = 0;
   private readonly calls: Call[] = [];
   private readonly options: FakeAppApiClientOptions;
+  private settings: HostedSettings;
 
   constructor(options: FakeAppApiClientOptions = {}) {
     this.options = options;
     if (options.seedCalls) this.calls.push(...options.seedCalls);
+    this.settings = { ...(options.seedSettings ?? DEFAULT_FAKE_SETTINGS) };
   }
 
   async requestMagicLink(input: RequestMagicLinkInput): Promise<void> {
@@ -175,6 +213,35 @@ export class FakeAppApiClient implements AppApiClient {
       throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
     }
     return this.calls.map((c) => ({ ...c }));
+  }
+
+  async getSettings(): Promise<SettingsSnapshot> {
+    this.requests.push({ path: "/settings", method: "GET", body: {} });
+    const fail = this.options.failGetSettingsWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
+    }
+    return { settings: { ...this.settings }, options: FAKE_SETTINGS_OPTIONS };
+  }
+
+  async saveSettings(input: HostedSettings): Promise<SettingsSnapshot> {
+    // Record the SERVER's snake_case wire body so tests assert the exact contract.
+    this.requests.push({
+      path: "/settings",
+      method: "PUT",
+      body: {
+        dictionary_preset: input.dictionaryPreset,
+        keyterms: input.keyterms,
+        language: input.language,
+        chime: input.chime,
+      },
+    });
+    const fail = this.options.failSaveSettingsWith;
+    if (fail) {
+      throw new AppApiError(fail.code, fail.message, fail.retryable ?? false, fail.status);
+    }
+    this.settings = { ...input };
+    return { settings: { ...this.settings }, options: FAKE_SETTINGS_OPTIONS };
   }
 
   async lastDevMagicLink(email: string): Promise<string | null> {

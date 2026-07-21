@@ -40,6 +40,30 @@ export interface Call {
   statusReason?: string;
 }
 
+/**
+ * Per-tenant hosted settings (SPEC §5.12): dictionary preset + custom keyterms,
+ * transcription language, and the chat-chime id. camelCase in the web domain;
+ * the wire body is snake_case (`dictionary_preset`), mapped at the client edge.
+ */
+export interface HostedSettings {
+  dictionaryPreset: string;
+  keyterms: string[];
+  language: string;
+  chime: string;
+}
+
+/** The choice catalog the settings UI renders its selects from (server-provided). */
+export interface SettingsOptions {
+  chimes: string[];
+  languages: { code: string; label: string }[];
+  presets: string[];
+}
+
+export interface SettingsSnapshot {
+  settings: HostedSettings;
+  options: SettingsOptions;
+}
+
 export interface RequestMagicLinkInput {
   email: string;
 }
@@ -59,6 +83,10 @@ export interface AppApiClient {
   createCall(input: CreateCallInput): Promise<Call>;
   /** `GET /calls` — the caller's tenant's calls (newest first); throws on 401. */
   listCalls(): Promise<Call[]>;
+  /** `GET /settings` — the caller's hosted settings + option catalog (§5.12); throws on 401. */
+  getSettings(): Promise<SettingsSnapshot>;
+  /** `PUT /settings` — replace the caller's hosted settings (§5.12); returns the stored doc. */
+  saveSettings(input: HostedSettings): Promise<SettingsSnapshot>;
   /**
    * `DELETE /calls/:id` — permanently erase ONE call and all of its data
    * (transcript, share links, recording) — SPEC §5.14 GDPR per-call erasure.
@@ -88,6 +116,58 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
       body: JSON.stringify(body),
       credentials: "same-origin",
     });
+  }
+
+  /** camelCase settings → the snake_case PUT body the server reads (§5.12). */
+  function settingsToWire(s: HostedSettings): Record<string, unknown> {
+    return {
+      dictionary_preset: s.dictionaryPreset,
+      keyterms: s.keyterms,
+      language: s.language,
+      chime: s.chime,
+    };
+  }
+
+  /** A server `/settings` response (snake_case) → the web `SettingsSnapshot`. */
+  function toSettingsSnapshot(data: {
+    settings?: {
+      dictionary_preset?: unknown;
+      keyterms?: unknown;
+      language?: unknown;
+      chime?: unknown;
+    };
+    options?: {
+      chimes?: unknown;
+      languages?: unknown;
+      presets?: unknown;
+    };
+  }): SettingsSnapshot {
+    const s = data.settings ?? {};
+    const o = data.options ?? {};
+    const strings = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    const languages = Array.isArray(o.languages)
+      ? o.languages
+          .filter(
+            (l): l is { code: string; label: string } =>
+              typeof (l as { code?: unknown })?.code === "string" &&
+              typeof (l as { label?: unknown })?.label === "string",
+          )
+          .map((l) => ({ code: l.code, label: l.label }))
+      : [];
+    return {
+      settings: {
+        dictionaryPreset: typeof s.dictionary_preset === "string" ? s.dictionary_preset : "none",
+        keyterms: strings(s.keyterms),
+        language: typeof s.language === "string" ? s.language : "multi",
+        chime: typeof s.chime === "string" ? s.chime : "blip",
+      },
+      options: {
+        chimes: strings(o.chimes),
+        languages,
+        presets: strings(o.presets),
+      },
+    };
   }
 
   /** Map a server `calls` row (snake_case, no provider) to the web `Call` shape. */
@@ -169,6 +249,21 @@ export function createHttpAppApiClient(baseUrl = ""): AppApiClient {
             typeof r.status_reason === "string" ? r.status_reason : undefined,
           ),
         );
+    },
+    async getSettings() {
+      const res = await fetch(`${baseUrl}/settings`, { credentials: "same-origin" });
+      if (!res.ok) await throwTyped(res, "SAMO-SETTINGS-GET");
+      return toSettingsSnapshot((await res.json()) as Record<string, never>);
+    },
+    async saveSettings(input) {
+      const res = await fetch(`${baseUrl}/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(settingsToWire(input)),
+        credentials: "same-origin",
+      });
+      if (!res.ok) await throwTyped(res, "SAMO-SETTINGS-PUT");
+      return toSettingsSnapshot((await res.json()) as Record<string, never>);
     },
     async lastDevMagicLink(email) {
       if (process.env.NODE_ENV === "production") return null;

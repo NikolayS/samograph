@@ -869,3 +869,23 @@ functional requirement is a reachable public ingress, over whatever topology the
 uses) as concrete deploy machinery. **PRs:** #171, #172, #185. `.samohost.toml`.
 
 ---
+### S4-6. §5.12 — hosted Settings v1 surface: default dictionary preset is `none` (opt-in PostgresFM), plus a `dictionary_preset` field — *Clarification*
+
+**Amends:** §5.12 (Settings → Transcription → Dictionary / keyterms).
+
+**What differs:** §5.12 says the PostgresFM preset "ships" alongside user-defined
+terms. The v1 hosted implementation models this as TWO persisted fields — a
+`dictionary_preset` (`none` | `postgresfm`) plus the tenant's own `keyterms` — and
+defaults a new tenant's preset to **`none`** (opt-in), not `postgresfm`. The effective
+Deepgram keyterms passed at bot-create are the preset's terms layered UNDER the user
+terms (user terms first so the 100-keyterm cap never drops them), deduped. Language
+default stays `multi` (multilingual auto-detect) and the chime default is `blip`
+(= `DEFAULT_CHIME`), matching the pre-settings hardwired behavior.
+
+**Why:** "Ships" means selectable, not force-on. A neutral default (empty keyterms,
+multilingual) keeps a first GET's defaults crisp and unsurprising, and makes the
+dictionary an explicit tenant choice; the PostgresFM preset is one click away. The
+shared model reuses `src/dict.ts` (`loadDict`) and `src/chime.ts` rather than forking
+them. Settings flow per-tenant into the Deepgram config at bot-create (keyterms +
+language), realizing the §5.12 "cheap Recall/Deepgram passthrough". **Migration:**
+`0010_settings.sql` (tenant-scoped table + RLS/FORCE RLS + InitPlan-wrapped policy).

@@ -23,6 +23,7 @@ const TENANT_SCOPED = [
   "audit_log",
   "calls",
   "deleted_calls",
+  "settings",
   "tenants",
   "tokens",
   "transcripts",
