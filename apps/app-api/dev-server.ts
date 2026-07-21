@@ -23,6 +23,7 @@ import {
   emailSenderFromEnv,
   type EmailSender,
   type MagicLinkEmail,
+  type AccountDeletionEmail,
 } from "./auth/index.ts";
 import { connect } from "../../packages/shared/db/index.ts";
 import {
@@ -86,6 +87,14 @@ class DevEmailSender implements EmailSender {
         `  link: ${email.link}\n` +
         `  (open the link in a browser, or GET http://localhost:${this.port}/__dev/last-magic-link)\n` +
         `────────────────────────────────────────────────\n`,
+    );
+  }
+
+  async sendAccountDeletion(email: AccountDeletionEmail): Promise<void> {
+    console.log(
+      `\n──────── DEV ACCOUNT DELETED (no email sent) ────────\n` +
+        `  to: ${email.to}\n` +
+        `────────────────────────────────────────────────────\n`,
     );
   }
 }

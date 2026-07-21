@@ -14,16 +14,37 @@ export interface MagicLinkEmail {
   token: string;
 }
 
-export interface EmailSender {
-  sendMagicLink(email: MagicLinkEmail): Promise<void>;
+/**
+ * The confirmation sent AFTER a §5.14 account erasure completes ("your account
+ * and all its data have been deleted"). Carries only the recipient — there is no
+ * link or token, the account no longer exists.
+ */
+export interface AccountDeletionEmail {
+  to: string;
 }
 
-/** In-memory EmailSender for tests: records every "sent" link, sends nothing. */
+export interface EmailSender {
+  sendMagicLink(email: MagicLinkEmail): Promise<void>;
+  /**
+   * Send the GDPR account-erasure confirmation (§5.14). Same swappable seam as
+   * {@link sendMagicLink}: the in-memory fake records it, the Resend sender mails
+   * it. Best-effort at the call site (the erasure has already committed), but a
+   * real transport that fails still surfaces a typed error, never a silent hang.
+   */
+  sendAccountDeletion(email: AccountDeletionEmail): Promise<void>;
+}
+
+/** In-memory EmailSender for tests: records every "sent" message, sends nothing. */
 export class InMemoryEmailSender implements EmailSender {
   readonly sent: MagicLinkEmail[] = [];
+  readonly sentAccountDeletions: AccountDeletionEmail[] = [];
 
   async sendMagicLink(email: MagicLinkEmail): Promise<void> {
     this.sent.push(email);
+  }
+
+  async sendAccountDeletion(email: AccountDeletionEmail): Promise<void> {
+    this.sentAccountDeletions.push(email);
   }
 
   /** Most recently "sent" link for an address, or undefined. */

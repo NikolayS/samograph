@@ -12,10 +12,11 @@
  * by a timeout — never a silent hang. The API key is never logged and is
  * redacted from any error text the provider echoes back.
  */
-import type { EmailSender, MagicLinkEmail } from "./email.ts";
+import type { EmailSender, MagicLinkEmail, AccountDeletionEmail } from "./email.ts";
 
 export const RESEND_EMAILS_URL = "https://api.resend.com/emails";
 export const MAGIC_LINK_SUBJECT = "Sign in to samograph.dev";
+export const ACCOUNT_DELETED_SUBJECT = "Your samograph.dev account has been deleted";
 /** Bound every send; a stuck transport must fail typed, not hang the request. */
 export const RESEND_TIMEOUT_MS = 10_000;
 
@@ -67,6 +68,19 @@ function magicLinkHtml(link: string): string {
   );
 }
 
+/** Minimal, self-contained account-deletion confirmation (no link/token). */
+function accountDeletedHtml(): string {
+  return (
+    `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">` +
+    `<h2 style="margin:0 0 12px">Your samograph.dev account has been deleted</h2>` +
+    `<p>Your account and all of its data — calls, transcripts, share links and ` +
+    `recordings — have been permanently erased, and any active recordings deleted ` +
+    `at our recording provider.</p>` +
+    `<p style="color:#666;font-size:13px">If you didn't request this, contact us right away.</p>` +
+    `</div>`
+  );
+}
+
 export class ResendEmailSender implements EmailSender {
   readonly #apiKey: string;
   readonly #from: string;
@@ -112,6 +126,39 @@ export class ResendEmailSender implements EmailSender {
       const body = await res.text().catch(() => "");
       throw new ResendEmailError(
         `Resend rejected the magic-link email (HTTP ${res.status}): ` +
+          this.#redact(body.slice(0, 500)),
+        res.status,
+      );
+    }
+  }
+
+  async sendAccountDeletion(email: AccountDeletionEmail): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.#fetch(RESEND_EMAILS_URL, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.#apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          from: this.#from,
+          to: email.to,
+          subject: ACCOUNT_DELETED_SUBJECT,
+          html: accountDeletedHtml(),
+        }),
+        signal: AbortSignal.timeout(this.#timeoutMs),
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new ResendEmailError(
+        `Resend request failed before a response: ${this.#redact(detail)}`,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new ResendEmailError(
+        `Resend rejected the account-deletion email (HTTP ${res.status}): ` +
           this.#redact(body.slice(0, 500)),
         res.status,
       );

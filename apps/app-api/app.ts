@@ -29,6 +29,7 @@ import {
   type MagicLinkStore,
 } from "./auth/index.ts";
 import { createCallsHandler } from "./calls/http.ts";
+import { createAccountHandler } from "./account/http.ts";
 import { createSettingsHandler } from "./settings/http.ts";
 import type { SQL } from "bun";
 import type { Keyring } from "../../packages/shared/tokens/signing.ts";
@@ -119,6 +120,16 @@ export function createAppApi(config: AppApiConfig): AppApi {
     recall: config.recall,
   });
 
+  // §5.14 whole-account GDPR erasure (`DELETE /account`). Reuses the SAME Recall
+  // control + EmailSender the rest of the surface is wired with.
+  const accountHandler = createAccountHandler({
+    sql: config.sql,
+    sessionSecret: config.sessionSecret,
+    emailSender: config.emailSender,
+    recall: config.recall,
+    now: clock,
+  });
+
   // §5.12 hosted Settings surface (owner-only, RLS-scoped).
   const settingsHandler = createSettingsHandler({
     sql: config.sql,
@@ -150,6 +161,8 @@ export function createAppApi(config: AppApiConfig): AppApi {
         res = await authHandler(req);
       } else if (path === "/calls" || path.startsWith("/calls/")) {
         res = await callsHandler(req);
+      } else if (path === "/account") {
+        res = await accountHandler(req);
       } else if (path === "/settings") {
         res = await settingsHandler(req);
       } else {

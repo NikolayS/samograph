@@ -21,13 +21,13 @@ import { setTenant } from "../../../packages/shared/db/client.ts";
 import { resolveKeyterms } from "../../../packages/shared/settings/index.ts";
 import { readTenantSettings } from "../settings/store.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../../packages/shared/auth/index.ts";
+import { verifySession, SESSION_COOKIE_NAME } from "../auth/session.ts";
 import {
-  verifySession,
-  SESSION_COOKIE_NAME,
-  buildClearedSessionCookie,
-  type SessionClaims,
-} from "../auth/session.ts";
-import { AUTH_ERRORS } from "../auth/errors.ts";
+  resolveOwnerSession as resolveOwnerSessionDb,
+  sessionInvalidResponse,
+  tenantActive,
+} from "../auth/owner-session.ts";
+import { eraseCallRecording, purgeCallRows } from "./erase.ts";
 import type { OrchestratorJob } from "../../bot-orchestrator/index.ts";
 import type { CallRecordingControl } from "../../bot-orchestrator/recallClient.ts";
 import { validateMeetingUrl } from "./validate.ts";
@@ -73,30 +73,6 @@ function recallCostResponse(retryAfterMs: number): Response {
 /** SQLSTATE for a foreign-key violation — `calls.tenant_id → tenants` (§5.14 / #114). */
 const FK_VIOLATION = "23503";
 
-/** §5.16 code for a stale session whose tenant no longer exists (#114). */
-const SESSION_INVALID_CODE = "SAMO-AUTH-005" as const;
-
-/**
- * The 401 for a session whose tenant no longer exists (#114, §5.14). Carries the
- * stable `SAMO-AUTH-005` code so the web renders a distinct "you've been signed
- * out" copy (not the generic "Request failed."), and CLEARS the cookie with the
- * exact attributes {@link buildClearedSessionCookie} sets, so the browser drops
- * the cookie and the dashboard redirects to sign-in.
- */
-function sessionInvalidResponse(): Response {
-  const info = AUTH_ERRORS[SESSION_INVALID_CODE];
-  return new Response(
-    JSON.stringify({ code: info.code, message: info.message, retryable: info.retryable }),
-    {
-      status: info.httpStatus,
-      headers: {
-        "content-type": "application/json",
-        "set-cookie": buildClearedSessionCookie(),
-      },
-    },
-  );
-}
-
 /** Injected collaborators for the `/calls` handler. */
 export interface CallsHandlerDeps {
   /** Privileged connection (login role able to `SET ROLE samograph_app`). */
@@ -128,24 +104,6 @@ export interface CallsHandlerDeps {
   recall?: CallRecordingControl;
   /** Epoch-ms clock; defaults to the wall clock. */
   now?: () => number;
-}
-
-/**
- * The TERMINAL call statuses (§5.2 / the 0002 `reset_ingest_degraded` trigger):
- * a call in one of these has NO live bot. Any OTHER status (`PENDING`, `JOINING`,
- * `IN_CALL`) is treated as LIVE for the §5.14 delete, so its bot is force-left
- * BEFORE the row is purged.
- */
-const TERMINAL_CALL_STATUSES = new Set([
-  "ENDED",
-  "COULD_NOT_JOIN",
-  "COULD_NOT_RECORD",
-  "BOT_REMOVED",
-]);
-
-/** True when the call may still have a bot in the meeting (non-terminal, §5.14). */
-function callMayBeLive(status: string): boolean {
-  return !TERMINAL_CALL_STATUSES.has(status);
 }
 
 /**
@@ -271,36 +229,14 @@ export function createCallsHandler(
   const nowMs = (): number => (deps.now ? deps.now() : Date.now());
 
   /**
-   * Privileged pre-tenant existence check (#114, §5.14). Mirrors PostgresUserStore
-   * and the gate's `lookupCallTenant`: reads `tenants` on the PRIVILEGED `sql`
-   * connection — NOT inside a `SET LOCAL ROLE samograph_app` tx — because auth
-   * runs before any tenant context exists and `tenants` carries no RLS. This is
-   * the DB check the pure-HMAC {@link verifySession} cannot do: a signed cookie
-   * can outlive its tenant.
+   * The SHARED owner-session resolve (auth/owner-session.ts, #114/#159) bound to
+   * this handler's `sql`, `sessionSecret`, and clock: verify the HMAC cookie (no
+   * DB), then confirm its tenant is still ACTIVE (row exists AND not account-
+   * erased). This is what turns a deleted/erased-tenant cookie into a 401 instead
+   * of a silent-empty read or an uncaught FK 500 (§5.14).
    */
-  const tenantExists = async (tenantId: string): Promise<boolean> => {
-    const rows = (await sql`SELECT 1 AS ok FROM tenants WHERE id = ${tenantId}`) as unknown as unknown[];
-    return rows.length > 0;
-  };
-
-  /** The outcome of resolving an owner session cookie against the current DB. */
-  type OwnerSession =
-    | { kind: "ok"; claims: SessionClaims } // valid signature AND the tenant exists
-    | { kind: "stale" } // valid signature but the tenant was deleted → 401 clear-cookie
-    | { kind: "anonymous" }; // missing / tampered / expired → the route's 401/403
-
-  /**
-   * The SHARED owner-session resolve every tenant-scoped route funnels through:
-   * verify the HMAC cookie (no DB), then confirm its tenant still exists. This is
-   * what turns a deleted-tenant cookie into a 401 instead of a silent-empty read
-   * or an uncaught FK 500 (#114).
-   */
-  const resolveOwnerSession = async (cookie: string | null): Promise<OwnerSession> => {
-    const claims = cookie ? verifySession(cookie, sessionSecret, nowMs()) : null;
-    if (!claims) return { kind: "anonymous" };
-    if (!(await tenantExists(claims.tenantId))) return { kind: "stale" };
-    return { kind: "ok", claims };
-  };
+  const resolveOwnerSession = (cookie: string | null) =>
+    resolveOwnerSessionDb(sql, sessionSecret, cookie, nowMs());
 
   const gateDeps: AuthorizeDeps = {
     keyring,
@@ -345,7 +281,7 @@ export function createCallsHandler(
 
       // 3) Privileged existence check (#114, §5.14): a stale session for a DELETED
       //    tenant → 401 clear-cookie, never the uncaught FK 500 it used to throw.
-      if (!(await tenantExists(claims.tenantId))) return sessionInvalidResponse();
+      if (!(await tenantActive(sql, claims.tenantId))) return sessionInvalidResponse();
 
       // 3.5) Per-tenant bot-creation guardrail (§5.16 `SAMO-RECALL-COST`, §8).
       //    RESERVE-BEFORE-CREATE: record the slot with a COMMITTING `hit` UP FRONT,
@@ -702,19 +638,16 @@ export function createCallsHandler(
       //    leave` use), THEN its recording is erased. Done outside the DB tx so no
       //    network call holds a transaction open; the row still exists here, which
       //    is what the live-call test's leave-time snapshot proves.
-      const botId = found.botId;
-      if (botId) {
-        if (callMayBeLive(found.status)) await recall.leave(botId);
-        await recall.deleteRecording(botId);
-      }
+      await eraseCallRecording(recall, { botId: found.botId, status: found.status });
 
       // 3) Purge the call + its children + retain the tombstone + audit, in ONE
       //    RLS-scoped transaction. The audit + tombstone are written while the call
       //    row still exists (audit_log.call_id is nulled by the calls ON DELETE SET
       //    NULL FK when the row goes — the DURABLE per-call record is the no-FK
-      //    `deleted_calls` tombstone). Explicit child deletes in FK-safe order
-      //    (children → parent) under RLS; the final calls delete cascades any table
-      //    not enumerated here.
+      //    `deleted_calls` tombstone). `purgeCallRows` deletes the children in
+      //    FK-safe order (children → parent) under RLS; the final calls delete
+      //    cascades any table not enumerated there. The SAME helper the account
+      //    erase (`DELETE /account`, §5.14) loops over every call in the tenant.
       const actor = `user:${claims.userId}`;
       await sql.begin(async (tx) => {
         await tx.unsafe("SET LOCAL ROLE samograph_app");
@@ -725,10 +658,7 @@ export function createCallsHandler(
         await tx`
           INSERT INTO deleted_calls (call_id, tenant_id, deleted_by)
           VALUES (${callId}, ${found.tenantId}, ${actor})`;
-        await tx`DELETE FROM transcripts WHERE call_id = ${callId}`;
-        await tx`DELETE FROM tokens WHERE call_id = ${callId}`;
-        await tx`DELETE FROM workers WHERE call_id = ${callId}`;
-        await tx`DELETE FROM calls WHERE id = ${callId}`;
+        await purgeCallRows(tx as unknown as SQL, callId);
       });
       return new Response(null, { status: 204 });
     }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AddToCallForm } from "./AddToCallForm.tsx";
 import { LogoutButton } from "./LogoutButton.tsx";
+import { AccountDangerZone } from "./AccountDangerZone.tsx";
 import { AppApiError, type AppApiClient, type Call } from "../lib/appApiClient.ts";
 import { statusView, type StatusView } from "../lib/callStatusView.ts";
 
@@ -189,6 +190,8 @@ export function Dashboard({ client, redirect, initialUrl }: DashboardProps) {
           ) : null}
         </>
       )}
+      {/* §5.14 GDPR: permanent whole-account erasure, gated by type-to-confirm. */}
+      <AccountDangerZone client={client} redirect={redirect} />
     </>
   );
 }
