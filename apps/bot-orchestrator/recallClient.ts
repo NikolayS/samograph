@@ -95,13 +95,26 @@ export function buildRealCreateBotPayload(req: CreateBotRequest): Record<string,
   const ingestSecret = sample.searchParams.get("t") ?? "";
   const webhookUrl = `${sample.origin}${sample.pathname}?t=${encodeURIComponent(ingestSecret)}`;
 
+  // §5.12: the tenant's transcription settings drive the Deepgram config. Language
+  // is a specific code or `multi` (auto-detect, the pre-settings default); keyterms
+  // are added ONLY when the tenant has any (Deepgram keyterm prompting), mirroring
+  // the proven CLI shape (`src/commands/join.ts`).
+  const deepgram: Record<string, unknown> = {
+    model: "nova-3",
+    language: req.language && req.language.length > 0 ? req.language : "multi",
+    mip_opt_out: true,
+  };
+  if (req.keyterms && req.keyterms.length > 0) {
+    deepgram.keyterms = req.keyterms;
+  }
+
   return {
     meeting_url: req.meetingUrl,
     bot_name: req.botName,
     recording_config: {
       transcript: {
         provider: {
-          deepgram_streaming: { model: "nova-3", language: "multi", mip_opt_out: true },
+          deepgram_streaming: deepgram,
         },
         diarization: { use_separate_streams_when_available: true },
       },
@@ -149,6 +162,10 @@ export function getRecallClient(deps: RecallClientDeps = {}): RecallClient {
   const seed = deps.seed ?? "samograph-fake";
   return {
     async createBot(req: CreateBotRequest): Promise<CreatedBot> {
+      // The fake has no real Deepgram, so it just returns a byte-stable seed-derived
+      // id (§6.1). The per-tenant keyterms + language (§5.12) only shape the REAL
+      // client's `buildRealCreateBotPayload`; a fake createBot can still RECORD a
+      // payload when a caller passes one (see the orchestrator §5.12 wiring test).
       const { id } = createRecallFake({ seed }).createBot();
       return { id, webhookUrl: req.buildWebhookUrl(id) };
     },

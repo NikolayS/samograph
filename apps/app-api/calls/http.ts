@@ -18,6 +18,8 @@ import type { SQL } from "bun";
 import { signToken, type Keyring, type TokenPayload } from "../../../packages/shared/tokens/signing.ts";
 import { mintShareToken, revokeToken } from "../../../packages/shared/tokens/store.ts";
 import { setTenant } from "../../../packages/shared/db/client.ts";
+import { resolveKeyterms } from "../../../packages/shared/settings/index.ts";
+import { readTenantSettings } from "../settings/store.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../../packages/shared/auth/index.ts";
 import { verifySession, SESSION_COOKIE_NAME } from "../auth/session.ts";
 import {
@@ -334,8 +336,18 @@ export function createCallsHandler(
         throw err;
       }
 
-      // 5) Enqueue the bot-orchestrator join job (§5.2). Return id + status.
-      await enqueue({ callId: created.id, meetingUrl: valid.url });
+      // 5) Resolve the tenant's §5.12 transcription settings (RLS-scoped) so the
+      //    bot's Deepgram config carries the tenant's OWN keyterms + language,
+      //    not the hardwired `multi` / no-keyterms default. Missing row → defaults.
+      const settings = await readTenantSettings(sql, claims.tenantId);
+
+      // 6) Enqueue the bot-orchestrator join job (§5.2). Return id + status.
+      await enqueue({
+        callId: created.id,
+        meetingUrl: valid.url,
+        keyterms: resolveKeyterms(settings),
+        language: settings.language,
+      });
       return Response.json({ id: created.id, status: created.status }, { status: 201 });
     }
 

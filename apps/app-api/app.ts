@@ -30,6 +30,7 @@ import {
 } from "./auth/index.ts";
 import { createCallsHandler } from "./calls/http.ts";
 import { createAccountHandler } from "./account/http.ts";
+import { createSettingsHandler } from "./settings/http.ts";
 import type { SQL } from "bun";
 import type { Keyring } from "../../packages/shared/tokens/signing.ts";
 import type { OrchestratorJob } from "../bot-orchestrator/index.ts";
@@ -129,6 +130,13 @@ export function createAppApi(config: AppApiConfig): AppApi {
     now: clock,
   });
 
+  // §5.12 hosted Settings surface (owner-only, RLS-scoped).
+  const settingsHandler = createSettingsHandler({
+    sql: config.sql,
+    sessionSecret: config.sessionSecret,
+    now: clock,
+  });
+
   const dev = config.devShortcuts;
   // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
   const metrics = config.registry ? metricsHttpHandler(config.registry, config.funnel) : undefined;
@@ -155,6 +163,8 @@ export function createAppApi(config: AppApiConfig): AppApi {
         res = await callsHandler(req);
       } else if (path === "/account") {
         res = await accountHandler(req);
+      } else if (path === "/settings") {
+        res = await settingsHandler(req);
       } else {
         res = new Response("not found", { status: 404 });
       }
