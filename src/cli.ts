@@ -19,6 +19,7 @@ import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 import { cmdChimes } from "./commands/chimes.ts";
 import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
+import { cmdConfig } from "./commands/config.ts";
 
 const USAGE = `usage: samograph <command> [options]
 
@@ -26,7 +27,7 @@ Put your AI agent in Zoom and Google Meet calls.
 samograph joins through Recall.ai, streams live transcript lines,
 captures call frames on demand, and sends explicit chat messages.
 
-Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and a tunnel:
+Requires: Bun, RECALL_API_KEY (env var or ~/.samograph/config.json via 'samograph config set'), and a tunnel:
 ngrok (default), cloudflared (--tunnel cloudflared), or your own via --webhook-base.
 
 commands:
@@ -42,6 +43,7 @@ commands:
   dicts
   watch
   notes <init|point|decision|action|transcript> [options]
+  config [set|get] [key] [value]
   frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
   frames
   doctor
@@ -179,6 +181,23 @@ examples:
   samograph notes action "Open migration checklist issue" --owner Nik --due 2026-06-07
   samograph notes transcript --from-start
 `,
+  config: `usage: samograph config [set|get] [key] [value]
+
+Manage samograph configuration stored in ~/.samograph/config.json.
+The config file is a fallback — the RECALL_API_KEY env var always takes precedence.
+
+subcommands:
+  set <key> <value>   Write a value to the config file
+  get <key>           Print the value stored for a key
+
+keys:
+  recall-api-key      Recall.ai API key
+
+examples:
+  samograph config set recall-api-key Token_abc123
+  samograph config get recall-api-key
+  samograph config
+`,
   transcript: `usage: samograph transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
 
 Print a finished Recall.ai transcript, falling back to the local live transcript.
@@ -228,6 +247,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
+    config: new Set(),
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
     doctor: new Set(),
@@ -246,6 +266,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--from-start"]),
+    config: new Set(),
     frame: new Set(["--archive"]),
     frames: new Set(),
     doctor: new Set(),
@@ -439,6 +460,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.message = positionals.slice(1).join(" ") || undefined;
       break;
     }
+    case "config": {
+      // positionals: [action?, key?, value?]
+      result.config_action = positionals[0] ?? "help";
+      result.config_key = positionals[1] ?? undefined;
+      result.config_value = positionals[2] ?? undefined;
+      break;
+    }
     case "dicts":
     case "watch":
     case "doctor":
@@ -518,6 +546,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdWatch();
     case "notes":
       return cmdNotes(args);
+    case "config":
+      return cmdConfig(args);
     case "doctor":
       return cmdDoctor();
     case "_serve":

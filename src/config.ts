@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 export const RECALL_BASE = "https://us-east-1.recall.ai/api/v1";
 
@@ -41,13 +42,59 @@ export function defaultTranscriptFile(): string {
   return join(samographDir(), "transcript.txt");
 }
 
-export function apiKey(): string {
-  const k = process.env.RECALL_API_KEY ?? "";
-  if (!k) {
-    process.stderr.write("Error: RECALL_API_KEY not set\n");
-    throw new ExitError(1);
+/** Path to the persistent config file. Overridable via SAMOGRAPH_CONFIG_FILE for tests. */
+export function configFile(): string {
+  return (
+    process.env.SAMOGRAPH_CONFIG_FILE ??
+    join(homedir(), ".samograph", "config.json")
+  );
+}
+
+/** Shape of the persisted config file. */
+export interface SamographConfig {
+  recall_api_key?: string;
+}
+
+/** Read and parse the config file, returning {} on missing or malformed file. */
+export function readConfig(): SamographConfig {
+  const path = configFile();
+  if (!existsSync(path)) return {};
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed as SamographConfig;
+    }
+    return {};
+  } catch {
+    return {};
   }
-  return k;
+}
+
+/** Write (merge) a key into the config file, creating the directory if needed. */
+export function writeConfig(key: string, value: string): void {
+  const path = configFile();
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const existing = readConfig();
+  const updated = { ...existing, [key]: value };
+  writeFileSync(path, JSON.stringify(updated, null, 2) + "\n", "utf8");
+}
+
+export function apiKey(): string {
+  // Env var takes precedence over the config file.
+  const fromEnv = process.env.RECALL_API_KEY ?? "";
+  if (fromEnv) return fromEnv;
+
+  const fromConfig = readConfig().recall_api_key ?? "";
+  if (fromConfig) return fromConfig;
+
+  process.stderr.write(
+    "Error: RECALL_API_KEY not set\n" +
+      "  Set it via env var: export RECALL_API_KEY=<key>\n" +
+      "  Or store it once:   samograph config set recall-api-key <key>\n",
+  );
+  throw new ExitError(1);
 }
 
 export function headers(): Record<string, string> {
