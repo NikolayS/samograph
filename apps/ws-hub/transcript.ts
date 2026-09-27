@@ -71,12 +71,22 @@ export async function replayTranscripts(
   tx: SQL,
   callId: string,
   sinceSeq: number,
+  limit?: number,
 ): Promise<TranscriptLine[]> {
-  const rows = (await tx`
-    SELECT seq, ts, speaker, text, kind
-    FROM transcripts
-    WHERE call_id = ${callId} AND seq > ${sinceSeq}
-    ORDER BY seq ASC`) as unknown as TranscriptRow[];
+  // `limit` (the long-poll page size, #307) bounds one response; the client's
+  // next cursor picks up exactly where the page ended.
+  const rows = (limit === undefined
+    ? await tx`
+        SELECT seq, ts, speaker, text, kind
+        FROM transcripts
+        WHERE call_id = ${callId} AND seq > ${sinceSeq}
+        ORDER BY seq ASC`
+    : await tx`
+        SELECT seq, ts, speaker, text, kind
+        FROM transcripts
+        WHERE call_id = ${callId} AND seq > ${sinceSeq}
+        ORDER BY seq ASC
+        LIMIT ${limit}`) as unknown as TranscriptRow[];
   return rows.map(mapRow);
 }
 

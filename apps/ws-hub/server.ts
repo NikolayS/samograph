@@ -31,6 +31,13 @@ import {
   type StreamConnection,
 } from "./stream.ts";
 import { createTranscriptHandler, createTranscriptTextHandler } from "./transcript-http.ts";
+import {
+  createLongPollHandler,
+  LineWaiters,
+  LINES_PATH,
+  LONGPOLL_REQUESTS_PER_WINDOW,
+  parseWaitSeconds,
+} from "./longpoll.ts";
 import { SESSION_COOKIE_NAME } from "../app-api/auth/session.ts";
 import { stopServerBounded } from "../../packages/shared/serverLifecycle.ts";
 
@@ -67,7 +74,23 @@ export interface WsHubServerDeps {
   /** Revoke recheck cadence; defaults to {@link RECHECK_INTERVAL_MS} (≤ 1 s). */
   recheckIntervalMs?: number;
   sessionCookieName?: string;
+  /**
+   * Long-poll wake-up registry for `GET /calls/:id/lines` (#307). The composed
+   * live stack passes the one its fan-in notifies; when omitted nothing wakes
+   * held requests, so they fall back to a {@link LONGPOLL_FALLBACK_RECHECK_MS} re-read.
+   */
+  waiters?: LineWaiters;
+  /**
+   * Per-token request-rate cap for `/lines` (#307). SEPARATE from `restCaps`:
+   * long-poll responses are cursor-bounded, and a fast-talking burst is one
+   * request per returned batch — sharing the 120/min `/transcript` budget made a
+   * burst hit 429. Defaults to {@link LONGPOLL_REQUESTS_PER_WINDOW}/min.
+   */
+  longPollCaps?: RequestRateCaps;
 }
+
+/** Standalone (no in-process wake source) long-poll re-read cadence. */
+export const LONGPOLL_FALLBACK_RECHECK_MS = 500;
 
 export interface WsHubServerHandle {
   server: Server<StreamSocketData>;
@@ -110,6 +133,16 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
     clockMs: authDeps.clockMs,
   });
 
+  const longPollHandler = createLongPollHandler({
+    sql: deps.sql,
+    authDeps,
+    waiters: deps.waiters ?? new LineWaiters(),
+    recheckMs: deps.waiters ? undefined : LONGPOLL_FALLBACK_RECHECK_MS,
+    coalesceMs: 5,
+    restCaps: deps.longPollCaps ?? new RequestRateCaps({ perWindow: LONGPOLL_REQUESTS_PER_WINDOW }),
+    clockMs: authDeps.clockMs,
+  });
+
   const server = Bun.serve<StreamSocketData>({
     port: deps.port ?? 0,
     hostname: deps.hostname,
@@ -124,6 +157,12 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
       // The `.txt` download must be matched BEFORE the JSON `/transcript` route.
       if (TRANSCRIPT_TXT_PATH.test(url.pathname)) return transcriptTextHandler(req);
       if (TRANSCRIPT_PATH.test(url.pathname)) return transcriptHandler(req);
+      if (LINES_PATH.test(url.pathname)) {
+        // A held long poll must outlive Bun's idleTimeout: size it per request
+        // (wait + 15 s slack) instead of relying on the server-wide default.
+        srv.timeout(req, parseWaitSeconds(url) + 15);
+        return longPollHandler(req);
+      }
 
       if (STREAM_PATH.test(url.pathname)) {
         const prepared = await prepareStream(deps.sql, req, authDeps);

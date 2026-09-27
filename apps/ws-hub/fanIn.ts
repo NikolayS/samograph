@@ -43,6 +43,11 @@ export interface FanInDeps {
   hub: Hub;
   /** Privileged (pre-tenant) call→tenant resolver; `null` when the call is unknown. */
   lookupCallTenant: (callId: string) => Promise<string | null>;
+  /**
+   * Post-publish hook for a committed line (#307): the long-poll waiters are
+   * woken from HERE — the same post-commit point that feeds the WS Hub.
+   */
+  onLine?: (callId: string, seq: number) => void;
 }
 
 /** The live consumer that turns ingest signals into Hub frames. */
@@ -118,6 +123,7 @@ export function createFanIn(deps: FanInDeps): FanIn {
       if (!frame) return null;
       // The line frame is a fixed-shape DataFrame (carries the monotonic `seq`).
       deps.hub.publish(signal.call_id, frame as unknown as DataFrame);
+      deps.onLine?.(signal.call_id, signal.seq);
       return frame;
     },
   };

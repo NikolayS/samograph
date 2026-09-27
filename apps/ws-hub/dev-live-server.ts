@@ -180,6 +180,7 @@ const ctrl = Bun.serve({
 console.log(
   `\n[live] composed ingest + ws-hub on a shared Hub (LOCAL-ONLY, fake)\n` +
     `  ws-hub stream : ${stack.wsHub.url}/calls/:id/stream  (WS) + /calls/:id/transcript (REST)\n` +
+    `  long poll     : ${stack.wsHub.url}/calls/:id/lines?since_seq=N&wait=25  (Authorization: Bearer <share token>, #307)\n` +
     `  ingest webhook: ${stack.ingest.url}/webhook  (signed fake webhooks)\n` +
     `  metrics       : ${stack.ingest.url}/metrics  (§5.11 Prometheus exposition)\n` +
     `  dev control   : http://localhost:${ctrl.port}/__dev/say  (POST {call_id, speaker, text})\n` +
