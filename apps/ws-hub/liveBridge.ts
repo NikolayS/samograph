@@ -81,6 +81,8 @@ export interface LiveStackDeps {
   ingestPort?: number;
   hostname?: string;
   recheckIntervalMs?: number;
+  /** ws-hub keepalive ping cadence (#307); defaults to 30 s. */
+  pingIntervalMs?: number;
   /** Monotonic clock for the pickup-latency sample (§6.2 #8). */
   clock?: () => number;
   /**
@@ -138,6 +140,7 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
     port: deps.wsPort,
     hostname: deps.hostname,
     recheckIntervalMs: deps.recheckIntervalMs,
+    pingIntervalMs: deps.pingIntervalMs,
   });
 
   // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
