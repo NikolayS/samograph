@@ -427,6 +427,9 @@ export class StreamConnection {
   }
 }
 
+/** Call statuses that can still produce lines; every other status is terminal. */
+const LIVE_STATUSES = new Set(["PENDING", "JOINING", "IN_CALL"]);
+
 /** Injected collaborators for {@link openStream}. */
 export interface OpenStreamDeps {
   /** Privileged connection able to `SET LOCAL ROLE samograph_app`. */
@@ -485,16 +488,26 @@ export async function openStream(
   // subscription that were taken before this point (#102 review): close the
   // connection (releases the slot exactly once + unsubscribes) and rethrow.
   try {
-    const lines = await sql.begin(async (tx) => {
+    const { lines, status } = await sql.begin(async (tx) => {
       await tx.unsafe("SET LOCAL ROLE samograph_app");
       await setTenant(tx as unknown as SQL, prepared.tenantId);
-      return prepared.sinceSeq !== null
-        ? replayTranscripts(tx as unknown as SQL, prepared.callId, prepared.sinceSeq)
-        : backfillRecent(tx as unknown as SQL, prepared.callId, limit);
+      const lines = prepared.sinceSeq !== null
+        ? await replayTranscripts(tx as unknown as SQL, prepared.callId, prepared.sinceSeq)
+        : await backfillRecent(tx as unknown as SQL, prepared.callId, limit);
+      const rows = (await tx`SELECT status FROM calls WHERE id = ${prepared.callId}`) as unknown as Array<{
+        status: string;
+      }>;
+      return { lines, status: rows[0]?.status ?? null };
     });
 
     connection.sendBackfill(lines);
     connection.flush();
+    // A call that already ended never publishes another status change, so a
+    // client connecting (or reconnecting) now would wait forever: send the
+    // terminal status once, after the backfill (#307).
+    if (status !== null && !LIVE_STATUSES.has(status)) {
+      socket.send(JSON.stringify({ type: "status", status }));
+    }
     // Switch to FLUSH-ON-PUBLISH for everything after the backfill (#99). Enabling
     // it here — after the synchronous backfill flush, before yielding — means no
     // live frame can slip in unflushed: nothing else runs between flush() and this.
