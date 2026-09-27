@@ -4,6 +4,7 @@ import { watch } from "../transcript.ts";
 import { ExitError, samographDir } from "../config.ts";
 import type { ParsedArgs } from "../args.ts";
 import { remoteWatch } from "../remoteWatch.ts";
+import { fmtSentinelTs } from "./leave.ts";
 
 export async function cmdWatch(args?: ParsedArgs): Promise<void> {
   if (args?.remote) return runRemoteWatch(args);
@@ -67,4 +68,9 @@ export async function runRemoteWatch(args: ParsedArgs, deps: RemoteWatchDeps = {
     },
   });
   if (res.reason === "unauthorized") throw new ExitError(3);
+  if (res.reason === "ended") {
+    // Same sentinel `samograph leave` writes, so anything tailing --out
+    // (an agent's monitor, the local `watch`) stops cleanly too.
+    appendFileSync(out, `[${fmtSentinelTs(new Date())}] SAMOGRAPH_CALL_ENDED\n`);
+  }
 }

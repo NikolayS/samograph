@@ -17,7 +17,8 @@ function defaultKill(pid: number, signal: string): void {
   process.kill(pid, signal as NodeJS.Signals);
 }
 
-function fmtSentinelTs(d: Date): string {
+/** Local-time `YYYY-MM-DD HH:MM:SS` for the SAMOGRAPH_CALL_ENDED sentinel line. */
+export function fmtSentinelTs(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
