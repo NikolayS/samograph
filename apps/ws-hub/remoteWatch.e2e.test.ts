@@ -357,6 +357,31 @@ d("remote watch over WS — real ingest + ws-hub + Postgres (#307)", () => {
     },
     180_000,
   );
+  it("watching a call that ALREADY ended exits at once with the sentinel (status sent on open)", async () => {
+    const callEnded = randomUUID();
+    await sql`INSERT INTO calls (id, tenant_id, meeting_url, status, region) VALUES
+      (${callEnded}, ${tenant}, 'https://meet.google.com/rw-ended', 'ENDED', 'us-east')`;
+    await sql`INSERT INTO transcripts (call_id, seq, ts, speaker, text)
+      VALUES (${callEnded}, 1, now(), 'Alice', 'said before the end')`;
+    const token = (await mintShareToken(sql, { callId: callEnded, signingKey: KEY, ttlSeconds: 3600 })).token;
+    const dir = makeTmpDir();
+    try {
+      const out = `${dir}/ended.txt`;
+      const run = runRemoteWatch(
+        { command: "watch", remote: stack.wsHub.url, call_id: callEnded, mode: "ws", out },
+        { env: { SAMOGRAPH_SHARE_TOKEN: token }, print: () => {}, log: () => {} },
+      );
+      const outcome = await Promise.race([run.then(() => "resolved"), Bun.sleep(4000).then(() => "hang")]);
+      expect(outcome).toBe("resolved");
+      const lines = (await Bun.file(out).text()).split("\n");
+      expect(lines.length).toBe(3);
+      expect(lines[0]).toMatch(/\] Alice: said before the end$/);
+      expect(lines[1]).toMatch(SENTINEL_RE);
+    } finally {
+      cleanupTmpDir(dir);
+    }
+  });
+
   // Runs LAST: it ends call A (terminal statuses are sticky).
   it("a terminal status ends the watch and appends the SAMOGRAPH_CALL_ENDED sentinel", async () => {
     const dir = makeTmpDir();

@@ -15,7 +15,7 @@
  * `apps/ws-hub/remoteWatch.e2e.test.ts`.
  */
 import { describe, it, expect, afterEach } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import {
@@ -49,6 +49,8 @@ interface Upgrade {
  */
 function fakeHub(opts: {
   deny?: number;
+  /** Extra headers on the deny response (e.g. Retry-After on a 429). */
+  denyHeaders?: Record<string, string>;
   onOpen?: (ws: ServerWebSocket<Upgrade>, n: number, u: Upgrade) => void;
   transcript?: (sinceSeq: number) => RemoteLine[];
 }) {
@@ -70,7 +72,7 @@ function fakeHub(opts: {
       }
       if (url.pathname === `/calls/${CALL}/stream`) {
         upgrades.push(u);
-        if (opts.deny) return new Response(null, { status: opts.deny });
+        if (opts.deny) return new Response(null, { status: opts.deny, headers: opts.denyHeaders });
         if (srv.upgrade(req, { data: u })) return undefined;
         return new Response("expected a websocket upgrade", { status: 426 });
       }
@@ -264,6 +266,84 @@ describe("remoteWatch against a fake ws-hub", () => {
   });
 });
 
+describe("remoteWatch robustness (review fixes)", () => {
+  it("abort while the upgrade is still pending resolves promptly (no hang)", async () => {
+    // Accepts TCP, never answers the upgrade (a hung proxy/upstream).
+    const tcp = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {} } });
+    try {
+      const a = ctl();
+      const run = remoteWatch({ site: `http://127.0.0.1:${tcp.port}`, callId: CALL, token: TOKEN, signal: a.signal, onLine: () => {} });
+      await Bun.sleep(100);
+      a.abort();
+      const r = await Promise.race([run, Bun.sleep(500).then(() => "hang" as const)]);
+      expect(r).toEqual({ reason: "aborted" });
+    } finally {
+      tcp.stop(true);
+    }
+  });
+
+  it("a stalled upgrade times out after staleMs and reconnects", async () => {
+    const tcp = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {} } });
+    try {
+      const c = collector();
+      const a = ctl();
+      const run = remoteWatch({
+        site: `http://127.0.0.1:${tcp.port}`, callId: CALL, token: TOKEN, signal: a.signal,
+        staleMs: 150, backoffBaseMs: 10, random: () => 1, ...c,
+      });
+      const deadline = Date.now() + 2000;
+      while (!c.events.some((e) => e.type === "reconnect") && Date.now() < deadline) await Bun.sleep(10);
+      a.abort();
+      await run;
+      expect(c.events.find((e) => e.type === "reconnect")).toEqual({ type: "reconnect", attempt: 1, delayMs: 10 });
+    } finally {
+      tcp.stop(true);
+    }
+  });
+
+  it("a socket that opens and closes at once backs off exponentially (no reconnect storm)", async () => {
+    const hub = track(fakeHub({ onOpen: (ws) => ws.close(1011, "stream open failed") }));
+    const c = collector();
+    const a = ctl();
+    const run = remoteWatch({ site: hub.base, callId: CALL, token: TOKEN, signal: a.signal, backoffBaseMs: 10, random: () => 1, ...c });
+    const deadline = Date.now() + 3000;
+    while (c.events.filter((e) => e.type === "reconnect").length < 4 && Date.now() < deadline) await Bun.sleep(5);
+    a.abort();
+    await run;
+    const delays = c.events.flatMap((e) => (e.type === "reconnect" ? [e.delayMs] : [])).slice(0, 4);
+    expect(delays).toEqual([10, 20, 40, 80]);
+  });
+
+  it("a huge Retry-After is capped at one hour (Bun turns delays > 2^31-1 ms into 1 ms)", async () => {
+    const hub = track(fakeHub({ deny: 429, denyHeaders: { "retry-after": "3000000" } }));
+    const c = collector();
+    const a = ctl();
+    const run = remoteWatch({ site: hub.base, callId: CALL, token: TOKEN, signal: a.signal, backoffBaseMs: 10, random: () => 1, ...c });
+    const deadline = Date.now() + 2000;
+    while (!c.events.some((e) => e.type === "reconnect") && Date.now() < deadline) await Bun.sleep(5);
+    a.abort();
+    await run;
+    expect(c.events.find((e) => e.type === "reconnect")).toEqual({ type: "reconnect", attempt: 1, delayMs: 3_600_000 });
+  });
+
+  it("a terminal status fetches the tail once more, so lines committed just before the end are kept", async () => {
+    const hub = track(
+      fakeHub({
+        onOpen: (ws) => {
+          ws.send(lineFrame(1));
+          ws.send(JSON.stringify({ type: "status", status: "ENDED" }));
+        },
+        transcript: (since) => [1, 2].filter((s) => s > since).map(line),
+      }),
+    );
+    const c = collector();
+    const res = await remoteWatch({ site: hub.base, callId: CALL, token: TOKEN, ...c });
+    expect(res).toEqual({ reason: "ended", status: "ENDED" });
+    expect(c.seqs).toEqual([1, 2]);
+    expect(hub.restRequests.map((r) => r.sinceSeq)).toEqual([1]);
+  });
+});
+
 describe("samograph watch --remote (CLI wiring)", () => {
   it("parses --remote/--call/--mode/--since-seq/--out", () => {
     const a = parseArgs(["watch", "--remote", "http://h:1", "--call", CALL, "--mode", "ws", "--since-seq", "4", "--out", "/tmp/x.txt"]);
@@ -272,6 +352,14 @@ describe("samograph watch --remote (CLI wiring)", () => {
     expect(a.mode).toBe("ws");
     expect(a.since_seq).toBe(4);
     expect(a.out).toBe("/tmp/x.txt");
+  });
+
+  it("refuses a cleartext http:// site unless it is loopback (the bearer token would travel unencrypted)", () => {
+    expect(() => parseArgs(["watch", "--remote", "http://samograph.example", "--call", CALL])).toThrow(/https/);
+    expect(() => parseArgs(["watch", "--remote", "ws://10.0.0.5:8788", "--call", CALL])).toThrow(/https/);
+    for (const ok of ["https://samograph.example", "http://localhost:8788", "http://127.0.0.1:8788", "http://[::1]:8788"]) {
+      expect(parseArgs(["watch", "--remote", ok, "--call", CALL]).remote).toBe(ok);
+    }
   });
 
   it("rejects --remote without --call, a non-ws --mode, and a missing token", async () => {
@@ -301,6 +389,9 @@ describe("samograph watch --remote (CLI wiring)", () => {
       expect(printed).toEqual(expected);
       expect(readFileSync(out, "utf-8")).toBe(expected.join("\n") + "\n");
       expect(readFileSync(`${out}.seq`, "utf-8").trim()).toBe("3");
+      // meeting content is private to the user, like the rest of ~/.samograph
+      expect(statSync(out).mode & 0o777).toBe(0o600);
+      expect(statSync(`${out}.seq`).mode & 0o777).toBe(0o600);
 
       // a restart resumes from the cursor file (since_seq=3), not from 0
       const a2 = ctl();
