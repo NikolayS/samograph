@@ -460,6 +460,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
         if (mode !== "ws") {
           throw new ArgError(`argument --mode: invalid choice: '${mode}' (this build supports: ws)`);
         }
+        // The share token rides in a header: refuse cleartext to anything but loopback.
+        let site: URL;
+        try {
+          site = new URL(remote);
+        } catch {
+          throw new ArgError(`argument --remote: invalid URL: '${remote}'`);
+        }
+        const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(site.hostname);
+        if (!["https:", "wss:"].includes(site.protocol) && !(loopback && ["http:", "ws:"].includes(site.protocol))) {
+          throw new ArgError("argument --remote: must be an https:// site (http:// is allowed only for localhost)");
+        }
+        if (site.username || site.password) {
+          throw new ArgError("argument --remote: must not contain a username or password");
+        }
         result.remote = remote;
         result.call_id = callId;
         result.mode = mode;

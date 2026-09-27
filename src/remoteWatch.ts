@@ -55,7 +55,10 @@ export interface RemoteWatchOptions {
   backoffBaseMs?: number;
   backoffMaxMs?: number;
   random?: () => number;
-  /** No frame and no ping for this long ⇒ treat the socket as dead and reconnect. */
+  /**
+   * No frame and no ping for this long ⇒ treat the socket as dead and reconnect.
+   * Also the upgrade (handshake) timeout.
+   */
   staleMs?: number;
 }
 
@@ -93,8 +96,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 interface SocketOutcome {
   opened: boolean;
+  /** The server sent at least one frame or ping: only then is backoff reset. */
+  healthy: boolean;
   ended?: string;
 }
+
+/** Cap on a server Retry-After (the longest share cap window is one hour). */
+const MAX_RETRY_AFTER_MS = 3_600_000;
 
 export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchResult> {
   const log = o.log ?? (() => {});
@@ -106,6 +114,10 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
   const httpBase = trimBase(o.site).replace(/^ws/i, "http");
   const callPath = `/calls/${encodeURIComponent(o.callId)}`;
   const authHeaders = { authorization: `Bearer ${o.token}` };
+  /** Every REST request (fill, status probe) is bounded, so a hung upstream cannot stall the watch. */
+  const reqTimeoutMs = Math.min(staleMs, 15_000);
+  const reqSignal = () =>
+    o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(reqTimeoutMs)]) : AbortSignal.timeout(reqTimeoutMs);
 
   let last = o.sinceSeq ?? 0;
   /** A hole we already resynced for once; if it persists we accept it (no loop). */
@@ -123,7 +135,7 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
     try {
       const res = await fetch(`${httpBase}${callPath}/transcript?since_seq=${from}`, {
         headers: authHeaders,
-        signal: o.signal,
+        signal: reqSignal(),
       });
       if (!res.ok) {
         log(`gap fill failed (HTTP ${res.status}); resyncing via reconnect`);
@@ -162,11 +174,12 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
     try {
       const res = await fetch(`${httpBase}${callPath}/stream?since_seq=${last}`, {
         headers: authHeaders,
-        signal: o.signal,
+        signal: reqSignal(),
       });
       await res.body?.cancel();
       const ra = Number(res.headers.get("retry-after"));
-      return { status: res.status, retryAfterMs: Number.isFinite(ra) && ra > 0 ? ra * 1000 : 0 };
+      const retryAfterMs = Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, MAX_RETRY_AFTER_MS) : 0;
+      return { status: res.status, retryAfterMs };
     } catch {
       return { status: 0, retryAfterMs: 0 };
     }
@@ -178,19 +191,39 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
       // Bun's WebSocket client sends custom headers on the upgrade request.
       const ws = new WebSocket(url, { headers: authHeaders } as unknown as string[]);
       let opened = false;
+      let healthy = false;
+      let settled = false;
       let ended: string | undefined;
       let chain: Promise<void> = Promise.resolve();
       let stale: ReturnType<typeof setTimeout> | undefined;
 
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (stale) clearTimeout(stale);
+        o.signal?.removeEventListener("abort", onAbort);
+        void chain.then(() => resolve({ opened, healthy, ended }));
+      };
+      // Bun never fires `close` for a socket that is still CONNECTING, so a
+      // stalled upgrade is settled here directly rather than via onclose.
+      const giveUp = (code: number, reason: string) => {
+        ws.close(code, reason);
+        if (!opened) settle();
+      };
       const armStale = () => {
         if (stale) clearTimeout(stale);
         stale = setTimeout(() => {
-          log(`no frames or pings for ${Math.round(staleMs / 1000)}s; reconnecting`);
-          ws.close(4000, "stale");
+          log(
+            opened
+              ? `no frames or pings for ${Math.round(staleMs / 1000)}s; reconnecting`
+              : `no upgrade response in ${Math.round(staleMs / 1000)}s; reconnecting`,
+          );
+          giveUp(4000, "stale");
         }, staleMs);
       };
-      const onAbort = () => ws.close(1000, "client exit");
+      const onAbort = () => giveUp(1000, "client exit");
       o.signal?.addEventListener("abort", onAbort, { once: true });
+      armStale(); // handshake timeout
 
       ws.onopen = () => {
         opened = true;
@@ -199,10 +232,12 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
         emit({ type: "open", sinceSeq: last, drop: () => ws.close(4001, "dropped") });
       };
       ws.addEventListener("ping", () => {
+        healthy = true;
         armStale();
         emit({ type: "ping" });
       });
       ws.onmessage = (e: MessageEvent) => {
+        healthy = true;
         armStale();
         let f: Record<string, unknown>;
         try {
@@ -227,11 +262,7 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
       ws.onerror = () => {
         /* a close event always follows */
       };
-      ws.onclose = () => {
-        if (stale) clearTimeout(stale);
-        o.signal?.removeEventListener("abort", onAbort);
-        void chain.then(() => resolve({ opened, ended }));
-      };
+      ws.onclose = settle;
     });
   }
 
@@ -240,13 +271,16 @@ export async function remoteWatch(o: RemoteWatchOptions): Promise<RemoteWatchRes
     const out = await connectOnce();
     if (o.signal?.aborted) break;
     if (out.ended) {
+      // Lines committed just before the status change may still be unsent.
+      await fill();
       log(`call ${o.callId} ended (${out.ended})`);
       return { reason: "ended", status: out.ended };
     }
     let floorMs = 0;
-    if (out.opened) {
-      attempt = 0;
-    } else {
+    if (out.healthy) {
+      attempt = 0; // a socket that opened and then closed at once keeps backing off
+    }
+    if (!out.opened) {
       const { status, retryAfterMs } = await probeStatus();
       if (status === 401 || status === 403) {
         log(`not authorized for call ${o.callId} (HTTP ${status}): the share token is invalid, expired, revoked, or for another call`);

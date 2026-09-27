@@ -346,8 +346,8 @@ describe("remoteWatch robustness (review fixes)", () => {
 
 describe("samograph watch --remote (CLI wiring)", () => {
   it("parses --remote/--call/--mode/--since-seq/--out", () => {
-    const a = parseArgs(["watch", "--remote", "http://h:1", "--call", CALL, "--mode", "ws", "--since-seq", "4", "--out", "/tmp/x.txt"]);
-    expect(a.remote).toBe("http://h:1");
+    const a = parseArgs(["watch", "--remote", "https://h:1", "--call", CALL, "--mode", "ws", "--since-seq", "4", "--out", "/tmp/x.txt"]);
+    expect(a.remote).toBe("https://h:1");
     expect(a.call_id).toBe(CALL);
     expect(a.mode).toBe("ws");
     expect(a.since_seq).toBe(4);
@@ -373,7 +373,10 @@ describe("samograph watch --remote (CLI wiring)", () => {
   it("appends `[ts] Speaker: text` lines to the transcript file + a resume cursor, and prints them", async () => {
     const dir = makeTmpDir();
     try {
-      const hub = track(fakeHub({ onOpen: (ws) => [1, 2, 3].forEach((s) => ws.send(lineFrame(s))) }));
+      // 2nd connection: a server that ignores the cursor and replays 1..4 (only 4 is new)
+      const hub = track(
+        fakeHub({ onOpen: (ws, n) => (n === 0 ? [1, 2, 3] : [1, 2, 3, 4]).forEach((s) => ws.send(lineFrame(s))) }),
+      );
       const out = join(dir, "remote.txt");
       const printed: string[] = [];
       const a = ctl();
@@ -394,17 +397,21 @@ describe("samograph watch --remote (CLI wiring)", () => {
       expect(statSync(`${out}.seq`).mode & 0o777).toBe(0o600);
 
       // a restart resumes from the cursor file (since_seq=3), not from 0
+      const printed2: string[] = [];
       const a2 = ctl();
       const run2 = runRemoteWatch(
         { command: "watch", remote: hub.base, call_id: CALL, mode: "ws", out },
-        { env: { SAMOGRAPH_SHARE_TOKEN: TOKEN }, signal: a2.signal, print: () => {}, log: () => {} },
+        { env: { SAMOGRAPH_SHARE_TOKEN: TOKEN }, signal: a2.signal, print: (s) => printed2.push(s), log: () => {} },
       );
       const d2 = Date.now() + 4000;
-      while (hub.upgrades.length < 2 && Date.now() < d2) await Bun.sleep(5);
+      while (printed2.length < 1 && Date.now() < d2) await Bun.sleep(5);
       a2.abort();
       await run2;
       expect(hub.upgrades[1]!.sinceSeq).toBe(3);
-      expect(readFileSync(out, "utf-8")).toBe(expected.join("\n") + "\n");
+      const line4 = "[2026-09-27 12:00:00] Alice: line 4";
+      expect(printed2).toEqual([line4]);
+      expect(readFileSync(out, "utf-8")).toBe([...expected, line4].join("\n") + "\n");
+      expect(readFileSync(`${out}.seq`, "utf-8")).toBe("4\n");
     } finally {
       cleanupTmpDir(dir);
     }

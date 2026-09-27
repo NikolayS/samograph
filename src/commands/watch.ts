@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { watch } from "../transcript.ts";
 import { ExitError, samographDir } from "../config.ts";
@@ -35,7 +35,10 @@ export async function runRemoteWatch(args: ParsedArgs, deps: RemoteWatchDeps = {
   const callId = args.call_id!;
   const out = args.out ?? join(samographDir(), `remote_${callId}_transcript.txt`);
   const cursorFile = `${out}.seq`;
-  mkdirSync(dirname(out), { recursive: true });
+  // Meeting content is private: 0700 for a directory we create, 0600 files.
+  mkdirSync(dirname(out), { recursive: true, mode: 0o700 });
+  if (!existsSync(out)) writeFileSync(out, "", { mode: 0o600 });
+  chmodSync(out, 0o600);
 
   let sinceSeq = args.since_seq;
   if (sinceSeq === undefined && existsSync(cursorFile)) {
@@ -63,7 +66,9 @@ export async function runRemoteWatch(args: ParsedArgs, deps: RemoteWatchDeps = {
     log,
     onLine: (rendered, line) => {
       appendFileSync(out, rendered + "\n");
-      writeFileSync(cursorFile, `${line.seq}\n`);
+      // tmp + rename: a crash never leaves an empty cursor (which would replay from 0)
+      writeFileSync(`${cursorFile}.tmp`, `${line.seq}\n`, { mode: 0o600 });
+      renameSync(`${cursorFile}.tmp`, cursorFile);
       print(rendered);
     },
   });
