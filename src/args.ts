@@ -44,4 +44,10 @@ export interface ParsedArgs {
   intro?: boolean;
   intro_text?: string | null;
   context?: boolean;
+  /** `watch --remote SITE` (#307): tunnel-free remote watch. */
+  remote?: string | null;
+  call_id?: string;
+  remote_mode?: "longpoll";
+  wait?: number;
+  since_seq?: number;
 }

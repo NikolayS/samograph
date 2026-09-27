@@ -40,7 +40,7 @@ commands:
   presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
-  watch
+  watch [--remote SITE --call ID [--mode longpoll] [--wait S] [--since N] [--file FILE]]
   notes <init|point|decision|action|transcript> [options]
   frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
   frames
@@ -226,7 +226,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     presence: new Set(),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
-    watch: new Set(),
+    watch: new Set(["--remote", "--call", "--mode", "--wait", "--since", "--file"]),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
@@ -439,8 +439,41 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.message = positionals.slice(1).join(" ") || undefined;
       break;
     }
+    case "watch": {
+      // #307 prototype 2/3: tunnel-free remote watch over long polling. The
+      // share token is read from SAMOGRAPH_CALL_TOKEN — deliberately NOT a flag,
+      // so it never lands in shell history or `ps` output.
+      if (opts["--remote"] === undefined) break;
+      result.remote = opts["--remote"] as string;
+      if (opts["--call"] === undefined) {
+        throw new ArgError("argument --remote: requires --call ID");
+      }
+      result.call_id = opts["--call"] as string;
+      const mode = (opts["--mode"] as string) ?? "longpoll";
+      if (mode !== "longpoll") {
+        throw new ArgError(`argument --mode: invalid choice: '${mode}' (choose from longpoll)`);
+      }
+      result.remote_mode = mode;
+      const rawWait = opts["--wait"];
+      if (rawWait !== undefined) {
+        const w = Number(rawWait);
+        if (!Number.isInteger(w) || w < 0 || w > 50) {
+          throw new ArgError(`argument --wait: expected an integer 0..50, got '${rawWait}'`);
+        }
+        result.wait = w;
+      }
+      const rawSince = opts["--since"];
+      if (rawSince !== undefined) {
+        const n = Number(rawSince);
+        if (!Number.isSafeInteger(n) || n < 0) {
+          throw new ArgError(`argument --since: expected a non-negative integer, got '${rawSince}'`);
+        }
+        result.since_seq = n;
+      }
+      if (opts["--file"] !== undefined) result.transcript_file = opts["--file"] as string;
+      break;
+    }
     case "dicts":
-    case "watch":
     case "doctor":
     case "frames":
     case "chimes":
@@ -515,7 +548,7 @@ async function dispatch(args: ParsedArgs): Promise<void> {
     case "dicts":
       return cmdDicts();
     case "watch":
-      return cmdWatch();
+      return cmdWatch(args);
     case "notes":
       return cmdNotes(args);
     case "doctor":

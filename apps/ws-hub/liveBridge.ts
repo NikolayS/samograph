@@ -51,6 +51,7 @@ import {
 import { Hub } from "./hub.ts";
 import { ShareCaps, ReadCaps } from "./caps.ts";
 import { createFanIn, type FanIn } from "./fanIn.ts";
+import { LineWaiters } from "./longpoll.ts";
 import type { StreamAuthDeps } from "./stream.ts";
 import { startWsHubServer, stopServerBounded, type WsHubServerHandle } from "./server.ts";
 import { metricsHttpHandler } from "../../packages/shared/observe/metrics-http.ts";
@@ -122,10 +123,13 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
   const lookupCallByIngestSecret =
     deps.lookupCallByIngestSecret ?? pgLookupCallByIngestSecret(deps.sql);
 
+  // Long-poll waiters (#307) are woken from the fan-in's post-commit publish.
+  const waiters = new LineWaiters();
   const fanIn = createFanIn({
     sql: deps.sql,
     hub,
     lookupCallTenant: deps.authDeps.lookupCallTenant,
+    onLine: (callId) => waiters.notify(callId),
   });
 
   // ── ws-hub: serves /calls/:id/stream + /transcript off the shared Hub. ───────
@@ -138,6 +142,7 @@ export function composeLiveStack(deps: LiveStackDeps): LiveStackHandle {
     port: deps.wsPort,
     hostname: deps.hostname,
     recheckIntervalMs: deps.recheckIntervalMs,
+    waiters,
   });
 
   // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
