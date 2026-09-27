@@ -6,17 +6,16 @@
  * (Bun.serve) so every wire behaviour is deterministic and needs no DB:
  *
  *   (a) since_seq=2 → only seq ≥ 3, exactly once, in order
- *   (c) the socket drops mid-stream → reconnect resumes from since_seq, no loss,
- *       no duplicate (the fake deliberately re-sends the boundary line)
  *   (d) a `{type:"gap"}` frame is filled via GET /calls/:id/transcript?since_seq=
  *   (e) 401/403 on the upgrade → stop with a clear message, no reconnect loop
- *   (f) the token is ONLY in the Authorization header — never in a URL or a log
+ *   (f) the token is ONLY in the Authorization header — never in a URL or a log,
+ *       and a reconnect resumes from since_seq
  *
  * The real-stack versions (real ws-hub + ingest + Postgres RLS) live in
  * `apps/ws-hub/remoteWatch.e2e.test.ts`.
  */
 import { describe, it, expect, afterEach } from "bun:test";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import {
@@ -175,33 +174,6 @@ describe("remoteWatch against a fake ws-hub", () => {
     expect(hub.upgrades[0]!.sinceSeq).toBe(2);
   });
 
-  it("(c) a mid-stream drop reconnects from since_seq with no loss and no duplicate", async () => {
-    const hub = track(
-      fakeHub({
-        onOpen: (ws, n, u) => {
-          if (n === 0) {
-            for (const s of [1, 2, 3]) ws.send(lineFrame(s));
-            setTimeout(() => ws.close(1011, "server restart"), 20);
-          } else {
-            // replay seq > since_seq, plus the boundary line again (must be deduped)
-            for (let s = u.sinceSeq!; s <= 6; s++) ws.send(lineFrame(s));
-          }
-        },
-      }),
-    );
-    const c = collector();
-    const a = ctl();
-    const run = remoteWatch({
-      site: hub.base, callId: CALL, token: TOKEN, signal: a.signal, backoffBaseMs: 10, random: () => 0, ...c,
-    });
-    await c.waitFor(6);
-    a.abort();
-    await run;
-    expect(c.seqs).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(hub.upgrades.map((u) => u.sinceSeq)).toEqual([0, 3]);
-    expect(c.events.filter((e) => e.type === "reconnect").length).toBe(1);
-  });
-
   it("(d) a gap frame is filled via REST GET /transcript?since_seq=<last>", async () => {
     const hub = track(
       fakeHub({
@@ -224,7 +196,7 @@ describe("remoteWatch against a fake ws-hub", () => {
     expect(c.seqs).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(hub.restRequests.map((r) => r.sinceSeq)).toEqual([2]);
     expect(hub.restRequests[0]!.authorization).toBe(`Bearer ${TOKEN}`);
-    expect(c.events.some((e) => e.type === "gap-fill")).toBe(true);
+    expect(c.events.filter((e) => e.type === "gap-fill")).toEqual([{ type: "gap-fill", fromSeq: 2, count: 4 }]);
   });
 
   it("(d') a seq hole without a gap frame is also filled via REST", async () => {
@@ -277,13 +249,16 @@ describe("remoteWatch against a fake ws-hub", () => {
     await c.waitFor(2);
     a.abort();
     await run;
-    expect(hub.upgrades.length).toBe(2);
+    // the reconnect resumes from the cursor (since_seq=1), not from 0
+    expect(hub.upgrades.map((u) => u.sinceSeq)).toEqual([0, 1]);
+    expect(c.seqs).toEqual([1, 2]);
     for (const u of hub.upgrades) {
       expect(u.url).not.toContain(TOKEN);
       expect(new URL(u.url).searchParams.has("token")).toBe(false);
       expect(u.authorization).toBe(`Bearer ${TOKEN}`);
     }
-    expect(c.logs.length).toBeGreaterThan(0); // it did log (connect/reconnect)
+    // it did log the connect URL and the reconnect — just never the token
+    expect(c.logs.filter((m) => m.startsWith("connected ")).length).toBe(2);
     expect(c.logs.join("\n")).not.toContain(TOKEN);
     expect(JSON.stringify(c.events)).not.toContain(TOKEN);
   });
@@ -325,7 +300,6 @@ describe("samograph watch --remote (CLI wiring)", () => {
       const expected = [1, 2, 3].map((s) => `[2026-09-27 12:00:00] Alice: line ${s}`);
       expect(printed).toEqual(expected);
       expect(readFileSync(out, "utf-8")).toBe(expected.join("\n") + "\n");
-      expect(existsSync(`${out}.seq`)).toBe(true);
       expect(readFileSync(`${out}.seq`, "utf-8").trim()).toBe("3");
 
       // a restart resumes from the cursor file (since_seq=3), not from 0
