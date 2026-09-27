@@ -32,8 +32,10 @@ import {
   LineWaiters,
   createLongPollHandler,
   LONGPOLL_MAX_WAIT_S,
+  LONGPOLL_REQUESTS_PER_WINDOW,
   type LongPollResponseBody,
 } from "./longpoll.ts";
+import { RequestRateCaps } from "./caps.ts";
 import { startWsHubServer } from "./server.ts";
 import type { StreamAuthDeps } from "./stream.ts";
 import { watchRemoteLongPoll, type FetchLike } from "../../src/remoteWatch.ts";
@@ -357,6 +359,46 @@ d("long-poll /calls/:id/lines (#307 option 2)", () => {
     console.log(
       `[burst] 200 lines: first inject → last line ${(lastAt - firstAt).toFixed(0)} ms, ${requests} requests`,
     );
+  });
+
+  it("the real server gives /lines its own budget: 150 req/min passes, the share REST cap is untouched", async () => {
+    // Found by the burst measurement: sharing the 120/min /transcript cap made a
+    // 200-line burst after a busy minute hit 429 (Retry-After ~40 s). Long-poll
+    // responses are cursor-bounded (≤ 500 lines), so /lines gets its own cap.
+    const srv = startWsHubServer({ sql, authDeps, hub, waiters: new LineWaiters(), port: 0 });
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 150; i++) {
+        const r = await fetch(`${srv.url}/calls/${callA}/lines?since_seq=0&wait=0`, {
+          headers: { authorization: `Bearer ${tokenA}` },
+        });
+        statuses.push(r.status);
+        await r.body?.cancel();
+      }
+      expect(statuses.filter((s) => s !== 200)).toEqual([]);
+      // …and the full-transcript REST read still has its full, separate budget.
+      const t = await fetch(`${srv.url}/calls/${callA}/transcript?since_seq=0`, {
+        headers: { authorization: `Bearer ${tokenA}` },
+      });
+      expect(t.status).toBe(200);
+    } finally {
+      await srv.stop();
+    }
+  });
+
+  it("the /lines budget is still finite: over-cap → 429 with Retry-After", async () => {
+    const handler = createLongPollHandler({
+      sql,
+      authDeps,
+      waiters,
+      restCaps: new RequestRateCaps({ perWindow: 3, windowMs: 60_000 }),
+    });
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      statuses.push((await handler(linesReq(callA, { token: tokenA, since: 0, wait: 0 }))).status);
+    }
+    expect(statuses).toEqual([200, 200, 200, 429]);
+    expect(LONGPOLL_REQUESTS_PER_WINDOW).toBe(600);
   });
 
   (SLOW ? it : it.skip)(

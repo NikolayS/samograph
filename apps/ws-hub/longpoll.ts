@@ -44,6 +44,14 @@ export const LONGPOLL_DEFAULT_WAIT_S = 25;
 export const LONGPOLL_MAX_WAIT_S = 50;
 /** Max lines per response; a larger backlog is drained by the next request. */
 export const LONGPOLL_MAX_LINES = 500;
+/**
+ * Per-token request budget for `/lines` per 60 s window. Deliberately separate
+ * from (and larger than) the 120/min `/transcript` cap: a long-poll response is
+ * cursor-bounded (≤ {@link LONGPOLL_MAX_LINES}), and a fast-talking burst turns
+ * into one request per returned batch. Still finite, so a leaked link cannot
+ * drive unbounded reads.
+ */
+export const LONGPOLL_REQUESTS_PER_WINDOW = 600;
 /** Max concurrently held requests per call (bounds memory for a leaked link). */
 export const LONGPOLL_MAX_WAITERS_PER_CALL = 64;
 
