@@ -109,6 +109,20 @@ examples:
   samograph frame --out /tmp/current-call.png
   samograph frame --archive
 `,
+  watch: `usage: samograph watch [--remote SITE_URL --call ID [options]]
+
+Stream live transcript lines as "[timestamp] Speaker: text".
+Without --remote, tails the local transcript file fed by 'samograph join'.
+
+remote mode (experimental, #307 — no tunnel; outbound HTTPS polling only):
+  --remote SITE_URL      Hosted samograph site (https://; http only for localhost)
+  --call ID              Call id on the site
+  --token-file FILE      File holding the per-call share token
+                         (or set SAMOGRAPH_CALL_TOKEN; never passed on argv)
+  --interval S           Poll interval in seconds (default: 2)
+  --transcript-file F    Local mirror (default: ~/.samograph/remote/<ID>/transcript.txt);
+                         the resume cursor is kept next to it as F.cursor
+`,
   frames: `usage: samograph frames
 
 List WebSocket frame sources currently buffered in memory.
