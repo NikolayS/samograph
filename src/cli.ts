@@ -40,7 +40,7 @@ commands:
   presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
-  watch
+  watch [--remote SITE --call ID [--mode ws] [--since-seq N] [--out FILE]]
   notes <init|point|decision|action|transcript> [options]
   frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
   frames
@@ -108,6 +108,18 @@ examples:
   samograph frame --source screen --out /tmp/screen.png
   samograph frame --out /tmp/current-call.png
   samograph frame --archive
+`,
+  watch: `usage: samograph watch [--remote SITE --call ID [--mode ws] [--since-seq N] [--out FILE]]
+
+Stream live transcript lines as "[timestamp] Speaker: utterance".
+Without --remote, tails the local transcript written by 'samograph join'.
+
+--remote (experimental, #307): read the call from the hosted site over one
+outbound WebSocket — no tunnel. Needs a per-call share token in the
+SAMOGRAPH_SHARE_TOKEN env var (sent only as an Authorization header).
+Asks for everything after the cursor (since_seq), reconnects with backoff,
+and fills gaps over REST. Lines are appended to --out (default
+~/.samograph/remote_<call>_transcript.txt); <out>.seq holds the resume cursor.
 `,
   frames: `usage: samograph frames
 
@@ -226,7 +238,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     presence: new Set(),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
-    watch: new Set(),
+    watch: new Set(["--remote", "--call", "--mode", "--since-seq", "--out"]),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
@@ -439,8 +451,42 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.message = positionals.slice(1).join(" ") || undefined;
       break;
     }
+    case "watch": {
+      const remote = opts["--remote"] as string | undefined;
+      if (remote !== undefined) {
+        const callId = opts["--call"] as string | undefined;
+        if (!callId) throw new ArgError("argument --remote: requires --call <call_id>");
+        const mode = (opts["--mode"] as string | undefined) ?? "ws";
+        if (mode !== "ws") {
+          throw new ArgError(`argument --mode: invalid choice: '${mode}' (this build supports: ws)`);
+        }
+        // The share token rides in a header: refuse cleartext to anything but loopback.
+        let site: URL;
+        try {
+          site = new URL(remote);
+        } catch {
+          throw new ArgError(`argument --remote: invalid URL: '${remote}'`);
+        }
+        const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(site.hostname);
+        if (!["https:", "wss:"].includes(site.protocol) && !(loopback && ["http:", "ws:"].includes(site.protocol))) {
+          throw new ArgError("argument --remote: must be an https:// site (http:// is allowed only for localhost)");
+        }
+        if (site.username || site.password) {
+          throw new ArgError("argument --remote: must not contain a username or password");
+        }
+        result.remote = remote;
+        result.call_id = callId;
+        result.mode = mode;
+        const rawSince = opts["--since-seq"] as string | undefined;
+        if (rawSince !== undefined) {
+          if (!/^\d+$/.test(rawSince)) throw new ArgError(`argument --since-seq: invalid value: '${rawSince}'`);
+          result.since_seq = Number(rawSince);
+        }
+        result.out = (opts["--out"] as string) ?? null;
+      }
+      break;
+    }
     case "dicts":
-    case "watch":
     case "doctor":
     case "frames":
     case "chimes":
@@ -515,7 +561,7 @@ async function dispatch(args: ParsedArgs): Promise<void> {
     case "dicts":
       return cmdDicts();
     case "watch":
-      return cmdWatch();
+      return cmdWatch(args);
     case "notes":
       return cmdNotes(args);
     case "doctor":

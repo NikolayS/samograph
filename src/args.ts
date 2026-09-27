@@ -44,4 +44,8 @@ export interface ParsedArgs {
   intro?: boolean;
   intro_text?: string | null;
   context?: boolean;
+  remote?: string | null;
+  call_id?: string | null;
+  mode?: string | null;
+  since_seq?: number;
 }

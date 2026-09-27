@@ -39,7 +39,16 @@ interface StreamSocketData {
   prepared: Extract<PrepareStreamResult, { ok: true }>;
   conn?: StreamConnection;
   recheck?: ReturnType<typeof setInterval>;
+  keepalive?: ReturnType<typeof setInterval>;
 }
+
+/**
+ * Server keepalive ping cadence (#307). Proxies drop idle WebSockets —
+ * Cloudflare after ~100 s — and a live call can be silent for minutes, so every
+ * open stream gets a WS ping frame this often. 30 s keeps ≥ 3 pings inside that
+ * window. The client answers with a pong automatically (RFC 6455 §5.5.2).
+ */
+export const WS_PING_INTERVAL_MS = 30_000;
 
 export interface WsHubServerDeps {
   /** Privileged connection able to `SET LOCAL ROLE samograph_app`. */
@@ -66,6 +75,8 @@ export interface WsHubServerDeps {
   backfillLimit?: number;
   /** Revoke recheck cadence; defaults to {@link RECHECK_INTERVAL_MS} (≤ 1 s). */
   recheckIntervalMs?: number;
+  /** Keepalive ping cadence; defaults to {@link WS_PING_INTERVAL_MS}. */
+  pingIntervalMs?: number;
   sessionCookieName?: string;
 }
 
@@ -88,6 +99,7 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
   const readCaps = deps.readCaps ?? deps.authDeps.readCaps;
   const authDeps: StreamAuthDeps = { ...deps.authDeps, caps, readCaps };
   const recheckMs = deps.recheckIntervalMs ?? RECHECK_INTERVAL_MS;
+  const pingMs = deps.pingIntervalMs ?? WS_PING_INTERVAL_MS;
   const cookieName = deps.sessionCookieName ?? SESSION_COOKIE_NAME;
   // Cap the REST transcript reads per token so a leaked share link cannot drive
   // unbounded full-transcript reads while the WS surface is capped (§5.7). One
@@ -114,9 +126,9 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
     port: deps.port ?? 0,
     hostname: deps.hostname,
     // Long silences are normal on a live call; hold the socket at Bun's max
-    // idleTimeout (255 s). A client reconnect carries `?since_seq` so an idle
-    // close loses nothing — a server-side keepalive ping for arbitrarily long
-    // silences is a follow-up.
+    // idleTimeout (255 s). The per-socket keepalive ping (WS_PING_INTERVAL_MS)
+    // keeps proxies (Cloudflare ~100 s) from reaping an idle stream, and a
+    // client reconnect carries `?since_seq` so any close loses nothing.
     idleTimeout: 255,
     async fetch(req, srv): Promise<Response | undefined> {
       const url = new URL(req.url);
@@ -142,6 +154,17 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
 
     websocket: {
       async open(ws: ServerWebSocket<StreamSocketData>) {
+        // Keepalive (#307): ping every pingMs so an idle stream survives proxy
+        // idle cutoffs. Started first so it covers the backfill too; cleared on close.
+        const keepalive = setInterval(() => {
+          try {
+            ws.ping();
+          } catch {
+            /* socket gone — close handler clears this timer */
+          }
+        }, pingMs);
+        (keepalive as unknown as { unref?: () => void }).unref?.();
+        ws.data.keepalive = keepalive;
         const socket: StreamSocket = {
           send: (data) => {
             try {
@@ -210,6 +233,7 @@ export function startWsHubServer(deps: WsHubServerDeps): WsHubServerHandle {
 
       close(ws: ServerWebSocket<StreamSocketData>) {
         if (ws.data.recheck) clearInterval(ws.data.recheck);
+        if (ws.data.keepalive) clearInterval(ws.data.keepalive);
         ws.data.conn?.close();
       },
     },
