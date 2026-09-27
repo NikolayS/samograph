@@ -69,8 +69,24 @@ export interface TranscriptResponseBody {
   call_id: string;
   /** Echoes the request cursor (or `null` for a cold backfill). */
   since_seq: number | null;
+  /**
+   * The call's lifecycle status (#307), read under RLS BEFORE the lines in the
+   * same tx — so when {@link ended} is true the returned tail is complete and a
+   * polling client can stop.
+   */
+  status: string | null;
+  /** True once the call reached a terminal status (ENDED / COULD_NOT_* / BOT_REMOVED). */
+  ended: boolean;
   lines: TranscriptLine[];
 }
+
+/** Terminal call statuses (§5.2): a polling client stops once it sees one. */
+export const TERMINAL_CALL_STATUSES: ReadonlySet<string> = new Set([
+  "ENDED",
+  "COULD_NOT_JOIN",
+  "COULD_NOT_RECORD",
+  "BOT_REMOVED",
+]);
 
 /** The single bodyless 403 a denied read renders (§5.6 / `SAMO-AUTHZ-001`). */
 function denied(): Response {
@@ -85,7 +101,7 @@ function denied(): Response {
 type ReadOutcome =
   | { kind: "denied" }
   | { kind: "rate_limited"; retryAfterMs: number }
-  | { kind: "ok"; lines: TranscriptLine[] };
+  | { kind: "ok"; lines: TranscriptLine[]; status?: string | null };
 
 /**
  * Consult the per-token REST request-rate cap for an AUTHORIZED read, keyed
@@ -148,16 +164,28 @@ export function createTranscriptHandler(
       if (!authz.authorized) return { kind: "denied" };
       const rate = checkRestRate(deps, authz, credentials);
       if (!rate.allowed) return { kind: "rate_limited", retryAfterMs: rate.retryAfterMs };
+      // Status FIRST, lines second (#307): once the status is terminal, every
+      // line committed before that transition is visible to the read below.
+      const statusRows = (await tx`SELECT status FROM calls WHERE id = ${callId}`) as unknown as {
+        status: string;
+      }[];
       const lines =
         sinceSeq !== null
           ? await replayTranscripts(tx as unknown as SQL, callId, sinceSeq)
           : await backfillRecent(tx as unknown as SQL, callId, limit);
-      return { kind: "ok", lines };
+      return { kind: "ok", lines, status: statusRows[0]?.status ?? null };
     });
 
     if (outcome.kind === "denied") return denied();
     if (outcome.kind === "rate_limited") return rateLimitedResponse(outcome.retryAfterMs);
-    const body: TranscriptResponseBody = { call_id: callId, since_seq: sinceSeq, lines: outcome.lines };
+    const status = outcome.status ?? null;
+    const body: TranscriptResponseBody = {
+      call_id: callId,
+      since_seq: sinceSeq,
+      status,
+      ended: status !== null && TERMINAL_CALL_STATUSES.has(status),
+      lines: outcome.lines,
+    };
     return Response.json(body, { status: 200 });
   };
 }

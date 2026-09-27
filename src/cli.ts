@@ -40,7 +40,7 @@ commands:
   presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   dicts
-  watch
+  watch [--remote SITE_URL --call ID [--token-file F] [--interval S] [--transcript-file F]]
   notes <init|point|decision|action|transcript> [options]
   frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
   frames
@@ -226,7 +226,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     presence: new Set(),
     transcript: new Set(["--cursor", "--file", "--limit"]),
     dicts: new Set(),
-    watch: new Set(),
+    watch: new Set(["--remote", "--call", "--token-file", "--interval", "--transcript-file"]),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
     frame: new Set(["--out", "--source"]),
     frames: new Set(),
@@ -439,8 +439,47 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.message = positionals.slice(1).join(" ") || undefined;
       break;
     }
+    case "watch": {
+      // #307 prototype 1: `watch --remote <site> --call <id>` polls the hosted
+      // site instead of tailing a tunnel-fed local file. No --token flag on
+      // purpose: argv leaks via `ps` and shell history.
+      const remote = (opts["--remote"] as string | undefined) ?? null;
+      const callId = (opts["--call"] as string | undefined) ?? null;
+      if (remote === null) {
+        if (callId !== null || opts["--token-file"] !== undefined || opts["--interval"] !== undefined) {
+          throw new ArgError("--call/--token-file/--interval require --remote");
+        }
+        if (opts["--transcript-file"] !== undefined) {
+          throw new ArgError("--transcript-file requires --remote");
+        }
+        break;
+      }
+      if (!callId) throw new ArgError("the following arguments are required with --remote: --call");
+      let u: URL;
+      try {
+        u = new URL(remote);
+      } catch {
+        throw new ArgError(`argument --remote: invalid URL: '${remote}'`);
+      }
+      const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+      if (u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) {
+        throw new ArgError("argument --remote: must be https:// (plain http only for localhost)");
+      }
+      result.remote = remote;
+      result.call_id = callId;
+      result.token_file = (opts["--token-file"] as string | undefined) ?? null;
+      result.transcript_file = opts["--transcript-file"] as string | undefined;
+      const rawInterval = opts["--interval"];
+      if (rawInterval !== undefined) {
+        const secs = Number(rawInterval);
+        if (!Number.isFinite(secs) || secs <= 0) {
+          throw new ArgError(`argument --interval: expected seconds > 0: '${rawInterval}'`);
+        }
+        result.interval_ms = Math.round(secs * 1000);
+      }
+      break;
+    }
     case "dicts":
-    case "watch":
     case "doctor":
     case "frames":
     case "chimes":
@@ -515,7 +554,7 @@ async function dispatch(args: ParsedArgs): Promise<void> {
     case "dicts":
       return cmdDicts();
     case "watch":
-      return cmdWatch();
+      return cmdWatch(args);
     case "notes":
       return cmdNotes(args);
     case "doctor":

@@ -44,4 +44,9 @@ export interface ParsedArgs {
   intro?: boolean;
   intro_text?: string | null;
   context?: boolean;
+  /** `watch --remote`: hosted site base URL (#307 polling prototype). */
+  remote?: string | null;
+  call_id?: string | null;
+  token_file?: string | null;
+  interval_ms?: number;
 }
