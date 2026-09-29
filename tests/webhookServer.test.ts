@@ -257,7 +257,7 @@ describe("webhook handler", () => {
       expect(html).toContain("samograph-presence");
       expect(html).toContain("Heard");
       expect(html).toContain("Comments");
-      expect(html).toContain("samoagent");
+      expect(html).toContain("samograph robot");
       expect(html).toContain("plasma-canvas");
       expect(html).toContain("initPlasma");
       expect(html).toContain("drawSpherePlasma");

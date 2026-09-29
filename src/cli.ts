@@ -76,7 +76,7 @@ options:
   --no-presence          Join without the presence camera page (skips the
                          camera-page preflight entirely)
   --presence-bg MODE     Presence camera look: robot|sphere|field|static|cycle
-                         (default: robot — static samoagent avatar image)
+                         (default: robot — static samograph avatar image)
   --chime NAME           Default chat chime for the session, played into the
                          call audio when the bot posts a meeting-chat message
                          (default: blip). See: samograph chimes
