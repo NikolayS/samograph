@@ -238,6 +238,7 @@ export async function cmdJoin(
   const frameToken = randomUUID();
   const presenceToken = randomUUID();
   const presenceWriteToken = randomUUID();
+  const transcriptToken = randomUUID();
 
   const keyterms = loadDict(args.dict);
   const name = botName(args.name);
@@ -369,6 +370,7 @@ export async function cmdJoin(
           SAMOGRAPH_FRAME_TOKEN: frameToken,
           SAMOGRAPH_PRESENCE_TOKEN: presenceToken,
           SAMOGRAPH_PRESENCE_WRITE_TOKEN: presenceWriteToken,
+          SAMOGRAPH_TRANSCRIPT_TOKEN: transcriptToken,
         },
       },
     );
@@ -589,6 +591,10 @@ export async function cmdJoin(
     chime: args.chime ?? null,
     meeting_url: args.url,
     transcript_file: transcriptFile,
+    // Local-only long-poll endpoint used by `transcript --since` (never the
+    // public tunnel URL; the server rejects tunneled requests).
+    local_transcript_url: `http://127.0.0.1:${port}/transcript`,
+    transcript_token: transcriptToken,
   };
   if (presencePageUrl) {
     // Presence state is saved only when the camera page is actually in use:

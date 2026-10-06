@@ -7,6 +7,7 @@ import {
   transcriptStatusFromBot,
   type ServeOptions,
 } from "../server.ts";
+import { TranscriptLog } from "../transcriptLog.ts";
 import { makeRecallClient } from "../recall.ts";
 
 /**
@@ -18,7 +19,10 @@ import { makeRecallClient } from "../recall.ts";
 export function resolveServeOptions(
   args: ParsedArgs,
   env: Record<string, string | undefined> = process.env,
-): Pick<ServeOptions, "webhookToken" | "frameToken" | "presenceToken" | "presenceWriteToken"> & {
+): Pick<
+  ServeOptions,
+  "webhookToken" | "frameToken" | "presenceToken" | "presenceWriteToken" | "transcriptToken"
+> & {
   publicBase: string;
 } {
   return {
@@ -26,6 +30,7 @@ export function resolveServeOptions(
     frameToken: args.frame_token || env.SAMOGRAPH_FRAME_TOKEN || "",
     presenceToken: args.presence_token || env.SAMOGRAPH_PRESENCE_TOKEN || "",
     presenceWriteToken: args.presence_write_token || env.SAMOGRAPH_PRESENCE_WRITE_TOKEN || "",
+    transcriptToken: env.SAMOGRAPH_TRANSCRIPT_TOKEN || "",
     publicBase: args.public_base || env.SAMOGRAPH_PUBLIC_BASE || "",
   };
 }
@@ -34,14 +39,19 @@ export async function cmdServe(args: ParsedArgs): Promise<void> {
   const port = args.port || 8080;
   const transcriptPath = args.transcript_file!;
   const { publicBase, ...tokens } = resolveServeOptions(args);
+  // One numbered line log shared by the webhook handler and both watchdogs,
+  // so GET /transcript long-poll clients see warnings as well as speech.
+  const transcriptLog = new TranscriptLog(transcriptPath);
+  const appendLine = (line: string): void => void transcriptLog.append(line);
   serve(port, transcriptPath, {
     ...tokens,
+    transcriptLog,
     currentCallId: () => callIdFromStateFile(args.call_id_file),
   });
   // Mid-call tunnel watchdog: probes the public URL through the tunnel back
   // to this server and writes SAMOGRAPH-WARNING lines into the transcript
   // (surfaced live by `samograph watch`) when the tunnel stops relaying.
-  startTunnelWatchdog({ publicBase, transcriptPath });
+  startTunnelWatchdog({ publicBase, transcriptPath, appendLine });
   // Mid-call transcript-stream watchdog: polls Recall's recording transcript
   // status and writes a SAMOGRAPH-WARNING line (surfaced live by `samograph
   // watch`) the moment the transcription provider connection fails — otherwise
@@ -50,6 +60,7 @@ export async function cmdServe(args: ParsedArgs): Promise<void> {
   const recall = makeRecallClient();
   startTranscriptWatchdog({
     transcriptPath,
+    appendLine,
     fetchStatus: async () => {
       const botId = callIdFromStateFile(args.call_id_file);
       if (!botId) return null;
