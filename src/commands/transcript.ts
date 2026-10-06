@@ -1,5 +1,11 @@
 import { botIdFromArgsOrState } from "../state.ts";
-import { localTranscriptLines, printLocalTranscript } from "../transcript.ts";
+import {
+  localTranscriptLines,
+  printLocalTranscript,
+  readTranscriptSince,
+  transcriptPathFromState,
+  waitTranscriptSince,
+} from "../transcript.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient, type FetchFn } from "../recall.ts";
 
@@ -29,10 +35,52 @@ function printLocalTranscriptChunk(args: ParsedArgs): void {
   }
 }
 
+/**
+ * `transcript --since CURSOR`: print only lines added after an opaque byte
+ * cursor, then the next cursor on stderr (or one JSON object with --json).
+ */
+async function printTranscriptSince(args: ParsedArgs): Promise<void> {
+  const path = args.transcript_file ?? transcriptPathFromState();
+  const since = args.transcript_since ?? 0;
+  const res = args.transcript_wait !== undefined
+    ? await waitTranscriptSince(path, since, {
+        waitSeconds: args.transcript_wait,
+        limit: args.transcript_limit,
+      })
+    : readTranscriptSince(path, since, args.transcript_limit);
+
+  if (res.warning) {
+    process.stderr.write(`SAMOGRAPH-WARNING: ${res.warning}\n`);
+  }
+  if (res.missing && !res.warning) {
+    process.stderr.write(`SAMOGRAPH-WARNING: transcript not found at ${path}\n`);
+  }
+  if (args.transcript_json) {
+    process.stdout.write(JSON.stringify({
+      lines: res.lines,
+      cursor: res.cursor,
+      ended: res.ended,
+      reset: res.reset,
+    }) + "\n");
+    return;
+  }
+  for (const line of res.lines) {
+    process.stdout.write(line + "\n");
+  }
+  if (res.ended) {
+    process.stderr.write("SAMOGRAPH-CALL-ENDED\n");
+  }
+  process.stderr.write(`SAMOGRAPH-CURSOR: ${res.cursor}\n`);
+}
+
 export async function cmdTranscript(
   args: ParsedArgs,
   deps: TranscriptDeps = {},
 ): Promise<void> {
+  if (args.transcript_since !== undefined) {
+    await printTranscriptSince(args);
+    return;
+  }
   if (args.transcript_local === true || args.transcript_file) {
     printLocalTranscriptChunk(args);
     return;

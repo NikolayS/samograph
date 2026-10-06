@@ -42,6 +42,8 @@ Start `watch` immediately after `join` with your persistent monitor. Keep it run
 [timestamp] Speaker: utterance
 ```
 
+If you cannot keep a persistent monitor, read incrementally instead: `samograph transcript --since 0 --wait 60 --json` returns `{"lines":[...],"cursor":n,"ended":bool,"reset":bool}`; pass `cursor` back as `--since` on the next call. Stop when `ended` is true. Never filter by timestamp: lines can arrive slightly out of timestamp order.
+
 React in your agent session. Use meeting chat only for deliberate call-visible messages:
 
 ```bash

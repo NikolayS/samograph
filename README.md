@@ -220,6 +220,15 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.
+- `transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]` - incremental read for agents: print only the live transcript lines added after `CURSOR`, then exit. It reads the active call's local transcript (or `--file`). The next cursor goes to stderr as `SAMOGRAPH-CURSOR: <n>`; pass it back as `--since` on the next call, and start with `--since 0`. `--json` prints one object instead: `{"lines":[...],"cursor":n,"ended":bool,"reset":bool}`. `--wait` long-polls: it blocks until at least one new line exists, the call ends, or `SECONDS` pass (default 30), so a watcher needs no fixed sleep. The cursor is an opaque byte offset in the append-only transcript file, not a timestamp: lines can be appended slightly out of timestamp order and the end marker uses local time, so a timestamp filter would drop or repeat lines. Only complete lines are returned (a half-written trailing line waits for the next call). If the cursor is past the end of the file or not on a line boundary (the file was replaced), reading restarts at 0 with a `SAMOGRAPH-WARNING` on stderr and `"reset": true`. After `leave`, every call reports `SAMOGRAPH-CALL-ENDED` on stderr (`"ended": true`). Example watcher loop:
+
+  ```bash
+  c=0
+  while out=$(samograph transcript --since "$c" --wait 60 --json); do
+    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq .cursor)
+    [ "$(echo "$out" | jq .ended)" = true ] && break
+  done
+  ```
 - `screenshot [--out FILE]` - capture the local Mac screen with `screencapture`; use as a fallback when frame is not available.
 - `leave` - remove bot, stop local processes, and clean state.
 - `dicts` - list keyword dictionaries.
