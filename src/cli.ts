@@ -19,6 +19,7 @@ import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 import { cmdChimes } from "./commands/chimes.ts";
 import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
+import { parseSinceCursor } from "./transcript.ts";
 
 const USAGE = `usage: samograph <command> [options]
 
@@ -186,15 +187,22 @@ examples:
 Print a finished Recall.ai transcript, falling back to the local live transcript.
 
 With --since, print only the live transcript lines added after CURSOR and exit
-(incremental reads for agents). Reads the active call's local transcript, or
---file FILE. The next cursor is printed on stderr as
-  SAMOGRAPH-CURSOR: <n>
-Pass it back as --since on the next call. Start with --since 0. The cursor is
-an opaque byte offset in the append-only transcript file, not a timestamp
-(lines can arrive slightly out of timestamp order). Only complete lines are
-returned. If the cursor is past the end of the file (file replaced), reading
-restarts at 0 with a warning on stderr. When the call has ended,
-SAMOGRAPH-CALL-ENDED is printed on stderr (every later call reports it again).
+(incremental reads for agents). The next cursor is printed on stderr as
+  SAMOGRAPH-CURSOR: <cursor>
+Pass it back as --since on the next call. Start with --since 0. Treat the
+cursor as opaque; it is never a timestamp (lines can arrive slightly out of
+timestamp order). Two kinds:
+  s:<seq>:<offset>  from the active call's local server (join's callback
+                    server): line number in its in-memory log. --wait returns
+                    the moment a line arrives. If the server is gone (after
+                    leave), the CLI falls back to the file at <offset>.
+  b:<offset>        byte offset in the append-only transcript file. Used with
+                    --file, when no call server is reachable, and after a
+                    fallback. --wait polls the file.
+Only complete lines are returned. If a b: cursor is past the end of the file
+(file replaced), reading restarts at 0 with a SAMOGRAPH-WARNING on stderr.
+When the call has ended, SAMOGRAPH-CALL-ENDED is printed on stderr (every
+later call reports it again).
 
 options:
   --cursor N        Start at transcript line N (0-based)
@@ -205,7 +213,7 @@ options:
   --wait [SECONDS]  With --since: block until at least one new line exists,
                     the call ends, or SECONDS pass (default 30)
   --json            With --since: print one JSON object instead:
-                    {"lines":[...],"cursor":n,"ended":bool,"reset":bool}
+                    {"lines":[...],"cursor":"...","ended":bool,"reset":bool}
 
 examples:
   samograph transcript
@@ -218,7 +226,7 @@ examples:
 watcher loop (long-polls; no fixed sleep):
   c=0
   while out=$(samograph transcript --since "$c" --wait 60 --json); do
-    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq .cursor)
+    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq -r .cursor)
     [ "$(echo "$out" | jq .ended)" = true ] && break
   done
 `,
@@ -431,8 +439,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       const rawSince = opts["--since"];
       if (rawSince !== undefined) {
-        const sc = Number(rawSince);
-        if (!/^\d+$/.test(String(rawSince)) || !Number.isSafeInteger(sc)) {
+        if (parseSinceCursor(String(rawSince)) === null) {
           throw new ArgError(`argument --since: invalid cursor: '${rawSince}' (use 0 or a value printed as SAMOGRAPH-CURSOR)`);
         }
         if (rawCursor !== undefined) {
@@ -441,7 +448,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         if (result.bot_id) {
           throw new ArgError("argument --since: reads the local transcript; use --file FILE instead of a bot_id");
         }
-        result.transcript_since = sc;
+        result.transcript_since = String(rawSince);
       }
       const rawWait = opts["--wait"];
       if (rawWait !== undefined) {

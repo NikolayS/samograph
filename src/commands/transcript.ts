@@ -1,6 +1,7 @@
-import { botIdFromArgsOrState } from "../state.ts";
+import { botIdFromArgsOrState, loadState } from "../state.ts";
 import {
   localTranscriptLines,
+  parseSinceCursor,
   printLocalTranscript,
   readTranscriptSince,
   transcriptPathFromState,
@@ -35,42 +36,128 @@ function printLocalTranscriptChunk(args: ParsedArgs): void {
   }
 }
 
+interface SinceOutput {
+  lines: string[];
+  cursor: string;
+  ended: boolean;
+  reset: boolean;
+  warning?: string;
+}
+
+interface ServerPage {
+  lines: Array<{ line: string }>;
+  next: number;
+  offset: number;
+  reset: boolean;
+}
+
+/** Max seconds per server long-poll request (the server caps at 60). */
+const SERVER_WAIT_CHUNK_SECONDS = 60;
+
 /**
- * `transcript --since CURSOR`: print only lines added after an opaque byte
- * cursor, then the next cursor on stderr (or one JSON object with --json).
+ * Low-latency path: long-poll the active call's local server. Returns null
+ * when no server is configured or reachable, so the caller falls back to the
+ * transcript file.
  */
-async function printTranscriptSince(args: ParsedArgs): Promise<void> {
+async function sinceViaServer(
+  seq: number,
+  args: ParsedArgs,
+  fetchFn: FetchFn,
+): Promise<SinceOutput | null> {
+  let state: Record<string, unknown>;
+  try {
+    state = loadState();
+  } catch {
+    return null;
+  }
+  const url = state.local_transcript_url;
+  const token = state.transcript_token;
+  if (typeof url !== "string" || !url || typeof token !== "string" || !token) return null;
+
+  const deadline = Date.now() + (args.transcript_wait ?? 0) * 1000;
+  let since = seq;
+  let reset = false;
+  while (true) {
+    const remaining = Math.max(0, (deadline - Date.now()) / 1000);
+    const wait = Math.min(remaining, SERVER_WAIT_CHUNK_SECONDS);
+    const q = new URL(url);
+    q.searchParams.set("since", String(since));
+    q.searchParams.set("wait", wait.toFixed(3));
+    if (args.transcript_limit !== undefined) q.searchParams.set("limit", String(args.transcript_limit));
+    let page: ServerPage;
+    try {
+      const r = await fetchFn(q.toString(), {
+        headers: { "X-Samograph-Transcript-Token": token },
+        signal: AbortSignal.timeout((wait + 10) * 1000),
+      });
+      if (!r.ok) return null;
+      page = (await r.json()) as ServerPage;
+    } catch {
+      // Server gone (call ended / leave) or not running: use the file.
+      return null;
+    }
+    reset ||= page.reset;
+    since = page.next;
+    if (page.lines.length || Date.now() >= deadline) {
+      return {
+        lines: page.lines.map((l) => l.line),
+        cursor: `s:${page.next}:${page.offset}`,
+        ended: false,
+        reset,
+        warning: reset ? `cursor s:${seq} is ahead of the live server log (server restarted?); restarting from its first line` : undefined,
+      };
+    }
+  }
+}
+
+async function sinceViaFile(offset: number, args: ParsedArgs): Promise<SinceOutput> {
   const path = args.transcript_file ?? transcriptPathFromState();
-  const since = args.transcript_since ?? 0;
   const res = args.transcript_wait !== undefined
-    ? await waitTranscriptSince(path, since, {
+    ? await waitTranscriptSince(path, offset, {
         waitSeconds: args.transcript_wait,
         limit: args.transcript_limit,
       })
-    : readTranscriptSince(path, since, args.transcript_limit);
+    : readTranscriptSince(path, offset, args.transcript_limit);
+  let warning = res.warning;
+  if (res.missing && !warning) warning = `transcript not found at ${path}`;
+  return { lines: res.lines, cursor: `b:${res.cursor}`, ended: res.ended, reset: res.reset, warning };
+}
 
-  if (res.warning) {
-    process.stderr.write(`SAMOGRAPH-WARNING: ${res.warning}\n`);
+/**
+ * `transcript --since CURSOR`: print only lines added after CURSOR, then the
+ * next cursor on stderr (or one JSON object with --json). Uses the active
+ * call's local server long-poll when reachable (`s:` cursors), otherwise the
+ * append-only transcript file (`b:` byte cursors).
+ */
+async function printTranscriptSince(args: ParsedArgs, fetchFn: FetchFn): Promise<void> {
+  const cursor = parseSinceCursor(args.transcript_since ?? "0") ?? { kind: "start" as const };
+  let out: SinceOutput | null = null;
+  if (!args.transcript_file && cursor.kind !== "byte") {
+    out = await sinceViaServer(cursor.kind === "seq" ? cursor.seq : 0, args, fetchFn);
   }
-  if (res.missing && !res.warning) {
-    process.stderr.write(`SAMOGRAPH-WARNING: transcript not found at ${path}\n`);
+  if (out === null) {
+    out = await sinceViaFile(cursor.kind === "start" ? 0 : cursor.offset, args);
+  }
+
+  if (out.warning) {
+    process.stderr.write(`SAMOGRAPH-WARNING: ${out.warning}\n`);
   }
   if (args.transcript_json) {
     process.stdout.write(JSON.stringify({
-      lines: res.lines,
-      cursor: res.cursor,
-      ended: res.ended,
-      reset: res.reset,
+      lines: out.lines,
+      cursor: out.cursor,
+      ended: out.ended,
+      reset: out.reset,
     }) + "\n");
     return;
   }
-  for (const line of res.lines) {
+  for (const line of out.lines) {
     process.stdout.write(line + "\n");
   }
-  if (res.ended) {
+  if (out.ended) {
     process.stderr.write("SAMOGRAPH-CALL-ENDED\n");
   }
-  process.stderr.write(`SAMOGRAPH-CURSOR: ${res.cursor}\n`);
+  process.stderr.write(`SAMOGRAPH-CURSOR: ${out.cursor}\n`);
 }
 
 export async function cmdTranscript(
@@ -78,7 +165,7 @@ export async function cmdTranscript(
   deps: TranscriptDeps = {},
 ): Promise<void> {
   if (args.transcript_since !== undefined) {
-    await printTranscriptSince(args);
+    await printTranscriptSince(args, deps.fetchFn ?? fetch);
     return;
   }
   if (args.transcript_local === true || args.transcript_file) {

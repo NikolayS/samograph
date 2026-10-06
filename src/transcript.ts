@@ -375,6 +375,41 @@ export function readTranscriptSince(
   }
 }
 
+/**
+ * A `transcript --since` cursor. Printed forms:
+ *   b:<offset>          byte offset in the transcript file (file path)
+ *   s:<seq>:<offset>    line seq in the live server log, plus the byte offset
+ *                       of the same point in the file (used if the server is
+ *                       gone, e.g. after `leave`)
+ * Input also accepts `0` (from the start; prefers the server) and a bare
+ * integer (byte offset).
+ */
+export type SinceCursor =
+  | { kind: "start" }
+  | { kind: "byte"; offset: number }
+  | { kind: "seq"; seq: number; offset: number };
+
+export function parseSinceCursor(raw: string): SinceCursor | null {
+  const int = (s: string): number | null => {
+    if (!/^\d+$/.test(s)) return null;
+    const n = Number(s);
+    return Number.isSafeInteger(n) ? n : null;
+  };
+  if (raw === "0") return { kind: "start" };
+  let m = raw.match(/^(?:b:)?(\d+)$/);
+  if (m) {
+    const offset = int(m[1]!);
+    return offset === null ? null : { kind: "byte", offset };
+  }
+  m = raw.match(/^s:(\d+):(\d+)$/);
+  if (m) {
+    const seq = int(m[1]!);
+    const offset = int(m[2]!);
+    return seq === null || offset === null ? null : { kind: "seq", seq, offset };
+  }
+  return null;
+}
+
 export interface WaitSinceOpts {
   /** Max seconds to wait for at least one new line. */
   waitSeconds: number;

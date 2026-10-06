@@ -152,13 +152,17 @@ describe("transcript --since CLI", () => {
   afterEach(() => { restoreEnv(env); cleanupTmpDir(tmp); });
 
   it("parses --since, --wait (optional value) and --json", () => {
-    const a = parseArgs(["transcript", "--since", "42", "--wait", "--json"]);
-    expect(a.transcript_since).toBe(42);
+    const a = parseArgs(["transcript", "--since", "b:42", "--wait", "--json"]);
+    expect(a.transcript_since).toBe("b:42");
     expect(a.transcript_wait).toBe(30);
     expect(a.transcript_json).toBe(true);
     expect(parseArgs(["transcript", "--since", "0", "--wait", "5"]).transcript_wait).toBe(5);
     expect(parseArgs(["transcript", "--since=0", "--wait=2.5"]).transcript_wait).toBe(2.5);
+    expect(parseArgs(["transcript", "--since", "s:3:120"]).transcript_since).toBe("s:3:120");
+    expect(parseArgs(["transcript", "--since", "17"]).transcript_since).toBe("17");
     expect(() => parseArgs(["transcript", "--since", "-1"])).toThrow();
+    expect(() => parseArgs(["transcript", "--since", "s:3"])).toThrow();
+    expect(() => parseArgs(["transcript", "--since", "x:1"])).toThrow();
     expect(() => parseArgs(["transcript", "--since", "0", "--cursor", "1"])).toThrow();
     expect(() => parseArgs(["transcript", "--wait", "5"])).toThrow();
   });
@@ -168,10 +172,10 @@ describe("transcript --since CLI", () => {
     writeFileSync(tf, L1 + L2);
     writeFileSync(process.env.SAMOGRAPH_STATE_FILE!, JSON.stringify({ transcript_file: tf }));
     const { out, err } = await capture(() =>
-      cmdTranscript({ command: "transcript", transcript_since: Buffer.byteLength(L1) }),
+      cmdTranscript({ command: "transcript", transcript_since: `b:${Buffer.byteLength(L1)}` }),
     );
     expect(out).toBe(L2);
-    expect(err).toContain(`SAMOGRAPH-CURSOR: ${Buffer.byteLength(L1 + L2)}`);
+    expect(err).toContain(`SAMOGRAPH-CURSOR: b:${Buffer.byteLength(L1 + L2)}`);
   });
 
   it("--json with --file returns {lines, cursor, ended, reset}", async () => {
@@ -181,20 +185,20 @@ describe("transcript --since CLI", () => {
       cmdTranscript({
         command: "transcript",
         transcript_file: tf,
-        transcript_since: 99_999,
+        transcript_since: "99999",
         transcript_json: true,
       }),
     );
     const j = JSON.parse(out);
-    expect(j).toEqual({ lines: [L1.trimEnd()], cursor: Buffer.byteLength(L1), ended: false, reset: true });
+    expect(j).toEqual({ lines: [L1.trimEnd()], cursor: `b:${Buffer.byteLength(L1)}`, ended: false, reset: true });
   });
 
   it("missing file warns and returns cursor 0", async () => {
     const { out, err } = await capture(() =>
-      cmdTranscript({ command: "transcript", transcript_file: join(tmp, "nope.txt"), transcript_since: 0 }),
+      cmdTranscript({ command: "transcript", transcript_file: join(tmp, "nope.txt"), transcript_since: "0" }),
     );
     expect(out).toBe("");
     expect(err).toContain("transcript not found");
-    expect(err).toContain("SAMOGRAPH-CURSOR: 0");
+    expect(err).toContain("SAMOGRAPH-CURSOR: b:0");
   });
 });

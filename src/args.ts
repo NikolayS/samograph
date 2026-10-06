@@ -20,8 +20,8 @@ export interface ParsedArgs {
   transcript_cursor?: number;
   transcript_limit?: number;
   transcript_local?: boolean;
-  /** Opaque byte-offset cursor for `transcript --since`. */
-  transcript_since?: number;
+  /** Opaque cursor for `transcript --since` (validated by parseSinceCursor). */
+  transcript_since?: string;
   /** Seconds to long-poll for new lines with `transcript --since --wait`. */
   transcript_wait?: number;
   transcript_json?: boolean;

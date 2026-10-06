@@ -220,15 +220,21 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.
-- `transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]` - incremental read for agents: print only the live transcript lines added after `CURSOR`, then exit. It reads the active call's local transcript (or `--file`). The next cursor goes to stderr as `SAMOGRAPH-CURSOR: <n>`; pass it back as `--since` on the next call, and start with `--since 0`. `--json` prints one object instead: `{"lines":[...],"cursor":n,"ended":bool,"reset":bool}`. `--wait` long-polls: it blocks until at least one new line exists, the call ends, or `SECONDS` pass (default 30), so a watcher needs no fixed sleep. The cursor is an opaque byte offset in the append-only transcript file, not a timestamp: lines can be appended slightly out of timestamp order and the end marker uses local time, so a timestamp filter would drop or repeat lines. Only complete lines are returned (a half-written trailing line waits for the next call). If the cursor is past the end of the file or not on a line boundary (the file was replaced), reading restarts at 0 with a `SAMOGRAPH-WARNING` on stderr and `"reset": true`. After `leave`, every call reports `SAMOGRAPH-CALL-ENDED` on stderr (`"ended": true`). Example watcher loop:
+- `transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]` - incremental read for agents: print only the live transcript lines added after `CURSOR`, then exit. The next cursor goes to stderr as `SAMOGRAPH-CURSOR: <cursor>`; pass it back as `--since` on the next call, and start with `--since 0`. `--json` prints one object instead: `{"lines":[...],"cursor":"...","ended":bool,"reset":bool}`. `--wait` long-polls: it blocks until at least one new line exists, the call ends, or `SECONDS` pass (default 30), so a watcher needs no fixed sleep. Cursors are opaque and are never timestamps: lines can be appended slightly out of timestamp order and the end marker uses local time, so a timestamp filter would drop or repeat lines. There are two kinds:
+  - `s:<seq>:<offset>` - from the active call's local callback server (see `GET /transcript` below): `seq` numbers the lines the server appended during this call. With `--wait`, the call returns the moment a line arrives. If the server is gone (for example after `leave`), the CLI falls back to the file at `offset`.
+  - `b:<offset>` - a byte offset in the append-only transcript file. Used with `--file`, when no call server is reachable, and after a fallback. With `--wait`, the CLI polls the file. Only complete lines are returned (a half-written trailing line waits for the next call). If the offset is past the end of the file or not on a line boundary (the file was replaced), reading restarts at 0 with a `SAMOGRAPH-WARNING` on stderr and `"reset": true`.
+
+  After `leave`, every call reports `SAMOGRAPH-CALL-ENDED` on stderr (`"ended": true`). Example watcher loop:
 
   ```bash
   c=0
   while out=$(samograph transcript --since "$c" --wait 60 --json); do
-    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq .cursor)
+    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq -r .cursor)
     [ "$(echo "$out" | jq .ended)" = true ] && break
   done
   ```
+
+  The callback server that `join` starts also serves this directly, for agents that prefer HTTP: `GET http://127.0.0.1:<port>/transcript?since=<seq>&wait=<seconds>[&limit=N]` with header `X-Samograph-Transcript-Token: <transcript_token from state.json>` returns `{"lines":[{"seq","ts","speaker","text","line"}],"next":<seq>,"offset":<bytes>,"reset":bool}`. If no line is newer than `since`, it waits up to `wait` seconds (maximum 60) and returns as soon as one arrives. Each client keeps its own `since`. `GET /transcript/stream?since=<seq>` is the same feed as Server-Sent Events (`id` = seq, so `Last-Event-ID` resumes). Both endpoints answer only direct local requests: a request that comes through the public tunnel (a non-local `Host` or any `X-Forwarded-*`, `Forwarded`, or `Cf-Connecting-Ip` header) gets 404, even with a valid token. The URL and token are in `state.json` as `local_transcript_url` and `transcript_token`.
 - `screenshot [--out FILE]` - capture the local Mac screen with `screencapture`; use as a fallback when frame is not available.
 - `leave` - remove bot, stop local processes, and clean state.
 - `dicts` - list keyword dictionaries.
