@@ -272,3 +272,25 @@ d("authorizeCall — tenant isolation (DB-backed, §5.6 / §6.2 #4)", () => {
     expect(authorized).toBe(0);
   });
 });
+
+// Credential lanes are operation boundaries, even before an endpoint checks a verb.
+describe("authorizeCall — explicit credential lanes", () => {
+  for (const [lane, scopes, permitted] of [
+    ["shareToken", ["act:chat"], false],
+    ["agentToken", ["share"], false],
+    ["agentToken", ["act:chat"], true],
+    ["shareToken", ["share"], true],
+  ] as const) {
+    it(`${lane} with ${scopes.join()} permits=${permitted}`, async () => {
+      const callId = randomUUID();
+      const tenantId = randomUUID();
+      const exp = Math.floor(Date.now() / 1000) + 60;
+      const token = signToken({ kid: KEY_CURRENT.kid, call_id: callId, scopes: [...scopes], iat: exp - 60, exp, jti: randomUUID() }, KEY_CURRENT);
+      const tx = ((strings: TemplateStringsArray) => Promise.resolve(strings.join("").includes("FROM tokens")
+        ? [{ call_id: callId, scopes: [...scopes], kid: KEY_CURRENT.kid, expires_at: new Date(exp * 1000), revoked_at: null }]
+        : [])) as unknown as SQL;
+      const result = await authorizeCall(tx, { callId, [lane]: token }, { keyring, lookupSession: async () => null, lookupCallTenant: async () => tenantId });
+      expect(result.authorized).toBe(permitted);
+    });
+  }
+});
