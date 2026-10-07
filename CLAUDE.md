@@ -153,7 +153,9 @@ Notes:
 
 Every pull request must pass our review gate before it is merged. The gate is
 [Tanya301/samorev](https://github.com/Tanya301/samorev) — a CLI-first code-review
-tool. **Do not merge a PR unless all of the following are satisfied:**
+tool. The default path below applies unless the owner explicitly authorizes the
+[GPT substitution](#gpt-review-substitution-under-owner-instruction).
+**Do not merge a PR unless all of the following are satisfied:**
 
 1. **CI is green** — all CI/test checks pass (locally: `bun test` and
    `bunx tsc --noEmit` clean).
@@ -190,6 +192,38 @@ the `/review-mr` slash command (or spawn the samorev review agents — Security 
 Bug Hunter are blocking), then post a comment with the combined result. Both
 surfaces authenticate through `gh`/`glab`; see the repo's `docs/bot-operation.md`.
 
+### GPT review substitution under owner instruction
+
+When the human owner explicitly instructs agents to use GPT reviewers in place of
+the Claude-backed samorev analysis, use this path only for the work covered by that
+instruction. Tool unavailability alone does not authorize a substitution. Record
+the authorization and its scope in the PR; do not launch Claude-backed analysis
+contrary to the owner's instruction.
+
+- Run **two independent reviews**, Security and Bug Hunter, with separate GPT
+  reviewer agents who did not implement the change. Each reviews the final diff
+  and relevant repository context against the **same full head SHA**.
+- Post both reviews as PR comments, identifying the role, actual model, full head
+  SHA, findings and verdict. Label the result **GPT review substitution**, never
+  `samorev PASS`. Preserve any failed or unavailable samorev result truthfully;
+  neither failure nor unavailability counts as a passing review.
+- **BLOCKING findings from either reviewer block merge** until fixed and
+  re-reviewed. NON-BLOCKING / POTENTIAL / INFO retain their existing meaning.
+  Missing reviews or an incomplete review also block merge.
+- **Any later commit invalidates both reviews**, including fixes, rebases and
+  conflict-resolution merges. Obtain fresh Security and Bug Hunter reviews on
+  the new head before merge; green CI does not replace either review.
+- All required **CI checks must be green on that exact head SHA**, and appropriate
+  behavior evidence must be posted (commands and output; screenshots for UI).
+  For documentation-only changes, post the diff/consistency checks and explain
+  why a live behavior test is not warranted; do not invent red/green tests.
+- Confirm the PR head SHA matches both review comments and the green CI results
+  immediately before merge. **Explicit human owner merge approval is still
+  required**; authorizing GPT review does not authorize a merge.
+
+This substitutes the review provider only. The red/green bugfix requirement,
+evidence requirements, sprint handoffs, and other process rules remain in force.
+
 ## samograph.dev Build — Engineering Process (v1)
 
 > Source of truth for agentic engineering on the `samograph.dev` SaaS build. Every agent (and human) MUST read this section **and** `blueprints/samograph-dev/SPEC.md` before making changes. The SPEC is authoritative; this section is *how we work*, not *what we build*.
@@ -211,22 +245,25 @@ surfaces authenticate through `gh`/`glab`; see the repo's `docs/bot-operation.md
 ### Branches & commits
 - **Branch naming:** type-prefixed kebab, embedding the issue number — `feat/<area>-<slug>`, `fix/<n>-<slug>`, `chore/...`, `docs/...`, `test/...`, `ci/...`. Agent branches use `claude/<slug>-<hash>`. *(pgque + rpg + pg_ash all converge on `type/slug`; pgque uses `claude/<slug>-<hash>` for agent branches.)*
 - **Commits:** Conventional Commits with scope — `feat(app-api):`, `fix(tokens):`, `test(auth):`, `ci:`, `docs:`, `chore(deps):`. Subject < 50 chars, present-imperative ("add", not "added"). **Never amend a pushed commit; never force-push unless the human explicitly confirms.** *(rpg + pgque.)*
-- Agent commits are **co-authored**, ending with:
-  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` *(pgque.)*
+- Agent commits credit actual contributors with accurate coauthor trailers.
+  Include a Claude coauthor only when Claude contributed; never add a model name
+  or identity that did not contribute. *(pgque coauthor convention.)*
 - **One logical change per PR**, focused and easy to review. *(rpg + pgque.)*
 
 ### The PR lifecycle — ordered, no steps skipped, LOOP on failure
 Every PR walks this loop in order *(merged from rpg's "no exceptions" sequence + pgque's 4-step loop; samorev replaces REV as our gate)*:
 1. **CI green.** All checks on the head commit pass: `bun test` and `bunx tsc --noEmit` clean, Postgres-backed integration tests green on the CI ephemeral-Postgres service. If CI is red, fix it first — and if the fix is code, reproduce the failure in a RED test, make it GREEN, then refactor. *(pgque.)*
-2. **samorev review done.** Run the merge gate and **post the result as a PR comment**:
+2. **Review done.** Use samorev by default, or the explicitly owner-authorized
+   [GPT substitution](#gpt-review-substitution-under-owner-instruction). For the
+   default path, run the merge gate and **post the result as a PR comment**:
    ```bash
    bun run samorev review https://github.com/<owner>/<repo>/pull/<n> --fetch
    ```
    For real code analysis run the `/review-mr` slash command (or spawn the samorev Security + Bug-Hunter agents — both **blocking**) and post the combined verdict. **BLOCKING findings must be fixed and re-reviewed; NON-BLOCKING / POTENTIAL / INFO count as a PASS.** Ignore SOC2 findings (this project does not need them). *(rpg severity model + pgque "ignore SOC2".)*
 3. **Actual testing where it makes sense, evidence posted.** Walk the change as a new user / exercise it live (not just unit output) and paste commands + output (+ screenshots for UI) as a PR comment. *(pgque step 3; rpg "built-from-branch" evidence.)*
-4. **Re-confirm the review is on the current head, then approve → squash-merge → delete the branch.** Before `gh pr merge <n> --squash`, verify the PR's head SHA equals the commit the latest samorev PASS ran against (Merge Gate condition 3) — **any commit pushed after the review, including a conflict-resolution merge, voids it and forces a re-run of step 2 on the new HEAD.** If steps 1–3 are not all clean (or a new commit landed), return a concrete fix list and **LOOP from step 1** on the next push. *(rpg squash; pgque loop + delete-branch.)*
+4. **Re-confirm the review is on the current head, then approve → squash-merge → delete the branch.** Before `gh pr merge <n> --squash`, verify the PR's head SHA equals the SHA recorded in the latest samorev PASS (Merge Gate condition 3), or in both passing GPT substitution reviews — **any commit pushed after the review, including a conflict-resolution merge, voids it and forces a re-run of step 2 on the new HEAD.** If steps 1–3 are not all clean (or a new commit landed), return a concrete fix list and **LOOP from step 1** on the next push. *(rpg squash; pgque loop + delete-branch.)*
 
-**No merge without a review of the merged commit.** A merge is blocked if CI is missing/red, the samorev comment is missing, **the samorev PASS is older than the head commit** (Merge Gate condition 3), or live-test evidence is missing where it was warranted. *(pg_ash: "Never merge without explicit approval from the project owner.")* Human owner approval is required for merge.
+**No merge without a review of the merged commit.** A merge is blocked if CI is missing/red, the required review comments are missing or blocking, **any required review is on a different head SHA** (Merge Gate condition 3 or the GPT substitution), or live-test evidence is missing where it was warranted. *(pg_ash: "Never merge without explicit approval from the project owner.")* Human owner approval is required for merge.
 
 ### Labels & issues
 - **Track labels:** `foundation`, `backend`, `call-path`, `frontend`, `security`, `sre`. **Process labels:** `engineer` (owned by an engineer agent), `reviewer` (awaiting samorev review), `tdd`, `spec`, `tests`, `sprint-v1.0`. Standard GitHub set (`bug`, `enhancement`, `documentation`, `security`) retained. *(pgque label model + rpg sprint-label model — we track sprints via labels, not GitHub milestones.)*
@@ -243,7 +280,7 @@ Every PR walks this loop in order *(merged from rpg's "no exceptions" sequence +
 - **NEVER put real API keys/tokens/secrets in issues, PR comments, or commits — not even for demos.** Secrets live in the secret manager / env. If one leaks, rotate immediately. *(rpg + pgque security hygiene.)*
 
 ### Compatibility with the existing samorev merge gate
-The repo-level **Merge Gate (samorev)** rules in the root `CLAUDE.md` remain in force unchanged. This section *layers* the manager+agents flow, strict TDD-first, and the per-sprint STOP on top of that gate; where both speak, samorev step 2 above IS that gate.
+The repo-level **Merge Gate (samorev)** rules in the root `CLAUDE.md`, including only its explicitly owner-authorized GPT substitution, remain in force. This section *layers* the manager+agents flow, strict TDD-first, and the per-sprint STOP on top of that gate; where both speak, review step 2 above IS that gate.
 
 ## Deployment topology & CI/CD — 3-tier preview → prod (TARGET; owner-specified)
 
