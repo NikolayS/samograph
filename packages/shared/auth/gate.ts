@@ -146,9 +146,9 @@ export async function authorizeCall(
         await setTenant(tx, tenantId);
         const shareLane = req.shareToken != null;
         const res = await verifyToken(tx, token, deps.keyring, { now, requireScope: shareLane ? "share" : undefined });
-        if (res.ok && res.callId === req.callId &&
+        if (res.ok && res.callId === req.callId.toLowerCase() &&
             (shareLane || (!res.scopes.includes("share") && res.scopes.some(s => s === "listen" || s.startsWith("act:"))))) {
-          return { authorized: true, tenantId, callId: req.callId, scopes: res.scopes as Scope[] };
+          return { authorized: true, tenantId, callId: res.callId, scopes: res.scopes as Scope[] };
         }
       }
     }

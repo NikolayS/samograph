@@ -25,6 +25,7 @@ describe("AgentConnectModal owner onboarding", () => {
     expect((await view.findByRole("button", { name: "Grant access" }) as HTMLButtonElement).disabled).toBe(true);
     await grant(view);
     expect(await view.findByText("fixture-credential-1")).toBeDefined();
+    expect(view.getByText("samograph agent --help")).toBeDefined();
     expect(view.client.requests.find((r) => r.method === "POST")?.body).toEqual({
       provider: "codex", native_session_id: "session-123", label: "My code review",
     });
@@ -66,7 +67,7 @@ describe("AgentConnectModal owner onboarding", () => {
   it("rejects non-ASCII, control characters and oversized native IDs before sending", async () => {
     const view = mount();
     await view.findByRole("button", { name: "Grant access" });
-    for (const value of ["session-é", "session-東京", "session-🤖", "bad\u0001id", "bad\u007fid", "x".repeat(201)]) {
+    for (const value of [" padded", "padded ", " padded ", "session-é", "session-東京", "session-🤖", "bad\u0001id", "bad\u007fid", "x".repeat(201)]) {
       fireEvent.input(view.getByLabelText("Exact native session ID"), { target: { value } });
       expect((view.getByRole("button", { name: "Grant access" }) as HTMLButtonElement).disabled).toBe(true);
     }
@@ -85,6 +86,14 @@ describe("AgentConnectModal owner onboarding", () => {
     expect(view.client.requests.find((r) => r.method === "POST")?.body).toEqual({
       provider: "codex", native_session_id: "session-exact-123", label,
     });
+  });
+  it("keeps expired unrevoked grants revocable and blocks a new grant until revoke", async () => {
+    const view = mount(createFakeAgentApiClient({bindings:[{id:"expired-binding",call_id:"call_1",provider:"codex",native_session_id:"old-native",label:"Old session",scopes:["listen","act:chat"],created_at:"2020-01-01T00:00:00Z",expires_at:"2020-01-01T01:00:00Z",last_request_at:null,revoked_at:null}]}));
+    expect(await view.findByText("Expired")).toBeDefined();
+    expect(view.queryByRole("button", {name:"Grant access"}) === null).toBe(true);
+    await act(async()=>fireEvent.click(view.getByRole("button", {name:"Revoke access"})));
+    expect(await view.findByText("Revoked")).toBeDefined();
+    expect(await view.findByRole("button", {name:"Grant access"})).toBeDefined();
   });
   it("ignores an old call's pending grant after the call changes", async () => {
     const view = mount();

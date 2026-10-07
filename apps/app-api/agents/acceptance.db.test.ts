@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { SQL } from 'bun';
 import { connect } from '../../../packages/shared/db/client.ts';
 import { migrate } from '../../../packages/shared/db/migrate.ts';
+import { verifyTokenSignature } from '../../../packages/shared/tokens/signing.ts';
 import { mintToken } from '../../../packages/shared/tokens/store.ts';
 import { sha256Hex } from '../../../packages/shared/crypto.ts';
 import { signSession } from '../auth/session.ts';
@@ -36,8 +37,12 @@ suite('hosted agent durable acceptance',()=>{
  });
  test('native session IDs fit HTTP headers while human labels permit Unicode',async()=>{
   const f=await fixture();await f.request(`agent-bindings/${f.b.id}`,'DELETE');
-  for(const native_session_id of ['session-😀','session-é','session\ncontrol','session\u007fcontrol','', '   ', 'a'.repeat(201)]) expect((await f.request('agent-bindings','POST',{provider:'codex',native_session_id,label:'人間 label'})).status).toBe(400);
-  expect((await f.request('agent-bindings','POST',{provider:'codex',native_session_id:'native-session-ASCII',label:'人間 label'})).status).toBe(201);
+  for(const native_session_id of ['session-😀','session-é','session\ncontrol','session\u007fcontrol','', '   ', ' padded', 'padded ', ' padded ', 'a'.repeat(201)]) expect((await f.request('agent-bindings','POST',{provider:'codex',native_session_id,label:'人間 label'})).status).toBe(400);
+  expect((await f.request('agent-bindings','POST',{provider:'codex',native_session_id:'native session ASCII',label:'人間 label'})).status).toBe(201);
+ });
+ test('uppercase UUID call routes mint a usable canonical grant',async()=>{
+  const f=await fixture();await f.request(`agent-bindings/${f.b.id}`,'DELETE');const mint=await f.handler(new Request(`https://web.test/calls/${f.call.toUpperCase()}/agent-bindings`,{method:'POST',headers:f.owner,body:JSON.stringify({provider:'codex',native_session_id:'upper-route',label:'UUID case'})}));expect(mint.status).toBe(201);const binding:any=await mint.json();expect(binding.call_id).toBe(f.call);const verified=verifyTokenSignature(binding.credential,{current:key});expect(verified.ok?verified.payload.call_id:null).toBe(f.call);
+  const context=await f.handler(new Request(`https://web.test/calls/${f.call.toUpperCase()}/agent/context`,{headers:{...f.agent,authorization:`Bearer ${binding.credential}`,'x-samograph-binding':binding.id.toUpperCase(),'x-samograph-session':'upper-route'}}));expect(context.status).toBe(200);const page:any=await context.json();expect(page.binding.call_id).toBe(f.call);expect(page.binding.id).toBe(binding.id);
  });
  test('concurrent mint cannot create two active bindings',async()=>{
   const f=await fixture();await f.request(`agent-bindings/${f.b.id}`,'DELETE');

@@ -92,7 +92,7 @@ describe("MagicLinkRequestForm", () => {
     const email = status.querySelector("span.samograph-auth-email");
     expect(email?.textContent).toBe("user@example.com");
     expect(status.closest(".samograph-auth-sent")).not.toBeNull();
-    const actions = container.querySelector(".samograph-actions");
+    const actions = container.querySelector<HTMLElement>(".samograph-actions");
     expect(actions).not.toBeNull();
     const resend = getByRole("button", { name: "Resend link" });
     const alternate = getByRole("button", { name: "Use a different email" });

@@ -16,7 +16,7 @@
 import { sha256Hex } from "../../../packages/shared/crypto.ts";
 import type { SQL } from "bun";
 import { signToken, type Keyring, type TokenPayload } from "../../../packages/shared/tokens/signing.ts";
-import { mintShareToken, revokeToken } from "../../../packages/shared/tokens/store.ts";
+import { mintShareToken } from "../../../packages/shared/tokens/store.ts";
 import { setTenant } from "../../../packages/shared/db/client.ts";
 import { authorizeCall, type AuthorizeDeps } from "../../../packages/shared/auth/index.ts";
 import { verifySession, SESSION_COOKIE_NAME } from "../auth/session.ts";
@@ -389,7 +389,7 @@ export function createCallsHandler(
       const flipped = (await tx`
         UPDATE tokens
         SET revoked_at = ${revokedAt}
-        WHERE call_id = ${callId} AND revoked_at IS NULL
+        WHERE call_id = ${callId} AND scopes = ARRAY['share']::text[] AND revoked_at IS NULL
         RETURNING jti`) as unknown as Array<{ jti: string }>;
       for (const { jti } of flipped) {
         await tx`
@@ -402,8 +402,8 @@ export function createCallsHandler(
     // ── GET /calls/:id/share — the owner's active share link, or 404 (§5.7) ────
     // Owner-only, like mint. The `tokens` table stores no token SECRET (only the
     // jti/kid/scopes/expiry), so the link is RE-DERIVED: the same persisted jti
-    // is re-signed with the current key. Any validly-signed body naming that jti
-    // verifies against the same row, so the re-derived URL and the originally
+    // is re-signed with its persisted key while that key remains supported.
+    // Strict persisted identity keeps the re-derived URL and the originally
     // minted one are the SAME capability — one revoke kills both.
     if (req.method === "GET" && shareMatch) {
       const callId = decodeURIComponent(shareMatch[1]);
@@ -419,26 +419,29 @@ export function createCallsHandler(
         const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
         if (!authz.authorized || !authz.scopes.includes("read")) return { denied: true as const };
         const rows = (await tx`
-          SELECT jti, scopes, expires_at
+          SELECT jti, scopes, kid, expires_at
           FROM tokens
-          WHERE call_id = ${callId} AND revoked_at IS NULL AND expires_at > now()
+          WHERE call_id = ${callId} AND scopes = ARRAY['share']::text[] AND revoked_at IS NULL AND expires_at > now()
           ORDER BY expires_at DESC, jti
-          LIMIT 1`) as unknown as Array<{ jti: string; scopes: string[]; expires_at: Date | string }>;
+          LIMIT 1`) as unknown as Array<{ jti: string; scopes: string[]; kid: string; expires_at: Date | string }>;
         return { denied: false as const, row: rows[0] ?? null };
       });
       if (found.denied) return denied();
       if (!found.row) return new Response(null, { status: 404 });
+      const signingKey = keyring.current.kid === found.row.kid ? keyring.current
+        : keyring.previous?.kid === found.row.kid ? keyring.previous : undefined;
+      if (!signingKey) return new Response(null, { status: 404 });
 
       const now = nowSec() ?? Math.floor(Date.now() / 1000);
       const payload: TokenPayload = {
-        kid: keyring.current.kid,
+        kid: signingKey.kid,
         call_id: callId,
         scopes: found.row.scopes,
         iat: now,
         exp: Math.floor(new Date(found.row.expires_at).getTime() / 1000),
         jti: found.row.jti,
       };
-      const token = signToken(payload, keyring.current);
+      const token = signToken(payload, signingKey);
       return Response.json(
         { token, token_id: found.row.jti, url: `/c/${token}`, active: true },
         { status: 200 },
@@ -527,7 +530,11 @@ export function createCallsHandler(
         if (!authz.authorized || !authz.scopes.includes("read")) return { authorized: false as const };
         // RLS scopes the revoke to the owner's tenant: a cross-tenant jti is invisible
         // → 0 rows → false (no-op). Audit ONLY a successful flip → idempotent.
-        const did = await revokeToken(tx as unknown as SQL, tokenId, { now: nowSec() });
+        const revokedAt = new Date((nowSec() ?? Math.floor(Date.now() / 1000)) * 1000);
+        const flipped = await tx`UPDATE tokens SET revoked_at = ${revokedAt}
+          WHERE jti = ${tokenId} AND call_id = ${callId}
+          AND scopes = ARRAY['share']::text[] AND revoked_at IS NULL RETURNING jti`;
+        const did = flipped.length > 0;
         if (did) {
           await tx`
             INSERT INTO audit_log (tenant_id, call_id, actor, action, payload_sha256)
@@ -632,6 +639,10 @@ export function createCallsHandler(
       await sql.begin(async (tx) => {
         await tx.unsafe("SET LOCAL ROLE samograph_app");
         await setTenant(tx, found.tenantId);
+        // Lock before the audit FK takes KEY SHARE, matching agent/account
+        // erasure order. Another admitted delete may already have purged it.
+        const live = await tx`SELECT id FROM calls WHERE id = ${callId} FOR UPDATE`;
+        if (!live.length) return;
         await tx`
           INSERT INTO audit_log (tenant_id, call_id, actor, action)
           VALUES (${found.tenantId}, ${callId}, ${actor}, 'call_deleted')`;

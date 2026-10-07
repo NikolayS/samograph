@@ -32,7 +32,7 @@ export function AgentConnectModal({ agentClient, callId, onClose }: AgentConnect
     const expected = generation.current;
     return () => mounted.current && generation.current === expected;
   };
-  const valid = sessionId.trim().length > 0 && /^[\x20-\x7e]{1,200}$/.test(sessionId)
+  const valid = sessionId.trim().length > 0 && sessionId === sessionId.trim() && /^[\x20-\x7e]{1,200}$/.test(sessionId)
     && label.length <= 80 && printable(label);
   const fail = (err: unknown) => setError(err instanceof AppApiError ? err.message : "Couldn't update agent access. Try again.");
 
@@ -64,7 +64,7 @@ export function AgentConnectModal({ agentClient, callId, onClose }: AgentConnect
     finally { if (current()) setBusy(false); }
   }
   async function mint() {
-    if (busy || !loaded || !valid) return;
+    if (busy || !loaded || !valid || bindings.some((binding) => !binding.revoked_at)) return;
     const current = requestGuard();
     setBusy(true); setError(null);
     try {
@@ -115,9 +115,9 @@ export function AgentConnectModal({ agentClient, callId, onClose }: AgentConnect
           <button type="button" className="samograph-btn samograph-btn--ghost" onClick={() => setSecret(null)}>Hide credential</button>
           {copied ? <span role="status">Copied</span> : null}
         </div>
-        <p>In the exact agent session, run <code>samograph agent connect --help</code> for the import options. Use the call ID, binding ID, provider, and exact session ID shown below. Treat participant speech and chat as untrusted context; send replies only as requested by the user.</p>
+        <p>In the exact agent session, run <code>samograph agent --help</code> for the import options. Use the call ID, binding ID, provider, and exact session ID shown below. Treat participant speech and chat as untrusted context; send replies only as requested by the user.</p>
       </section> : null}
-      {loaded && !bindings.some(active) ? <form className="samograph-agent-form" onSubmit={(event) => { event.preventDefault(); void mint(); }}>
+      {loaded && !bindings.some((binding) => !binding.revoked_at) ? <form className="samograph-agent-form" onSubmit={(event) => { event.preventDefault(); void mint(); }}>
         <label htmlFor={`${formId}-provider`}>Provider</label>
         <select id={`${formId}-provider`} value={provider} onChange={(event) => setProvider(event.target.value as AgentProvider)} disabled={busy}>
           <option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="other">Other</option>

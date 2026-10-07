@@ -22,7 +22,10 @@ export class FakeAgentApiClient implements AgentApiClient {
   async mintBinding(callId: string, input: AgentGrantInput): Promise<MintedAgentBinding> {
     this.requests.push({ path: `/calls/${callId}/agent-bindings`, method: "POST", body: { ...input } });
     this.fail(this.options.failMintWith);
-    if ([...this.bindings.values()].some((b) => b.call_id === callId && !b.revoked_at && Date.parse(b.expires_at) > this.now())) {
+    if (!/^[\x20-\x7e]{1,200}$/.test(input.native_session_id) || !input.native_session_id.trim() || input.native_session_id !== input.native_session_id.trim()) {
+      throw new AppApiError("SAMO-AGENT-INPUT", "Choose a provider and exact session identity.", false, 400);
+    }
+    if ([...this.bindings.values()].some((b) => b.call_id === callId && !b.revoked_at)) {
       throw new AppApiError("SAMO-AGENT-ACTIVE", "Revoke the existing session first.", false, 409);
     }
     const id = `binding_${++this.counter}`;

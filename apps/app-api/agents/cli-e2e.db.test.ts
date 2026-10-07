@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "../../../packages/shared/db/client.ts";
@@ -18,7 +19,7 @@ suite("hosted agent CLI over real HTTP and PostgreSQL", () => {
     const user = randomUUID(), tenant = randomUUID(), call = randomUUID();
     const now = Date.now(), sessionSecret = "cli-e2e-fixture-session";
     const nativeSession = `cli-e2e-${randomUUID()}`;
-    const directory = mkdtempSync("/private/tmp/samograph-cli-e2e-");
+    const directory = mkdtempSync(join(tmpdir(), "samograph-cli-e2e-"));
     chmodSync(directory, 0o700);
     const credentialDirectory = join(directory, "credentials");
     const sent: Array<{ bot: string; text: string }> = [];

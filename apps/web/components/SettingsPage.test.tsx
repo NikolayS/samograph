@@ -145,6 +145,7 @@ describe("SettingsPage — hosted per-tenant settings (§5.12)", () => {
 
   it("keeps edits made during a save dirty and sends them on the next save", async () => {
     const client = createFakeAppApiClient();
+    const saveSettings = client.saveSettings.bind(client);
     const submitted: string[] = [];
     let resolveFirst!: () => void;
     const firstSave = new Promise<void>((resolve) => {
@@ -153,6 +154,7 @@ describe("SettingsPage — hosted per-tenant settings (§5.12)", () => {
     client.saveSettings = async (settings) => {
       submitted.push(settings.language);
       if (submitted.length === 1) await firstSave;
+      return saveSettings(settings);
     };
     const view = render(<SettingsPage client={client} redirect={() => {}} />);
     const language = await view.findByLabelText(/language/i);

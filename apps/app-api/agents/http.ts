@@ -18,12 +18,12 @@ async function body(req: Request): Promise<Record<string, unknown>> {
 }
 function metadata(row: any) {return {id:row.id,call_id:row.call_id,provider:row.provider,native_session_id:row.native_session_id,label:row.label,scopes:SCOPES,created_at:new Date(row.created_at).toISOString(),expires_at:new Date(row.expires_at).toISOString(),revoked_at:row.revoked_at?new Date(row.revoked_at).toISOString():null,last_request_at:row.last_request_at?new Date(row.last_request_at).toISOString():null};}
 const printable=(value:unknown,max:number,min=0):value is string=>typeof value==="string"&&value.length>=min&&value.length<=max&&!/[\x00-\x1f\x7f]/.test(value);
-const nativeSession=(value:unknown):value is string=>typeof value==="string"&&value.length<=200&&!!value.trim()&&/^[\x20-\x7e]+$/.test(value);
+const nativeSession=(value:unknown):value is string=>typeof value==="string"&&value.length<=200&&!!value.trim()&&value===value.trim()&&/^[\x20-\x7e]+$/.test(value);
 export function createAgentsHandler(config:AgentConfig):(req:Request)=>Promise<Response> {
  return async req=>{try {
   const url=new URL(req.url);const match=url.pathname.match(/^\/calls\/([^/]+)\/(agent-bindings(?:\/([^/]+))?|agent\/(context|chat))$/);
   if(!match) return new Response("not found",{status:404});
-  const callId=match[1]!;if(!uuid(callId)) fail(400,"SAMO-AGENT-INPUT","Invalid call ID.");
+  const callId=match[1]!.toLowerCase();if(!uuid(callId)) fail(400,"SAMO-AGENT-INPUT","Invalid call ID.");
   const now=config.clock?.()??Date.now();
   if(match[2]!.startsWith("agent-bindings")) {
    const owner=await resolveOwnerSession(config.sql,config.sessionSecret,sessionCookie(req),now);

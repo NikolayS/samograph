@@ -23,9 +23,14 @@ const RECORD_BYTES = 16 * 1024;
 export const agentUuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 export function validateAgentIdentity(value: AgentIdentity): void {
   if (!agentUuid(value.binding_id) || !agentUuid(value.call_id) || !["codex", "claude-code", "other"].includes(value.provider) ||
-    typeof value.native_session_id !== "string" || !value.native_session_id.trim() || value.native_session_id.length > 200 || /[\x00-\x1f\x7f-\uffff]/.test(value.native_session_id)) {
+    typeof value.native_session_id !== "string" || !value.native_session_id.trim() || value.native_session_id !== value.native_session_id.trim() || value.native_session_id.length > 200 || /[\x00-\x1f\x7f-\uffff]/.test(value.native_session_id)) {
     throw new Error("Invalid agent identity");
   }
+}
+
+function canonicalIdentity<T extends AgentIdentity>(identity:T):T {
+  validateAgentIdentity(identity);
+  return {...identity,binding_id:identity.binding_id.toLowerCase(),call_id:identity.call_id.toLowerCase()};
 }
 
 /** The explicitly selected origin is the credential's trust anchor. Never follow redirects. */
@@ -43,7 +48,7 @@ function validateCredential(record: AgentCredential): void {
   if (typeof record.credential !== "string" || !record.credential || record.credential.length > 8192 || /[^\x21-\x7e]/.test(record.credential)) throw new Error("Invalid agent credential");
 }
 function sameIdentity(a: AgentIdentity, b: AgentIdentity): boolean {
-  return a.binding_id === b.binding_id && a.call_id === b.call_id && a.provider === b.provider && a.native_session_id === b.native_session_id;
+  return agentUuid(b.binding_id) && agentUuid(b.call_id) && a.binding_id.toLowerCase() === b.binding_id.toLowerCase() && a.call_id.toLowerCase() === b.call_id.toLowerCase() && a.provider === b.provider && a.native_session_id === b.native_session_id;
 }
 function owned(info: Stats): boolean { return process.getuid === undefined || info.uid === process.getuid(); }
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
@@ -74,13 +79,14 @@ export class AgentCredentialStore {
     const info = lstatSync(this.directory);
     if (!owned(info) || (info.mode & 0o777) !== 0o700) throw new Error("Agent credential directory must be owned by you with mode 0700");
   }
-  private path(identity: AgentIdentity): string { validateAgentIdentity(identity); return join(this.directory, `${identity.binding_id}.json`); }
+  private path(identity: AgentIdentity): string { validateAgentIdentity(identity); return join(this.directory, `${identity.binding_id.toLowerCase()}.json`); }
   private checkFile(path: string): void {
     const info = lstatSync(path);
     if (!info.isFile() || info.isSymbolicLink() || !owned(info) || info.nlink !== 1 || (info.mode & 0o777) !== 0o600 || info.size > RECORD_BYTES) throw new Error("Unsafe saved agent credential");
   }
   save(record: AgentCredential): void {
     validateCredential(record);
+    record = canonicalIdentity(record);
     this.checkDirectory(true);
     const path = this.path(record);
     try { this.checkFile(path); } catch (error) { if (!missing(error)) throw error; }
@@ -100,6 +106,7 @@ export class AgentCredentialStore {
     }
   }
   load(identity: AgentIdentity): AgentCredential {
+    identity = canonicalIdentity(identity);
     const path = this.path(identity);
     this.checkDirectory(); this.checkFile(path);
     let fd: number | undefined;
@@ -109,7 +116,7 @@ export class AgentCredentialStore {
       if (!info.isFile() || !owned(info) || info.nlink !== 1 || (info.mode & 0o777) !== 0o600 || info.size > RECORD_BYTES) throw new Error();
       const data = readFileSync(fd);
       if (data.length > RECORD_BYTES) throw new Error();
-      const record = JSON.parse(data.toString("utf8")) as AgentCredential;
+      const record = canonicalIdentity(JSON.parse(data.toString("utf8")) as AgentCredential);
       validateCredential(record);
       if (!sameIdentity(record, identity)) throw new Error();
       return record;
@@ -149,7 +156,7 @@ export class HostedAgentClient {
   private readonly record: AgentCredential;
   constructor(record: AgentCredential, private readonly fetchFn: AgentFetch = fetch) {
     validateCredential(record);
-    this.record = { ...record, origin: canonicalAgentOrigin(record.origin, record.allow_loopback_http === true) };
+    this.record = { ...canonicalIdentity(record), origin: canonicalAgentOrigin(record.origin, record.allow_loopback_http === true) };
   }
   private request(path: string, init: RequestInit = {}): Promise<Response> {
     const r = this.record;
@@ -174,7 +181,7 @@ export class HostedAgentClient {
       page.lines.some(l => !l || !integer(l.seq) || typeof l.ts !== "string" || !(l.speaker === null || typeof l.speaker === "string") || typeof l.text !== "string" || !["speech", "chat"].includes(l.kind)) ||
       page.omitted.some(l => !l || !integer(l.seq) || l.reason !== "oversized")) throw new Error("Invalid agent response");
     // Project known fields so an unexpected upstream error/debug field is never printed.
-    return { binding: { id: b.id, call_id: b.call_id, provider: b.provider, native_session_id: b.native_session_id }, status: page.status, ingest_degraded: page.ingest_degraded,
+    return { binding: { id: b.id.toLowerCase(), call_id: b.call_id.toLowerCase(), provider: b.provider, native_session_id: b.native_session_id }, status: page.status, ingest_degraded: page.ingest_degraded,
       lines: page.lines.map(({seq,ts,speaker,text,kind}) => ({seq,ts,speaker,text,kind})), omitted: page.omitted.map(({seq,reason}) => ({seq,reason})), next_seq: page.next_seq, has_more: page.has_more, truncated: page.truncated };
   }
   async chat(text: string, requestId: string): Promise<AgentChatResult> {

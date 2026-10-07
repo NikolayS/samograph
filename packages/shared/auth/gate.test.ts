@@ -196,6 +196,17 @@ d("authorizeCall — tenant isolation (DB-backed, §5.6 / §6.2 #4)", () => {
     expect(res).toEqual({ authorized: true, tenantId: tenantA, callId: callA, scopes: ["share"] });
   });
 
+  it("UUID case spelling resolves to the same canonical call while other calls stay denied", async () => {
+    for (const mintCallId of [callA, callA.toUpperCase()]) {
+      const { token } = await mintToken(sql, { callId: mintCallId, scopes: ["listen", "act:chat"], signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+      for (const requestCallId of [callA, callA.toUpperCase()]) {
+        expect(await gate({ callId: requestCallId, agentToken: token })).toEqual({ authorized: true, tenantId: tenantA, callId: callA, scopes: ["listen", "act:chat"] });
+      }
+      expect(await gate({ callId: callX.toUpperCase(), agentToken: token })).toEqual(DENY);
+      expect(await gate({ callId: callB.toUpperCase(), agentToken: token })).toEqual(DENY);
+    }
+  });
+
   it("[v2 seam] an `act:*` agent token authorizes through the SAME gate path", async () => {
     const { token } = await mintToken(sql, { callId: callA, scopes: ["act:chat"], signingKey: KEY_CURRENT, ttlSeconds: 3600 });
     const res = await gate({ callId: callA, agentToken: token });

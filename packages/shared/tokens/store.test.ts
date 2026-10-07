@@ -73,6 +73,27 @@ d("capability token store (§5.7, §6.2 #2 — persisted scopes)", () => {
     expect(res.scopes).toEqual(["share"]);
   });
 
+  it("verifies uppercase UUID spelling and returns the canonical persisted call ID", async () => {
+    const minted = await mintToken(sql, { callId: callId.toUpperCase(), scopes: ["listen", "act:chat"], signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    const res = await verifyToken(sql, minted.token, keyring, { requireScope: "listen" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error(res.reason);
+    expect(res.callId).toBe(callId);
+    expect(res.scopes).toEqual(["listen", "act:chat"]);
+  });
+
+  it("UUID case equivalence still pins the persisted call, signing KID, and scopes", async () => {
+    const minted = await mintToken(sql, { callId, scopes: ["listen", "act:chat"], signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+    for (const payload of [
+      { ...minted.payload, call_id: randomUUID().toUpperCase() },
+      { ...minted.payload, call_id: callId.toUpperCase(), kid: KEY_PREVIOUS.kid },
+      { ...minted.payload, call_id: callId.toUpperCase(), scopes: ["listen"] },
+    ]) {
+      const key = payload.kid === KEY_PREVIOUS.kid ? KEY_PREVIOUS : KEY_CURRENT;
+      expect(await verifyToken(sql, signToken(payload, key), keyring)).toEqual({ ok: false, reason: "not_persisted" });
+    }
+  });
+
   it("denies a scope the token does not hold (asks act:chat, token holds only share)", async () => {
     const minted = await mintShareToken(sql, { callId, signingKey: KEY_CURRENT, ttlSeconds: 3600 });
     const res = await verifyToken(sql, minted.token, keyring, { requireScope: "act:chat" });

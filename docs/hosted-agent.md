@@ -11,7 +11,7 @@ run a background monitor, or provide an autonomous reply loop.
 On an enabled owner call page, open **Connect AI agent** while the call is
 `IN_CALL`. Choose `codex`, `claude-code`, or `other`; enter the exact native
 session ID and an optional label; then press **Grant access**. The ID must be
-1–200 printable ASCII characters with a nonblank value. A title is not a
+1–200 printable ASCII characters without leading or trailing spaces. A title is not a
 session ID.
 
 The fixed grant is `listen` plus `act:chat`, for 60 minutes. There is no scope or

@@ -144,7 +144,8 @@ export async function verifyToken(
   if (rows.length === 0) return { ok: false, reason: "not_persisted" };
   const row = rows[0];
 
-  if (row.call_id !== sig.payload.call_id || row.kid !== sig.payload.kid ||
+  // PostgreSQL UUID output is lowercase; uppercase hex names the same call.
+  if (row.call_id !== sig.payload.call_id.toLowerCase() || row.kid !== sig.payload.kid ||
       JSON.stringify([...row.scopes].sort()) !== JSON.stringify([...sig.payload.scopes].sort())) {
     return { ok: false, reason: "not_persisted" };
   }
@@ -161,7 +162,7 @@ export async function verifyToken(
     return { ok: false, reason: "scope_denied" };
   }
 
-  return { ok: true, callId: sig.payload.call_id, scopes: row.scopes, payload: sig.payload };
+  return { ok: true, callId: row.call_id, scopes: row.scopes, payload: sig.payload };
 }
 
 /**

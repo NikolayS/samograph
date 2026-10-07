@@ -127,7 +127,7 @@ describe("Dashboard upcoming meetings", () => {
     expect(title.classList.contains("samograph-meeting-title")).toBe(true);
     expect(item?.querySelector("span.samograph-meeting-meta")).not.toBeNull();
     let resolveCreate!: (call: Awaited<ReturnType<typeof client.createCall>>) => void;
-    client.createCall = mock(() => new Promise((resolve) => { resolveCreate = resolve; }));
+    client.createCall = mock(() => new Promise<Awaited<ReturnType<typeof client.createCall>>>((resolve) => { resolveCreate = resolve; }));
     const add = view.getByRole("button", { name: "Add samograph to Planning" });
     fireEvent.click(add);
     expect(add.getAttribute("aria-busy")).toBe("true");
