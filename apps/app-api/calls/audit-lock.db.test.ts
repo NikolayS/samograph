@@ -13,8 +13,8 @@ type Outcome<T>={ok:true;value:T}|{ok:false;code:string;message:string};
 const settle=<T>(promise:Promise<T>):Promise<Outcome<T>>=>promise.then(value=>({ok:true,value}),error=>({ok:false,code:error.errno??error.code??'',message:error.message}));
 const suite=process.env.DATABASE_URL?describe:describe.skip;
 suite('call-before-child locks for audited share mutations and chat completion',()=>{
- const sql=connect(),key={kid:'audit-lock',secret:'audit-lock-fixture'},secret='audit-lock-session';const fixtures:Array<{user:string;tenant:string}>=[];
- beforeAll(async()=>{await migrate(sql);});
+ let sql:ReturnType<typeof connect>;const key={kid:'audit-lock',secret:'audit-lock-fixture'},secret='audit-lock-session';const fixtures:Array<{user:string;tenant:string}>=[];
+ beforeAll(async()=>{sql=connect();await migrate(sql);});
  afterAll(async()=>{for(const f of fixtures){await sql`DELETE FROM calls WHERE tenant_id=${f.tenant}`;await sql`DELETE FROM audit_log WHERE tenant_id=${f.tenant}`;await sql`DELETE FROM tenants WHERE id=${f.tenant}`;await sql`DELETE FROM users WHERE id=${f.user}`;}await sql.close();});
  async function fixture(){
   const user=randomUUID(),tenant=randomUUID(),call=randomUUID(),now=Date.now();fixtures.push({user,tenant});

@@ -10,15 +10,19 @@ import { prepareStream } from "../../ws-hub/stream.ts";
 
 const d=process.env.DATABASE_URL ? describe : describe.skip;
 d("scoped agent credentials cannot open legacy unbounded read surfaces",()=>{
-  const sql=connect(),user=randomUUID(),tenant=randomUUID(),call=randomUUID();
+  let sql:ReturnType<typeof connect>;const user=randomUUID(),tenant=randomUUID(),call=randomUUID();
   const key={kid:"legacy-agent-test",secret:"fixture-only-legacy-key"};
   const sessionSecret="fixture-session-secret-legacy";
   const ownerCookie=`samo_session=${signSession({userId:user,tenantId:tenant,iat:Date.now()},sessionSecret)}`;
   const authDeps={keyring:{current:key},lookupSession:async(cookie:string)=>cookie==="owner"?{userId:user,tenantId:tenant}:null,lookupCallTenant:async(id:string)=>id===call?tenant:null};
-  const calls=createCallsHandler({sql,sessionSecret,keyring:{current:key},enqueue:()=>{}});
-  const transcript=createTranscriptHandler({sql,authDeps});
-  const download=createTranscriptTextHandler({sql,authDeps});
+  let calls:ReturnType<typeof createCallsHandler>;
+  let transcript:ReturnType<typeof createTranscriptHandler>;
+  let download:ReturnType<typeof createTranscriptTextHandler>;
   beforeAll(async()=>{
+    sql=connect();
+    calls=createCallsHandler({sql,sessionSecret,keyring:{current:key},enqueue:()=>{}});
+    transcript=createTranscriptHandler({sql,authDeps});
+    download=createTranscriptTextHandler({sql,authDeps});
     await migrate(sql);
     await sql`INSERT INTO users(id,email) VALUES (${user},${`${user}@fixture.invalid`})`;
     await sql`INSERT INTO tenants(id,owner_user_id) VALUES (${tenant},${user})`;

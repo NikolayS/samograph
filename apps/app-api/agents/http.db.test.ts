@@ -8,7 +8,7 @@ import { createAgentsHandler } from "./http.ts";
 
 const d = process.env.DATABASE_URL ? describe : describe.skip;
 d("hosted agent channel real DB", () => {
-  const sql = connect();
+  let sql: ReturnType<typeof connect>;
   const user = randomUUID(), tenant = randomUUID(), call = randomUUID();
   const foreignUser = randomUUID(), foreignTenant = randomUUID(), foreignCall = randomUUID();
   const key = { kid: "agent-test", secret: "test-agent-key-not-a-real-secret" };
@@ -22,6 +22,7 @@ d("hosted agent channel real DB", () => {
   const owner = { cookie: ownerCookie(), origin: "https://web.test" };
   const agent = () => ({ authorization: `Bearer ${binding.credential}`, "x-samograph-binding": binding.id, "x-samograph-provider": "codex", "x-samograph-session": "native-123" });
   beforeAll(async () => {
+    sql = connect();
     await migrate(sql);
     await sql`INSERT INTO users(id,email) VALUES (${user},${`${user}@test.invalid`}), (${foreignUser},${`${foreignUser}@test.invalid`})`;
     await sql`INSERT INTO tenants(id,owner_user_id) VALUES (${tenant},${user}),(${foreignTenant},${foreignUser})`;

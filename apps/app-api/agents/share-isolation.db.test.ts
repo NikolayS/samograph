@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { connect } from '../../../packages/shared/db/client.ts';
 import { migrate } from '../../../packages/shared/db/migrate.ts';
@@ -8,8 +8,9 @@ import { signSession } from '../auth/session.ts';
 
 const suite=process.env.DATABASE_URL?describe:describe.skip;
 suite('share management isolates agent capabilities',()=>{
- const sql=connect(),users:string[]=[];
+ let sql:ReturnType<typeof connect>;const users:string[]=[];
  const key={kid:'share-lane-old',secret:'fixture-only-old'},current={kid:'share-lane-new',secret:'fixture-only-new'},sessionSecret='fixture-share-lane-session';
+ beforeAll(()=>{sql=connect();});
  afterAll(async()=>{for(const id of users)await sql`DELETE FROM users WHERE id=${id}`;await sql.close();});
  async function fixture(rotated=false){
   await migrate(sql);const user=randomUUID(),tenant=randomUUID(),call=randomUUID();users.push(user);

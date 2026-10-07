@@ -8,11 +8,11 @@ import { CONTEXT_BYTES } from './context.ts';
 
 const suite = process.env.DATABASE_URL ? describe : describe.skip;
 suite('agent context projection and grant floor', () => {
- const sql=connect(); const user=randomUUID(),tenant=randomUUID();const calls:string[]=[];
+ let sql:ReturnType<typeof connect>; const user=randomUUID(),tenant=randomUUID();const calls:string[]=[];
  const now=Date.now(),secret='bounds-session',key={kid:'bounds',secret:'bounds-test-key'};
  const owner={cookie:`samo_session=${signSession({userId:user,tenantId:tenant,iat:now},secret)}`,origin:'https://web.test','content-type':'application/json'};
- const handler=createAgentsHandler({sql,sessionSecret:secret,keyring:{current:key},webOrigin:'https://web.test',clock:()=>now,sendChat:async()=>{}});
- beforeAll(async()=>{await migrate(sql);await sql`INSERT INTO users(id,email) VALUES (${user},${`${user}@test.invalid`})`;await sql`INSERT INTO tenants(id,owner_user_id) VALUES (${tenant},${user})`;});
+ let handler:ReturnType<typeof createAgentsHandler>;
+ beforeAll(async()=>{sql=connect();handler=createAgentsHandler({sql,sessionSecret:secret,keyring:{current:key},webOrigin:'https://web.test',clock:()=>now,sendChat:async()=>{}});await migrate(sql);await sql`INSERT INTO users(id,email) VALUES (${user},${`${user}@test.invalid`})`;await sql`INSERT INTO tenants(id,owner_user_id) VALUES (${tenant},${user})`;});
  afterAll(async()=>{for(const id of calls) await sql`DELETE FROM calls WHERE id=${id}`;await sql`DELETE FROM tenants WHERE id=${tenant}`;await sql`DELETE FROM users WHERE id=${user}`;await sql.close();});
  async function fixture(rows:Array<{seq:number;text:string;age?:number;speaker?:string}>) {
   const call=randomUUID();calls.push(call);await sql`INSERT INTO calls(id,tenant_id,meeting_url,status,recall_bot_id,ingest_degraded) VALUES (${call},${tenant},'https://meet.google.com/abc-defg-hij','IN_CALL','fake-bot',true)`;

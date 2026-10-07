@@ -8,8 +8,9 @@ import { purgeCallRows } from './erase.ts';
 
 const suite=process.env.DATABASE_URL?describe:describe.skip;
 suite('call erasure shares the agent call-before-binding lock order',()=>{
- const sql=connect(),user=randomUUID(),tenant=randomUUID(),call=randomUUID(),binding=randomUUID();
+ let sql:ReturnType<typeof connect>;const user=randomUUID(),tenant=randomUUID(),call=randomUUID(),binding=randomUUID();
  beforeAll(async()=>{
+  sql=connect();
   await migrate(sql);await sql`INSERT INTO users(id,email) VALUES (${user},${`${user}@test.invalid`})`;await sql`INSERT INTO tenants(id,owner_user_id) VALUES (${tenant},${user})`;
   await sql`INSERT INTO calls(id,tenant_id,meeting_url,status,recall_bot_id) VALUES (${call},${tenant},'https://meet.google.com/abc-defg-hij','IN_CALL','fake-bot')`;
   const token=await mintToken(sql,{callId:call,scopes:['listen','act:chat'],signingKey:{kid:'lock-fixture',secret:'lock-fixture'},ttlSeconds:3600});const rows=await sql`SELECT id FROM tokens WHERE jti=${token.jti}`;

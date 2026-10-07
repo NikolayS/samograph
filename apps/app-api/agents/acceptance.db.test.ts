@@ -14,9 +14,9 @@ import { createAgentsHandler } from './http.ts';
 
 const suite=process.env.DATABASE_URL?describe:describe.skip;
 suite('hosted agent durable acceptance',()=>{
- const sql=connect(),secret='accept-session',key={kid:'accept',secret:'accept-token'};
+ let sql:ReturnType<typeof connect>;const secret='accept-session',key={kid:'accept',secret:'accept-token'};
  const fixtures:Array<{user:string;tenant:string}>=[];
- beforeAll(async()=>{await migrate(sql);});
+ beforeAll(async()=>{sql=connect();await migrate(sql);});
  afterAll(async()=>{for(const f of fixtures){await sql`DELETE FROM calls WHERE tenant_id=${f.tenant}`;await sql`DELETE FROM audit_log WHERE tenant_id=${f.tenant}`;await sql`DELETE FROM tenants WHERE id=${f.tenant}`;await sql`DELETE FROM users WHERE id=${f.user}`;}await sql.close();});
  async function fixture(send?: (bot:string,text:string)=>Promise<void>) {
   const user=randomUUID(),tenant=randomUUID();fixtures.push({user,tenant});let now=Date.now();const sent:Array<[string,string]>=[];
