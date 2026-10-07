@@ -100,6 +100,7 @@ export function AgentConnectModal({ agentClient, callId, onClose }: AgentConnect
         <h2 id={titleId}>Connect AI agent</h2>
         <button type="button" className="samograph-btn samograph-btn--ghost" aria-label="Close" onClick={onClose}>×</button>
       </header>
+      <p>First time connecting? <a href="/agent-setup" target="_blank" rel="noopener noreferrer">Set up your agent</a> before granting access. The guide opens separately so this dialog stays open.</p>
       <p>Grant one existing local agent session access to this call. It can read recent and new transcript and meeting chat (listen), and send meeting chat (act:chat).</p>
       <p>Access expires after 60 minutes, or earlier when this call ends or you revoke it. Anyone holding the credential can use it. The session ID prevents accidental routing; it does not protect against another process running as the same local user.</p>
       <p>Revoke blocks subsequent requests. An already admitted chat send may complete; context already read and messages already sent cannot be retracted.</p>

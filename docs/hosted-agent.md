@@ -8,6 +8,34 @@ run a background monitor, or provide an autonomous reply loop.
 
 ## Grant access
 
+First complete the **Set up your agent** guide at `/agent-setup` on the enabled
+deployment. The owner dialog links it before granting access and opens it in a
+separate tab. The guide builds the unreleased CLI in a separate checkout, checks
+its help, explains exact session identity, and walks private import and revoke.
+An older globally installed `samograph` may not include the agent commands.
+
+For a reproducible CLI-only preview setup, use Git and Bun in an empty directory:
+
+```sh
+git clone https://github.com/NikolayS/samograph.git samograph-hosted-spike
+cd samograph-hosted-spike
+git checkout --detach 6eee80e2610003a9c9435075100817e33a32947a
+bun install --frozen-lockfile
+bun run build
+bun dist/cli.js agent --help
+```
+
+This pins the preview CLI baseline; it is not an npm release or a claim that a
+public deployment enables the feature. Stop if any command fails. Help must list
+`connect`, `context`, `chat`, and `disconnect`. Use `bun /ABSOLUTE/PATH/dist/cli.js`
+in place of `samograph` below so an older global executable cannot be selected.
+
+For Codex CLI, `/statusline` can display the session ID; in a Codex app that
+reports it, `/status` shows the chat ID. See the [official command reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
+Take the ID from the exact session that will execute the commands. Another
+provider requires its own verified current-session ID; do not invent one when
+the client cannot expose it. No session discovery is supplied by this spike.
+
 On an enabled owner call page, open **Connect AI agent** while the call is
 `IN_CALL`. Choose `codex`, `claude-code`, or `other`; enter the exact native
 session ID and an optional label; then press **Grant access**. The ID must be

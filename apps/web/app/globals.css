@@ -509,6 +509,13 @@ button:hover {
   max-width: var(--content-max);
 }
 
+.samograph-agent-setup pre {
+  overflow-x: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
 /* An action row (design audit §4, DESIGN-MODEL §4 Button — "width: never
    stretches"). One or more controls on a line, each at its intrinsic width,
    wrapping onto the next line instead of stretching or being clipped. It is

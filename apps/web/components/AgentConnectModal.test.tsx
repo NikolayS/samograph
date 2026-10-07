@@ -17,6 +17,14 @@ async function grant(view: ReturnType<typeof mount>) {
 }
 
 describe("AgentConnectModal owner onboarding", () => {
+  it("offers the setup guide before granting access", async () => {
+    const view = mount();
+    const link = view.getByRole("link", { name: "Set up your agent" });
+    expect(link.getAttribute("href")).toBe("/agent-setup");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(view.queryByText("fixture-credential-1")).toBeNull();
+  });
   it("discloses fixed scopes and expiry, requires exact session, then displays the secret only as text", async () => {
     const view = mount();
     expect(view.getByRole("dialog").getAttribute("aria-modal")).toBe("true");
