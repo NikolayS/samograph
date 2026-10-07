@@ -29,7 +29,7 @@ interface CreateCallInputBase {
 
 export type CreateCallInput = CreateCallInputBase & (
   | { source: "manual"; sourceEventId?: never }
-  | { source: "calendar"; sourceEventId: string }
+  | { source: "calendar"; sourceEventId: string; connectionId: string }
 );
 
 export interface CreateCallDeps {
@@ -44,9 +44,15 @@ export type CreateCallResult =
   | { kind: "already_active"; callId: string }
   | { kind: "invalid_url" }
   | { kind: "tenant_inactive" }
+  | { kind: "consent_revoked" }
   | { kind: "cost_cap"; retryAfterMs: number }
   | { kind: "duplicate" };
 
+export function createCallForTenant(
+  input: Extract<CreateCallInput, { source: "manual" }>,
+  deps: CreateCallDeps,
+): Promise<Exclude<CreateCallResult, { kind: "consent_revoked" }>>;
+export function createCallForTenant(input: CreateCallInput, deps: CreateCallDeps): Promise<CreateCallResult>;
 export async function createCallForTenant(
   input: CreateCallInput,
   deps: CreateCallDeps,
@@ -66,11 +72,38 @@ export async function createCallForTenant(
 
   let transactionResult:
     | { kind: "created"; call: { id: string; status: string } }
-    | { kind: "already_active"; callId: string };
+    | { kind: "already_active"; callId: string }
+    | { kind: "consent_revoked" };
   try {
     transactionResult = await deps.sql.begin(async (tx) => {
+      if (input.source === "calendar") {
+        // The poller's pre-sync snapshot and candidate list are only hints.
+        // Lock consent through insertion/commit: UPDATE/DELETE and per-event
+        // opt-outs use this row too. An opt-out committing first prevents
+        // creation; a later opt-out does not cancel an already-created call.
+        const prefix = `${input.connectionId}:`;
+        if (!input.sourceEventId.startsWith(prefix) || input.sourceEventId.length === prefix.length) {
+          return { kind: "consent_revoked" };
+        }
+        // Credential metadata is privileged, so check before adopting the
+        // tenant role; never read or expose the refresh-token columns.
+        const connections = await tx`
+          SELECT status,auto_join FROM calendar_connections
+          WHERE id=${input.connectionId} AND tenant_id=${input.tenantId} AND provider='google'
+          FOR UPDATE` as unknown as Array<{ status: string; auto_join: boolean }>;
+        if (connections[0]?.status !== "connected" || !connections[0].auto_join) {
+          return { kind: "consent_revoked" };
+        }
+      }
       await tx.unsafe("SET LOCAL ROLE samograph_app");
       await setTenant(tx, input.tenantId);
+      if (input.source === "calendar") {
+        const exclusions = await tx`
+          SELECT 1 FROM calendar_event_exclusions
+          WHERE connection_id=${input.connectionId}
+            AND provider_event_id=${input.sourceEventId.slice(input.connectionId.length + 1)}`;
+        if (exclusions.length) return { kind: "consent_revoked" };
+      }
       await tx`SELECT pg_advisory_xact_lock(hashtext(${autoJoinLockKey(input.tenantId, valid.url)}))`;
 
       const active = await tx`
@@ -107,7 +140,7 @@ export async function createCallForTenant(
     throw error;
   }
 
-  if (transactionResult.kind === "already_active") {
+  if (transactionResult.kind !== "created") {
     await deps.rateLimiter.refund(rateKey, BOT_CREATE_WINDOW_MS, rateNow);
     return transactionResult;
   }
