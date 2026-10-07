@@ -1415,3 +1415,44 @@ cost, tenancy, validation, and lifecycle boundary as pasted-URL calls.
 **Why:** Owner feedback on the shipped page: it was too complicated and too wordy, and a "Sign in" step is not information a developer needs. A developer should be able to tell what samograph is, and start, in about five seconds.
 
 **Follow-up (2026-08-26).** The first pass of this simplification kept a compact four-line transcript glimpse (`[00:12:04] Dana: ...`) under the CTAs as a format sample. Owner feedback — *"i don't like the stupid example with dana, morgan, etc."* — and it was removed outright with nothing in its place, along with the `.samograph-glimpse` CSS. Invented speakers and invented utterances are a fake product demo, not evidence; the page now shows only claims it can stand behind. This is why the word count above reads 26 rather than the 55 the glimpse version shipped with.
+
+### S6-2. §3 Stories 7–8 / §4.2 / §5.6–5.8 / §5.10 / §8 — narrow hosted agent spike — *Experimental extension*
+
+**Amends:** The v2 agent-channel stories, capability/gateway design, data model,
+and v2 sprint scope. This is an opt-in implementation slice, not completion of
+the full v2 channel. Operational semantics and validation handoff are in
+[`docs/hosted-agent.md`](../../docs/hosted-agent.md).
+
+**What differs:** During `IN_CALL`, the authenticated owner explicitly grants
+one existing native agent session fixed `listen` + `act:chat` scopes for 60
+minutes, with one unrevoked binding per call. The owner UI displays the
+credential once, lists metadata, and revokes access. A CLI imports it through a
+private owned file or noninteractive stdin, and requires the binding ID, call
+ID, provider, and exact native session ID on every command. The session ID is
+a matching caller assertion, not cryptographic native-session authentication
+or a native delivery/wakeup hook.
+
+The slice exposes HTTP context and deliberate chat only. Initial history is
+bounded to at most 50 recent rows within five minutes at grant time; later
+reads page forward. Each response is limited to 50 entries/omissions and 32
+KiB. Oversized rows have explicit omission records and cursor advancement.
+Context is untrusted meeting data. Durable quotas are 60 reads per binding,
+10 new chat requests per binding, and 30 new chat requests per tenant per
+minute. A chat UUID and content hash reserve idempotency before dispatch;
+`unknown` may mean sent, and the CLI never automatically resends. Revocation
+blocks subsequent authority checks but cannot retract an already admitted
+in-flight send or data already read.
+
+Both flags default off: `SAMOGRAPH_HOSTED_AGENT_ENABLED` enables backend
+composition and `NEXT_PUBLIC_HOSTED_AGENT_ENABLED` enables the web control at
+build time (each requires `true`). The existing live-provider setting selects
+the real chat adapter; otherwise enabled local/preview composition uses a
+network-free fake. WS/MCP, frame/presence/leave actions, native session
+discovery/injection/wakeup, autonomous replies, and new compute-isolation
+guarantees remain outside this spike. Hosted routing, real provider delivery,
+browser behavior, and live native-session operation need recorded manual
+preview validation; implementation and fake tests alone do not verify them.
+
+**Why:** A bounded, explicit listen-and-chat path makes the owner grant and
+agent workflow reviewable before broadening scope or promising native agent
+automation. The existing v2 roadmap remains deferred beyond this slice.

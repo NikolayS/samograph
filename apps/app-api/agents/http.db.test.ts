@@ -17,7 +17,7 @@ d("hosted agent channel real DB", () => {
   let handler: (req: Request) => Promise<Response>;
   let binding: any;
   const sent: Array<[string, string]> = [];
-  const ownerCookie = () => `samo_session=${signSession({ userId: user, tenantId: tenant }, secret, now)}`;
+  const ownerCookie = () => `samo_session=${signSession({ userId: user, tenantId: tenant, iat: now }, secret)}`;
   const request = (path: string, method = "GET", body?: unknown, headers: Record<string, string> = {}) => handler(new Request(`https://web.test/calls/${call}/${path}`, { method, headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined }));
   const owner = { cookie: ownerCookie(), origin: "https://web.test" };
   const agent = () => ({ authorization: `Bearer ${binding.credential}`, "x-samograph-binding": binding.id, "x-samograph-provider": "codex", "x-samograph-session": "native-123" });
@@ -35,7 +35,7 @@ d("hosted agent channel real DB", () => {
     expect((await request("agent-bindings","POST",body)).status).toBe(401);
     expect((await request("agent-bindings","POST",body,{cookie: ownerCookie()})).status).toBe(403);
     expect((await request("agent-bindings","POST",body,{...owner,origin:"https://foreign.test"})).status).toBe(403);
-    expect((await request("agent-bindings","POST",body,{...owner,cookie:`samo_session=${signSession({userId:foreignUser,tenantId:foreignTenant},secret,now)}`})).status).toBe(403);
+    expect((await request("agent-bindings","POST",body,{...owner,cookie:`samo_session=${signSession({userId:foreignUser,tenantId:foreignTenant,iat:now},secret)}`})).status).toBe(403);
   });
   test("mint fixed grant and conflict, bounded cold context", async () => {
     const res = await request("agent-bindings","POST",{provider:"codex",native_session_id:"native-123",label:"session"},owner);
@@ -43,7 +43,7 @@ d("hosted agent channel real DB", () => {
     expect(binding.scopes).toEqual(["listen","act:chat"]);
     expect(new Date(binding.expires_at).getTime()).toBe(Math.floor(now/1000)*1000+3600000);
     expect((await request("agent-bindings","POST",{provider:"codex",native_session_id:"another"},owner)).status).toBe(409);
-    const context = await (await request("agent/context", "GET", undefined, agent())).json();
+    const context: any = await (await request("agent/context", "GET", undefined, agent())).json();
     expect(context.lines.map((l: any)=>l.seq)).toEqual(Array.from({length:50},(_,i)=>i+31));
     expect(context.lines[0].kind).toBe("speech"); expect(context.lines[1].kind).toBe("chat");
     expect(context.next_seq).toBe(80); expect(context.has_more).toBe(false);
@@ -71,8 +71,8 @@ d("hosted agent channel real DB", () => {
     expect(sent).toEqual([["server-bot","deliberate reply"]]);
     expect((await request("agent/chat","POST",{...body,text:"changed"},agent())).status).toBe(409);
     const uncertain = {text:"timeout",request_id:randomUUID()};
-    expect((await (await request("agent/chat","POST",uncertain,agent())).json()).outcome).toBe("unknown");
-    expect((await (await request("agent/chat","POST",uncertain,agent())).json()).outcome).toBe("unknown");
+    expect(((await (await request("agent/chat","POST",uncertain,agent())).json()) as any).outcome).toBe("unknown");
+    expect(((await (await request("agent/chat","POST",uncertain,agent())).json()) as any).outcome).toBe("unknown");
     expect(sent).toEqual([["server-bot","deliberate reply"],["server-bot","timeout"]]);
   });
   test("revoke blocks reads and writes, leaves share intact", async () => {

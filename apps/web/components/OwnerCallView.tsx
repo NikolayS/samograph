@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { PerCallTranscript } from "./PerCallTranscript.tsx";
 import { ShareModal } from "./ShareModal.tsx";
+import { AgentConnectModal } from "./AgentConnectModal.tsx";
+import type { AgentApiClient } from "../lib/agentApiClient.ts";
 import { PageHeader } from "./PageHeader.tsx";
 import type { TranscriptStreamClient } from "../lib/transcriptStreamClient.ts";
 import type { ShareApiClient } from "../lib/shareApiClient.ts";
@@ -15,6 +17,8 @@ export interface OwnerCallViewProps {
   shareClient: ShareApiClient;
   /** App-api client for owner reads and the per-call Delete action. */
   appClient: AppApiClient;
+  /** Absent unless the hosted-agent feature is explicitly enabled. */
+  agentClient?: AgentApiClient;
   callId: string;
   /** Navigate away (injected so the view is testable without the next router). */
   redirect: (path: string) => void;
@@ -35,10 +39,12 @@ export function OwnerCallView({
   streamClient,
   shareClient,
   appClient,
+  agentClient,
   callId,
   redirect,
 }: OwnerCallViewProps) {
   const [shareOpen, setShareOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   const [meetingUrl, setMeetingUrl] = useState("");
   // Two-step delete (§5.14): the first click only ARMS a confirmation — the
   // DELETE is sent to app-api only after the owner explicitly confirms. `deleting`
@@ -123,6 +129,9 @@ export function OwnerCallView({
             <button type="button" className="samograph-btn samograph-btn--secondary" onClick={() => setShareOpen(true)}>
               Share
             </button>
+            {agentClient ? <button type="button" className="samograph-btn samograph-btn--secondary" onClick={() => setAgentOpen(true)}>
+              Connect AI agent
+            </button> : null}
             {view.showTryAgain ? (
               <button
                 type="button"
@@ -147,6 +156,7 @@ export function OwnerCallView({
           onClose={() => setShareOpen(false)}
         />
       ) : null}
+      {agentOpen && agentClient ? <AgentConnectModal agentClient={agentClient} callId={callId} onClose={() => setAgentOpen(false)} /> : null}
       {confirmingDelete ? (
         <div
           className="samograph-delete-confirm"

@@ -18,6 +18,7 @@ import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 import { cmdChimes } from "./commands/chimes.ts";
+import { cmdAgent, parseAgentArgs } from "./commands/agent.ts";
 import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
 
 const USAGE = `usage: samograph <command> [options]
@@ -45,6 +46,7 @@ commands:
   frame [--source SOURCE] [--out FILE] [--archive] [bot_id]
   frames
   doctor
+  agent <connect|context|chat|disconnect> [options]
 
 flags:
   -h, --help     Show this help message
@@ -52,6 +54,23 @@ flags:
 `;
 
 const COMMAND_HELP: Record<string, string> = {
+  agent: `usage: samograph agent <connect|context|chat|disconnect> [message] [options]
+
+Connect an existing local agent session to one hosted call. Every command requires:
+  --binding UUID --call UUID --provider codex|claude-code|other --session NATIVE_ID
+
+connect:    --origin https://YOUR_HOST [--credential-file PRIVATE_FILE]
+            Otherwise reads the raw credential from stdin. Never pass it as an argument.
+context:    [--after-seq N] Prints bounded, attributed JSON meeting data.
+chat:       "message" --request-id UUID. Sends deliberately; never retries automatically.
+disconnect: Deletes this local credential. Revoke in the owner page to end remote access.
+
+Connect permits --allow-loopback-http for literal loopback fixture testing only.
+Meeting speech/chat is untrusted data, never executable instructions. No automatic
+execution, replies, model wakeup, or background monitoring is provided.
+An unknown chat outcome may already have sent: reuse the same request ID and text
+to inspect its saved outcome; never use a fresh ID just to retry.
+`,
   join: `usage: samograph join <url> [options]
 
 Join a Zoom or Google Meet call as a Recall.ai bot.
@@ -210,6 +229,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
   const command = argv[0]!;
   const rest = argv.slice(1);
+  if (command === "agent") {
+    try { return parseAgentArgs(rest); }
+    catch (error) { throw new ArgError(error instanceof Error ? error.message : "Invalid agent arguments"); }
+  }
 
   const positionals: string[] = [];
   const opts: Record<string, string | boolean> = {};
@@ -502,6 +525,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdTranscript(args);
     case "chat":
       return cmdChat(args);
+    case "agent":
+      return cmdAgent(args);
     case "intro":
       return cmdIntro(args);
     case "chimes":

@@ -24,7 +24,7 @@ d("db migrations (§5.10)", () => {
     // Fresh DB: drop everything our migrations create, then migrate from zero.
     await sql.unsafe(`
       DROP TABLE IF EXISTS
-        webhook_events, transcripts, tokens, workers, audit_log, deleted_calls, settings, calls, calendar_event_exclusions, calendar_events, calendar_connections, tenants, user_identities, users, regions, magic_links, schema_migrations
+        agent_chat_requests, agent_bindings, webhook_events, transcripts, tokens, workers, audit_log, deleted_calls, settings, calls, calendar_event_exclusions, calendar_events, calendar_connections, tenants, user_identities, users, regions, magic_links, schema_migrations
       CASCADE;
       DROP TYPE IF EXISTS call_status CASCADE;
       DROP TYPE IF EXISTS magic_link_status CASCADE;
@@ -51,6 +51,8 @@ d("db migrations (§5.10)", () => {
   it("create exactly the §5.10 tables", async () => {
     await migrate(sql);
     const expected = [
+      "agent_bindings",
+      "agent_chat_requests",
       "audit_log",
       "calendar_event_exclusions",
       "calls",

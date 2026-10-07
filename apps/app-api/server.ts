@@ -23,6 +23,7 @@
  * /opt/samograph/ on next hostprep.
  */
 import { createAppApi } from "./app.ts";
+import { hostedAgentChatFromEnv } from "./agents/runtime.ts";
 import {
   emailSenderFromEnv,
   googleOAuthFromEnv,
@@ -297,6 +298,7 @@ export function startAppApiServer(env: EnvLike = process.env): ReturnType<typeof
     // §5.14 per-call delete: force-leave a live bot + erase its Recall recording.
     // Real acts when RECALL_LIVE, else the in-repo fake (no key, no network).
     recall: getCallRecordingControl(),
+    hostedAgentChat: hostedAgentChatFromEnv(),
     registry, // §5.11 GET /metrics scrape source (issue #108)
     funnel: funnelSource.thunk, // §9 activation-funnel gauges at /metrics (issue #16)
     // PROD: restart/replica-safe magic-link store (issue #62). Migration 0007

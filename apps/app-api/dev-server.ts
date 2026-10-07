@@ -18,6 +18,7 @@
  *   - Set-Cookie `Secure` is stripped so the cookie stores over http://localhost.
  */
 import { createAppApi } from "./app.ts";
+import { hostedAgentChatFromEnv } from "./agents/runtime.ts";
 import {
   InMemoryMagicLinkStore,
   emailSenderFromEnv,
@@ -289,6 +290,7 @@ export function startDevServer(env: EnvLike = process.env): ReturnType<typeof Bu
     // §5.14 per-call delete: force-leave a live bot + erase its Recall recording
     // (the in-repo fake locally; real acts only when RECALL_LIVE).
     recall: getCallRecordingControl(),
+    hostedAgentChat: hostedAgentChatFromEnv(),
     linkStore: new InMemoryMagicLinkStore(),
     registry, // §5.11 GET /metrics scrape source (issue #108)
     // LOCAL-ONLY: strip Secure so cookies store over http, expose /__dev route.

@@ -35,6 +35,19 @@ beforeAll(async () => {
 
 const SEC_FETCH_DEST_EMPTY = [{ type: "header", key: "sec-fetch-dest", value: "empty" }];
 
+describe("next.config.mjs — hosted agent routes", () => {
+  it("proxies owner binding fetches with the normal browser gate", () => {
+    for (const source of ["/calls/:id/agent-bindings", "/calls/:id/agent-bindings/:bindingId"]) {
+      expect(ruleFor(source)).toEqual({ source, has: SEC_FETCH_DEST_EMPTY, destination: `${ORIGIN}${source}` });
+    }
+  });
+  it("proxies Bearer agent routes without a browser-only header requirement", () => {
+    for (const source of ["/calls/:id/agent/context", "/calls/:id/agent/chat"]) {
+      expect(ruleFor(source)).toEqual({ source, destination: `${ORIGIN}${source}` });
+    }
+  });
+});
+
 /** The single rule for `source`, or `undefined` when none is registered. */
 function ruleFor(source: string): Rewrite | undefined {
   const matches = beforeFiles.filter((r) => r.source === source);

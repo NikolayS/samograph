@@ -1978,6 +1978,20 @@ textarea { resize: vertical; font-family: var(--font-mono); }
 .samograph-modal-header h2, .samograph-share-header h2, .samograph-share-blurb, .samograph-share-rotated { margin: 0; }
 .samograph-share-blurb, .samograph-share-rotated { color: var(--muted); font-size: var(--text-sm); }
 .samograph-share-url { overflow-wrap: anywhere; font-family: var(--font-mono); }
+.samograph-agent-modal, .samograph-agent-form, .samograph-agent-bindings, .samograph-agent-credential { display: grid; gap: var(--space-3); }
+.samograph-agent-modal p, .samograph-agent-modal h3 { margin: 0; }
+.samograph-agent-modal p { font-size: var(--text-sm); }
+.samograph-agent-form input, .samograph-agent-form select {
+  min-width: 0; width: 100%; padding: var(--space-2); color: var(--ink);
+  background: var(--ground); border: 1px solid var(--control-border); border-radius: var(--radius-md);
+  font: inherit;
+}
+.samograph-agent-hint { color: var(--muted); }
+.samograph-agent-secret { display: block; padding: var(--space-3); background: var(--ground); overflow-wrap: anywhere; user-select: all; }
+.samograph-agent-binding { display: grid; gap: var(--space-2); border-top: 1px solid var(--control-border); padding-top: var(--space-3); }
+.samograph-agent-binding dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-2); margin: 0; font-size: var(--text-sm); }
+.samograph-agent-binding dt { color: var(--muted); }
+.samograph-agent-binding dd { margin: 0; overflow-wrap: anywhere; }
 .samograph-shortcut-list { display: grid; gap: var(--space-2); margin: var(--space-4) 0 0; }
 .samograph-shortcut-list > div { display: grid; grid-template-columns: 7rem 1fr; gap: var(--space-2); align-items: center; }
 .samograph-shortcut-list dt, .samograph-shortcut-list dd { margin: 0; }

@@ -33,5 +33,5 @@ ALTER TABLE agent_chat_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_chat_requests FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_chat_requests_tenant ON agent_chat_requests FOR ALL TO samograph_app
   USING (EXISTS (SELECT 1 FROM calls c WHERE c.id = agent_chat_requests.call_id AND c.tenant_id = (SELECT current_setting('app.tenant_id'))::uuid))
-  WITH CHECK (EXISTS (SELECT 1 FROM agent_bindings b WHERE b.id = agent_chat_requests.binding_id AND b.call_id = agent_chat_requests.call_id));
+  WITH CHECK (EXISTS (SELECT 1 FROM agent_bindings b JOIN calls c ON c.id = b.call_id WHERE b.id = agent_chat_requests.binding_id AND b.call_id = agent_chat_requests.call_id AND c.tenant_id = (SELECT current_setting('app.tenant_id'))::uuid));
 GRANT SELECT, INSERT, UPDATE, DELETE ON agent_bindings, agent_chat_requests TO samograph_app;
