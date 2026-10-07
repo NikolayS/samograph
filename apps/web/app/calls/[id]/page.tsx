@@ -6,6 +6,7 @@ import { AppShell } from "../../../components/AppShell.tsx";
 import { createHttpTranscriptStreamClient } from "../../../lib/transcriptStreamClient.ts";
 import { createHttpShareApiClient } from "../../../lib/shareApiClient.ts";
 import { createHttpAppApiClient } from "../../../lib/appApiClient.ts";
+import { createHttpAgentApiClient } from "../../../lib/agentApiClient.ts";
 
 // Real seams; exercised in this issue only through the fakes (the ws-hub + share
 // backend land separately). Module-scoped so identity is stable across renders.
@@ -13,6 +14,7 @@ const streamClient = createHttpTranscriptStreamClient();
 const shareClient = createHttpShareApiClient();
 // App-api client for the owner read and Delete action (`/calls/:id`).
 const appClient = createHttpAppApiClient();
+const agentClient = process.env.NEXT_PUBLIC_HOSTED_AGENT_ENABLED === "true" ? createHttpAgentApiClient() : undefined;
 
 export default function CallPage() {
   const params = useParams<{ id: string }>();
@@ -24,6 +26,7 @@ export default function CallPage() {
         streamClient={streamClient}
         shareClient={shareClient}
         appClient={appClient}
+        agentClient={agentClient}
         callId={callId}
         redirect={(path) => router.push(path)}
       />

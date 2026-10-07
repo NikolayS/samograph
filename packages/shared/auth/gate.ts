@@ -45,7 +45,7 @@ import type { Keyring } from "../tokens/signing.ts";
 export const AUTHZ_ERROR_CODE = "SAMO-AUTHZ-001" as const;
 
 /** The v1 scopes the gate can grant, plus the v2 `act:*` seam (§5.7). */
-export type Scope = "read" | "share" | "act:chat" | "act:frame" | "act:presence" | "act:leave";
+export type Scope = "read" | "share" | "listen" | "act:chat" | "act:frame" | "act:presence" | "act:leave";
 
 /** The credentials carried by an inbound request. The gate authorizes `callId`. */
 export interface AuthorizeRequest {
@@ -144,9 +144,11 @@ export async function authorizeCall(
       const tenantId = await deps.lookupCallTenant(req.callId);
       if (tenantId) {
         await setTenant(tx, tenantId);
-        const res = await verifyToken(tx, token, deps.keyring, { now });
-        if (res.ok && res.callId === req.callId) {
-          return { authorized: true, tenantId, callId: req.callId, scopes: res.scopes as Scope[] };
+        const shareLane = req.shareToken != null;
+        const res = await verifyToken(tx, token, deps.keyring, { now, requireScope: shareLane ? "share" : undefined });
+        if (res.ok && res.callId === req.callId.toLowerCase() &&
+            (shareLane || (!res.scopes.includes("share") && res.scopes.some(s => s === "listen" || s.startsWith("act:"))))) {
+          return { authorized: true, tenantId, callId: res.callId, scopes: res.scopes as Scope[] };
         }
       }
     }

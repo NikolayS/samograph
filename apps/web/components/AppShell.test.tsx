@@ -138,7 +138,7 @@ describe("AppShell", () => {
     expect(queryByRole("button", { name: "Menu" })).toBeNull();
     expect(document.getElementById("app-nav-menu")).toBeNull();
     const theme = getByRole("group", { name: "Theme" });
-    const bar = document.querySelector(".samograph-app-nav-inner")!;
+    const bar = document.querySelector<HTMLElement>(".samograph-app-nav-inner")!;
     expect(bar.contains(theme)).toBe(true);
     // Inline in the bar itself, not nested in a collapsible panel.
     expect(theme.closest(".samograph-app-nav-right")!.parentElement).toBe(bar);

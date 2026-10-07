@@ -57,6 +57,9 @@ export async function eraseCallRecording(
  * `app.tenant_id` set, so RLS confines every delete to the caller's tenant.
  */
 export async function purgeCallRows(tx: SQL, callId: string): Promise<void> {
+  // Agent authorization locks call before binding. Token deletion cascades into
+  // bindings, so acquire the same first lock before touching any child row.
+  await tx`SELECT id FROM calls WHERE id = ${callId} FOR UPDATE`;
   await tx`DELETE FROM transcripts WHERE call_id = ${callId}`;
   await tx`DELETE FROM tokens WHERE call_id = ${callId}`;
   await tx`DELETE FROM workers WHERE call_id = ${callId}`;

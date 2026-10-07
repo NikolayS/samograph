@@ -196,6 +196,17 @@ d("authorizeCall — tenant isolation (DB-backed, §5.6 / §6.2 #4)", () => {
     expect(res).toEqual({ authorized: true, tenantId: tenantA, callId: callA, scopes: ["share"] });
   });
 
+  it("UUID case spelling resolves to the same canonical call while other calls stay denied", async () => {
+    for (const mintCallId of [callA, callA.toUpperCase()]) {
+      const { token } = await mintToken(sql, { callId: mintCallId, scopes: ["listen", "act:chat"], signingKey: KEY_CURRENT, ttlSeconds: 3600 });
+      for (const requestCallId of [callA, callA.toUpperCase()]) {
+        expect(await gate({ callId: requestCallId, agentToken: token })).toEqual({ authorized: true, tenantId: tenantA, callId: callA, scopes: ["listen", "act:chat"] });
+      }
+      expect(await gate({ callId: callX.toUpperCase(), agentToken: token })).toEqual(DENY);
+      expect(await gate({ callId: callB.toUpperCase(), agentToken: token })).toEqual(DENY);
+    }
+  });
+
   it("[v2 seam] an `act:*` agent token authorizes through the SAME gate path", async () => {
     const { token } = await mintToken(sql, { callId: callA, scopes: ["act:chat"], signingKey: KEY_CURRENT, ttlSeconds: 3600 });
     const res = await gate({ callId: callA, agentToken: token });
@@ -271,4 +282,26 @@ d("authorizeCall — tenant isolation (DB-backed, §5.6 / §6.2 #4)", () => {
     console.log(`[fuzz/db] seed=0x${seed.toString(16)} iterations=${ITER} authorized=${authorized}`);
     expect(authorized).toBe(0);
   });
+});
+
+// Credential lanes are operation boundaries, even before an endpoint checks a verb.
+describe("authorizeCall — explicit credential lanes", () => {
+  for (const [lane, scopes, permitted] of [
+    ["shareToken", ["act:chat"], false],
+    ["agentToken", ["share"], false],
+    ["agentToken", ["act:chat"], true],
+    ["shareToken", ["share"], true],
+  ] as const) {
+    it(`${lane} with ${scopes.join()} permits=${permitted}`, async () => {
+      const callId = randomUUID();
+      const tenantId = randomUUID();
+      const exp = Math.floor(Date.now() / 1000) + 60;
+      const token = signToken({ kid: KEY_CURRENT.kid, call_id: callId, scopes: [...scopes], iat: exp - 60, exp, jti: randomUUID() }, KEY_CURRENT);
+      const tx = ((strings: TemplateStringsArray) => Promise.resolve(strings.join("").includes("FROM tokens")
+        ? [{ call_id: callId, scopes: [...scopes], kid: KEY_CURRENT.kid, expires_at: new Date(exp * 1000), revoked_at: null }]
+        : [])) as unknown as SQL;
+      const result = await authorizeCall(tx, { callId, [lane]: token }, { keyring, lookupSession: async () => null, lookupCallTenant: async () => tenantId });
+      expect(result.authorized).toBe(permitted);
+    });
+  }
 });

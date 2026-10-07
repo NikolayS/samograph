@@ -114,6 +114,7 @@ export function mintShareToken(
 
 interface TokenRow {
   call_id: string;
+  kid: string;
   scopes: string[];
   expires_at: Date | string;
   revoked_at: Date | string | null;
@@ -136,12 +137,18 @@ export async function verifyToken(
   if (!sig.ok) return sig;
 
   const rows = (await sql`
-    SELECT call_id, scopes, expires_at, revoked_at
+    SELECT call_id, scopes, kid, expires_at, revoked_at
     FROM tokens
     WHERE jti = ${sig.payload.jti}`) as unknown as TokenRow[];
 
   if (rows.length === 0) return { ok: false, reason: "not_persisted" };
   const row = rows[0];
+
+  // PostgreSQL UUID output is lowercase; uppercase hex names the same call.
+  if (row.call_id !== sig.payload.call_id.toLowerCase() || row.kid !== sig.payload.kid ||
+      JSON.stringify([...row.scopes].sort()) !== JSON.stringify([...sig.payload.scopes].sort())) {
+    return { ok: false, reason: "not_persisted" };
+  }
 
   if (row.revoked_at !== null) return { ok: false, reason: "revoked" };
 
@@ -155,7 +162,7 @@ export async function verifyToken(
     return { ok: false, reason: "scope_denied" };
   }
 
-  return { ok: true, callId: sig.payload.call_id, scopes: row.scopes, payload: sig.payload };
+  return { ok: true, callId: row.call_id, scopes: row.scopes, payload: sig.payload };
 }
 
 /**

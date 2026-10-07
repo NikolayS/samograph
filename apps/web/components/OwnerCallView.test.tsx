@@ -4,6 +4,8 @@ import { OwnerCallView } from "./OwnerCallView.tsx";
 import { createFakeTranscriptStreamClient } from "../lib/fakeTranscriptStreamClient.ts";
 import { createFakeShareApiClient } from "../lib/fakeShareApiClient.ts";
 import { createFakeAppApiClient } from "../lib/fakeAppApiClient.ts";
+import { createFakeAgentApiClient } from "../lib/fakeAgentApiClient.ts";
+import type { AgentApiClient } from "../lib/agentApiClient.ts";
 import type { CallDetail } from "../lib/transcriptStreamClient.ts";
 import type { Call } from "../lib/appApiClient.ts";
 import { displayMeetingUrl } from "../lib/meetingUrl.ts";
@@ -23,7 +25,7 @@ function detail(over: Partial<CallDetail> = {}): CallDetail {
 }
 
 async function renderOwner(
-  over: { redirect?: (p: string) => void; callId?: string; call?: Call; seedCalls?: Call[] } = {},
+  over: { redirect?: (p: string) => void; callId?: string; call?: Call; seedCalls?: Call[]; agentClient?: AgentApiClient } = {},
 ) {
   const callId = over.callId ?? "call_1";
   const call = over.call ?? {
@@ -43,6 +45,7 @@ async function renderOwner(
         streamClient={stream}
         shareClient={share}
         appClient={app}
+        agentClient={over.agentClient}
         callId={callId}
         redirect={over.redirect ?? ((p) => redirected.push(p))}
       />,
@@ -53,6 +56,16 @@ async function renderOwner(
 }
 
 describe("OwnerCallView — owner per-call page (SPEC §4.1, Stories 1/2/4)", () => {
+  it("keeps agent onboarding off by default and opens it only when a client is injected", async () => {
+    const disabled = await renderOwner();
+    expect(disabled.queryByRole("button", { name: "Connect AI agent" })).toBeNull();
+    disabled.unmount();
+    const client = createFakeAgentApiClient();
+    const enabled = await renderOwner({ agentClient: client });
+    fireEvent.click(enabled.getByRole("button", { name: "Connect AI agent" }));
+    expect(await enabled.findByRole("heading", { name: "Connect AI agent" })).toBeDefined();
+    expect(client.requests).toEqual([{ path: "/calls/call_1/agent-bindings", method: "GET" }]);
+  });
   it("renders exactly one h1 — the readable meeting name, not the raw URL", async () => {
     const { getAllByRole, getByRole } = await renderOwner();
     expect(getAllByRole("heading", { level: 1 })).toHaveLength(1);

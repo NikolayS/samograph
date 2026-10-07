@@ -128,6 +128,11 @@ execStart = "/usr/local/bin/bun apps/ws-hub/dev-live-server.ts"
 # ---- routes (Caddy first-match order; matches prod /etc/caddy/sites.d/00-main-samograph.caddy) ----
 
 [[routes]]
+name        = "agent-channel"
+matchRegexp = "^/calls/[^/]+/(agent-bindings(/[^/]+)?|agent/(context|chat))$"
+to          = "app-api"
+
+[[routes]]
 name        = "stream"
 matchRegexp = "^/calls/[^/]+/stream$"
 to          = "ws-hub"

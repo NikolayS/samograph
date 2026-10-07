@@ -93,6 +93,19 @@ const nextConfig = {
               },
               { source: "/calls", destination: `${apiOrigin}/calls` },
               {
+                source: "/calls/:id/agent-bindings",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/calls/:id/agent-bindings`,
+              },
+              {
+                source: "/calls/:id/agent-bindings/:bindingId",
+                has: [{ type: "header", key: "sec-fetch-dest", value: "empty" }],
+                destination: `${apiOrigin}/calls/:id/agent-bindings/:bindingId`,
+              },
+              // CLI Bearer requests do not send browser Sec-Fetch headers.
+              { source: "/calls/:id/agent/context", destination: `${apiOrigin}/calls/:id/agent/context` },
+              { source: "/calls/:id/agent/chat", destination: `${apiOrigin}/calls/:id/agent/chat` },
+              {
                 // ShareModal's mint/get/revoke fetches (§5.7, Story 2). Client
                 // `fetch` only (dest `empty`) — there is no /calls/:id/share
                 // page, but the gate keeps a stray document navigation out of

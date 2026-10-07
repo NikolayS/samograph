@@ -44,4 +44,14 @@ export interface ParsedArgs {
   intro?: boolean;
   intro_text?: string | null;
   context?: boolean;
+  agent_action?: "connect" | "context" | "chat" | "disconnect";
+  agent_binding_id?: string;
+  agent_call_id?: string;
+  agent_provider?: "codex" | "claude-code" | "other";
+  agent_session_id?: string;
+  agent_origin?: string;
+  agent_credential_file?: string;
+  agent_after_seq?: number;
+  agent_request_id?: string;
+  agent_allow_loopback_http?: boolean;
 }

@@ -25,6 +25,8 @@ const d = HAVE_DB ? describe : describe.skip;
 // tenant-scoped by its own `tenant_id` (0009), same isolation contract as
 // `audit_log`.
 const TENANT_SCOPED = [
+  "agent_bindings",
+  "agent_chat_requests",
   "audit_log",
   "calendar_event_exclusions",
   "calendar_events",

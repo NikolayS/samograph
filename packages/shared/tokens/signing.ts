@@ -24,7 +24,7 @@ export const ACT_SCOPES = ["act:chat", "act:frame", "act:presence", "act:leave"]
  * `act:*` set. The `read` scope is DERIVED from the owner's session by the
  * tenancy gate (§5.6) and is deliberately ABSENT here — it is never persisted.
  */
-export const PERSISTED_SCOPES = ["share", ...ACT_SCOPES] as const;
+export const PERSISTED_SCOPES = ["share", "listen", ...ACT_SCOPES] as const;
 
 export type PersistedScope = (typeof PERSISTED_SCOPES)[number];
 

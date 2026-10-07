@@ -252,7 +252,7 @@ describe("PerCallTranscript — live read-along (SPEC §2, §5.2, §5.4, §5.5, 
     act(() => client.emitLine(line({ seq: 2, speaker: "Bob", text: "same hue" })));
     act(() => client.emitLine(line({ seq: 3, speaker: "Alice", text: "other hue" })));
     const indexes = [...container.querySelectorAll(".samograph-line-speaker")].map((el) =>
-      el.getAttribute("data-speaker-index"),
+      el.getAttribute("data-speaker-index") ?? "",
     );
     // Stable per speaker, in range, and never smuggled through an inline style
     // (a `[style*=…]` hook depends on CSSOM serialising with a space).

@@ -47,6 +47,8 @@ import type { GoogleCalendarOAuthPort } from "./calendar/google-calendar-oauth.t
 import { CalendarService } from "./calendar/service.ts";
 import { PostgresCalendarConnectionStore } from "./calendar/pg-store.ts";
 import { createCalendarHandler } from "./calendar/http.ts";
+import { createAgentsHandler } from "./agents/http.ts";
+import type { AgentConfig } from "./agents/service.ts";
 import { CalendarSyncService } from "./calendar/sync.ts";
 
 /** LOCAL-ONLY affordances injected by the dev wrapper (never in prod). */
@@ -98,6 +100,8 @@ export interface AppApiConfig {
    * when RECALL_LIVE, else the in-repo fake). Absent ⇒ DB erasure only.
    */
   recall?: CallRecordingControl;
+  /** Optional narrow agent channel. Absent means every agent route is unavailable. */
+  hostedAgentChat?: AgentConfig["sendChat"];
   /** Epoch-ms clock; defaults to the wall clock. */
   clock?: () => number;
   /** Override the magic-link store; defaults to a fresh in-memory store. */
@@ -214,6 +218,11 @@ export function createAppApi(config: AppApiConfig): AppApi {
     }), calendarService.configured,
   );
 
+  const agentsHandler = config.hostedAgentChat ? createAgentsHandler({
+    sql: config.sql, sessionSecret: config.sessionSecret, keyring: config.tokenKeyring,
+    webOrigin: config.webOrigin, sendChat: config.hostedAgentChat, clock,
+  }) : undefined;
+
   const dev = config.devShortcuts;
   // §5.11 `/metrics` scrape endpoint over the SHARED registry (issue #108).
   const metrics = config.registry ? metricsHttpHandler(config.registry, config.funnel) : undefined;
@@ -240,6 +249,8 @@ export function createAppApi(config: AppApiConfig): AppApi {
         res = await googleHandler(req);
       } else if (path.startsWith("/calendar/")) {
         res = await calendarHandler(req);
+      } else if (/^\/calls\/[^/]+\/(agent-bindings(?:\/[^/]+)?|agent\/(context|chat))$/.test(path)) {
+        res = agentsHandler ? await agentsHandler(req) : new Response("not found", { status: 404 });
       } else if (path === "/calls" || path.startsWith("/calls/")) {
         res = await callsHandler(req);
       } else if (path === "/account") {

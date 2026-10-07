@@ -116,9 +116,10 @@ describe("signToken / verifyTokenSignature (pure crypto, §5.7)", () => {
 });
 
 describe("scope model — persisted vs derived (§5.7, §4.2)", () => {
-  it("lists exactly the PERSISTED scopes (share + act:*) and NEVER read", () => {
+  it("lists exactly the PERSISTED scopes (share + listen + act:*) and NEVER read", () => {
     expect([...PERSISTED_SCOPES]).toEqual([
       "share",
+      "listen",
       "act:chat",
       "act:frame",
       "act:presence",
@@ -127,8 +128,9 @@ describe("scope model — persisted vs derived (§5.7, §4.2)", () => {
     expect(PERSISTED_SCOPES).not.toContain("read");
   });
 
-  it("isPersistedScope: share + act:* true; read + unknown false", () => {
+  it("isPersistedScope: share + listen + act:* true; read + unknown false", () => {
     expect(isPersistedScope("share")).toBe(true);
+    expect(isPersistedScope("listen")).toBe(true);
     expect(isPersistedScope("act:chat")).toBe(true);
     expect(isPersistedScope("act:frame")).toBe(true);
     expect(isPersistedScope("act:presence")).toBe(true);
