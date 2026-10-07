@@ -72,7 +72,10 @@ export async function chat(config:AgentConfig,req:Request,callId:string,text:str
  return {request_id:requestId,outcome};
  async function finish(outcome:string) {
   await config.sql.begin(async raw=>{const tx=raw as unknown as SQL;await tx.unsafe("SET LOCAL ROLE samograph_app");await tx`SELECT set_config('app.tenant_id',${reserved.tenantId},true)`;
-   // A concurrent call erasure may have cascaded the ledger; never recreate it.
+   // Match erasure: call before ledger/binding/token child locks. The audit
+   // foreign key also needs this call; after erasure, never recreate detail.
+   const live=await tx`SELECT id FROM calls WHERE id=${callId} FOR UPDATE`;
+   if(!live.length) return;
    const updated=await tx`UPDATE agent_chat_requests SET outcome=${outcome} WHERE binding_id=${reserved.binding.id} AND request_id=${requestId} RETURNING request_id`;
    if(updated.length) await audit(tx,reserved.tenantId,callId,reserved.binding.id,`agent_chat_${outcome}`,contentHash);
   });

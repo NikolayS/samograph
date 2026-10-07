@@ -356,6 +356,9 @@ export function createCallsHandler(
         // Session path of the gate; a cross-tenant call_id falls through to DENY.
         const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
         if (!authz.authorized || !authz.scopes.includes("read")) return null;
+        // Serialize before token/audit FK checks; erasure may have won after auth.
+        const live = await tx`SELECT id FROM calls WHERE id = ${callId} FOR UPDATE`;
+        if (!live.length) return null;
         // Mint under the call's tenant (RLS-scoped insert) + audit (token id, not secret).
         const m = await mintShareToken(tx as unknown as SQL, {
           callId,
@@ -384,7 +387,11 @@ export function createCallsHandler(
       callId: string,
       tenantId: string,
       actor: string,
-    ): Promise<number> => {
+    ): Promise<number | null> => {
+      // Token mutation followed by an audit FK must share erasure's call-first
+      // order. Returning null distinguishes a call erased after authorization.
+      const live = await tx`SELECT id FROM calls WHERE id = ${callId} FOR UPDATE`;
+      if (!live.length) return null;
       const revokedAt = new Date((nowSec() ?? Math.floor(Date.now() / 1000)) * 1000);
       const flipped = (await tx`
         UPDATE tokens
@@ -467,7 +474,7 @@ export function createCallsHandler(
         const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
         if (!authz.authorized || !authz.scopes.includes("read")) return null;
         const actor = `user:${claims.userId}`;
-        await revokeActiveShares(tx as unknown as SQL, callId, authz.tenantId, actor);
+        if (await revokeActiveShares(tx as unknown as SQL, callId, authz.tenantId, actor) === null) return null;
         const m = await mintShareToken(tx as unknown as SQL, {
           callId,
           signingKey: keyring.current,
@@ -503,7 +510,7 @@ export function createCallsHandler(
         await tx.unsafe("SET LOCAL ROLE samograph_app");
         const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
         if (!authz.authorized || !authz.scopes.includes("read")) return { authorized: false as const };
-        await revokeActiveShares(tx as unknown as SQL, callId, authz.tenantId, `user:${claims.userId}`);
+        if (await revokeActiveShares(tx as unknown as SQL, callId, authz.tenantId, `user:${claims.userId}`) === null) return { authorized: false as const };
         return { authorized: true as const };
       });
       if (!outcome.authorized) return denied();
@@ -528,6 +535,9 @@ export function createCallsHandler(
         await tx.unsafe("SET LOCAL ROLE samograph_app");
         const authz = await authorizeCall(tx as unknown as SQL, { callId, sessionCookie: cookie }, gateDeps);
         if (!authz.authorized || !authz.scopes.includes("read")) return { authorized: false as const };
+        // Call before token mutation and its subsequent audit FK, as in erasure.
+        const live = await tx`SELECT id FROM calls WHERE id = ${callId} FOR UPDATE`;
+        if (!live.length) return { authorized: false as const };
         // RLS scopes the revoke to the owner's tenant: a cross-tenant jti is invisible
         // → 0 rows → false (no-op). Audit ONLY a successful flip → idempotent.
         const revokedAt = new Date((nowSec() ?? Math.floor(Date.now() / 1000)) * 1000);
