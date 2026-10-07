@@ -1,8 +1,8 @@
-import { describe, it, expect } from "bun:test";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, mock, spyOn } from "bun:test";
+import { act, render, fireEvent, waitFor } from "@testing-library/react";
 import { Dashboard } from "./Dashboard.tsx";
 import { createFakeAppApiClient } from "../lib/fakeAppApiClient.ts";
-import type { Call } from "../lib/appApiClient.ts";
+import { AppApiError, type Call } from "../lib/appApiClient.ts";
 import { installDom } from "../test/setup.tsx";
 
 installDom();
@@ -13,6 +13,81 @@ const SEED: Call[] = [
   { id: "call_2", meetingUrl: "https://zoom.us/j/2", provider: "zoom", status: "JOINING" },
   { id: "call_1", meetingUrl: "https://meet.google.com/abc-defg-hij", provider: "google_meet", status: "PENDING" },
 ];
+
+describe("Dashboard refreshed snapshots (#314)", () => {
+  const autoClient = () => createFakeAppApiClient({ seedCalendarMeetings: {
+    connectionState: "connected", autoJoin: true, lastSyncAt: null, meetings: [{
+      id: "event", title: "Planning", startsAt: "2026-10-07T12:00:00Z", endsAt: "2026-10-07T13:00:00Z",
+      allDay: false, meetingUrl: SEED[0].meetingUrl, meetingProvider: "zoom", organizerEmail: null, attendeeResponse: "accepted",
+    }],
+  } });
+  it("discovers an autojoin on a bounded interval and stops polling on unmount", async () => {
+    const ticks: Array<() => void> = [];
+    const intervals: number[] = [];
+    const timer = spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void, ms: number) => {
+      ticks.push(fn); intervals.push(ms); return ticks.length;
+    }) as typeof setInterval);
+    const clear = spyOn(globalThis, "clearInterval");
+    const client = autoClient();
+    const view = render(<Dashboard client={client} redirect={noopRedirect} />);
+    try {
+      await act(async () => {});
+      expect(view.getByRole("button", { name: "Skip auto-record for Planning" })).toBeDefined();
+      expect(intervals.length).toBeGreaterThan(0);
+      expect(intervals.every((ms) => ms >= 5_000 && ms <= 30_000)).toBe(true);
+      client.listCalls = mock(async () => [SEED[0]]);
+      await act(async () => { for (const tick of ticks) tick(); });
+      expect(view.getByRole("link", { name: "View Planning call" }).getAttribute("href")).toBe("/calls/call_2");
+      expect(view.queryByRole("button", { name: "Skip auto-record for Planning" })).toBeNull();
+      view.unmount();
+      const reads = (client.listCalls as ReturnType<typeof mock>).mock.calls.length;
+      await act(async () => { for (const tick of ticks) tick(); window.dispatchEvent(new Event("focus")); });
+      expect((client.listCalls as ReturnType<typeof mock>).mock.calls.length).toBe(reads);
+      expect(clear.mock.calls.length).toBeGreaterThanOrEqual(intervals.length);
+    } finally { view.unmount(); timer.mockRestore(); clear.mockRestore(); }
+  });
+  it("refreshes on foreground without overlap and preserves calls after transient failures", async () => {
+    const client = createFakeAppApiClient({ seedCalls: SEED });
+    const view = render(<Dashboard client={client} redirect={noopRedirect} />);
+    await view.findByText(SEED[0].meetingUrl);
+    let reject!: (error: Error) => void;
+    client.listCalls = mock(() => new Promise<Call[]>((_resolve, rejectFn) => { reject = rejectFn; }));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect((client.listCalls as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+    await act(async () => { reject(new Error("offline")); });
+    expect(view.getByText(SEED[0].meetingUrl)).toBeDefined();
+    expect(view.queryByText("No calls yet.")).toBeNull();
+  });
+  it("ignores a late session failure after unmount", async () => {
+    const client = createFakeAppApiClient();
+    let reject!: (error: Error) => void;
+    client.listCalls = mock(() => new Promise<Call[]>((_resolve, rejectFn) => { reject = rejectFn; }));
+    const redirect = mock((_path: string) => {});
+    const view = render(<Dashboard client={client} redirect={redirect} />);
+    view.unmount();
+    await act(async () => { reject(new AppApiError("SAMO-AUTH-005", "expired", false, 401)); });
+    expect(redirect.mock.calls).toHaveLength(0);
+  });
+  it("keeps the auth redirect when a calls refresh finishes after Calendar signs out", async () => {
+    const client = autoClient();
+    const redirect = mock((_path: string) => {});
+    const view = render(<Dashboard client={client} redirect={redirect} />);
+    await view.findByText("Planning");
+    let resolve!: (calls: Call[]) => void;
+    client.listCalls = mock(() => new Promise<Call[]>((resolveFn) => { resolve = resolveFn; }));
+    client.listCalendarMeetings = mock(async () => { throw new AppApiError("SAMO-AUTH-005", "expired", false, 401); });
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(redirect.mock.calls).toEqual([["/auth"]]);
+    await act(async () => { resolve(SEED); });
+    expect(redirect.mock.calls).toEqual([["/auth"]]);
+    expect(view.getByText("Redirecting to sign in…")).toBeDefined();
+    expect(view.queryByText("Your calls")).toBeNull();
+  });
+});
 
 describe("Dashboard — fetches and renders the tenant's calls (SPEC §3 Story 1)", () => {
   it("lists calls from GET /calls on load", async () => {
