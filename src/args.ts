@@ -44,4 +44,21 @@ export interface ParsedArgs {
   intro?: boolean;
   intro_text?: string | null;
   context?: boolean;
+  // join --enable-voice: configure Recall automatic_audio_output (silent clip)
+  enable_voice?: boolean;
+  // say
+  say_stop?: boolean;
+  voice?: string | null;
+  lang?: string | null;
+  also_chat?: boolean;
+  tts_provider?: string | null;
+  tts_model?: string | null;
+  tts_speed?: number | null;
+  max_words?: number | null;
+  long_mode?: "ask" | "truncate";
+  topic?: string | null;
+  ask_text?: string | null;
+  priority?: "normal" | "high";
+  cooldown?: number | null;
+  no_barge_in?: boolean;
 }
