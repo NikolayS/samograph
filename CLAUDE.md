@@ -48,6 +48,22 @@ React in your agent session. Use meeting chat only for deliberate call-visible m
 samograph chat "Short message to the meeting"
 ```
 
+To answer out loud, join with `--enable-voice` and use `say` (TTS into the call audio):
+
+```bash
+samograph say "Short spoken answer."
+samograph say "Important: that query drops the index on prod." --priority high
+samograph say --stop
+```
+
+Speaking policy (participate, don't get in the way):
+
+- Speak when addressed. Keep it short (the default limit is 40 words).
+- Speak proactively only for high-importance items: a factual error that carries risk, a safety or security issue, or a direct question nobody answered. Use `--priority high` (it bypasses the 15 s cooldown). Be brief.
+- Everything else goes to chat, or stays in your session.
+- Long content: don't read it out unasked. `say` does this by default: over the limit it posts the full text to chat and only says "I have a longer note... want me to read it out?" (`--topic` names it). If someone says yes in the transcript, run `say` again with `--max-words 0`.
+- Leave barge-in on: a human speaking stops the remaining sentences. `say --stop` stops it manually.
+
 ## Tunnel Health Warnings
 
 `join` refuses to start when the webhook tunnel does not relay requests (e.g. ngrok `ERR_NGROK_727`, the account request limit) — better than joining a call it cannot hear. Mid-call, a watchdog re-checks the tunnel every minute and writes warnings into the transcript stream you are watching:

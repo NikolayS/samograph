@@ -1,3 +1,4 @@
+import { SILENT_MP3_B64 } from "../silentMp3.ts";
 import { writeFileSync } from "node:fs";
 import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -565,6 +566,13 @@ export async function cmdJoin(
       },
     };
   }
+  if (args.enable_voice) {
+    // Required by Recall for POST /bot/{id}/output_audio/ (used by
+    // `samograph say`). The clip is silent, so nothing audible plays on join.
+    payload.automatic_audio_output = {
+      in_call_recording: { data: { kind: "mp3", b64_data: SILENT_MP3_B64 } },
+    };
+  }
   if (args.variant) {
     payload.variant = {
       zoom: args.variant,
@@ -587,6 +595,7 @@ export async function cmdJoin(
     dict: args.dict ?? null,
     variant: args.variant ?? null,
     chime: args.chime ?? null,
+    voice_enabled: args.enable_voice === true,
     meeting_url: args.url,
     transcript_file: transcriptFile,
   };

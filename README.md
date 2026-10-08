@@ -36,6 +36,7 @@ samograph gives an AI agent a small set of meeting tools:
 - `watch` - stream live transcript lines to the agent.
 - `notes` - maintain a structured Google Doc agenda with important points, decisions, and action items.
 - `chat` - send a deliberate message into the meeting chat (plays a soft chime into the call audio so people notice it).
+- `say` - speak into the call (TTS played into the call audio), with brevity limits, a cooldown, and interruption (`say --stop`, barge-in). See Voice.
 - `intro` - post a short self-introduction into the meeting chat (also available as `join --intro`).
 - `presence` - update the bot camera state shown in the meeting.
 - `frame` - export the current call view on demand.
@@ -98,6 +99,7 @@ samograph notes action "Open migration checklist issue" --owner Nik --due 2026-0
 samograph presence thinking "Checking the shared screen"
 samograph frame
 samograph chat "I can see the screen now."
+samograph say "Yes, I can see the dashboard. Replication lag is under one second."
 samograph leave
 ```
 
@@ -109,7 +111,48 @@ Run `watch` immediately after `join` and keep it running for the whole call. It 
 
 `watch` exits automatically when `leave` is run. If there is no active session, it prints `No active session.` to stderr and exits.
 
-Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session.
+Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session. Use `say` to answer out loud; follow the speaking policy in Voice.
+
+## Voice (`say`)
+
+People often miss meeting chat. `say` lets the agent answer out loud: it turns text into speech (MP3) and plays it into the call audio through Recall's `output_audio` endpoint, the same path the chat chime uses.
+
+```bash
+samograph join "https://meet.google.com/..." --name Leo --enable-voice
+samograph say "The migration finished. All checks passed."
+samograph say "Миграция завершена." --lang ru --also-chat
+samograph say --stop
+```
+
+- **Join with `--enable-voice`.** Recall accepts `output_audio` only from a bot created with `automatic_audio_output`. `--enable-voice` sets it to a 0.2 s silent clip, so nothing plays on join. Without it, `say` fails with Recall's 400 and a hint.
+- **TTS providers.** ElevenLabs (`ELEVENLABS_API_KEY`) and OpenAI TTS (`OPENAI_API_KEY`) are the main providers. Local fallbacks need no key: macOS `say`, or `espeak-ng` on Linux, plus `ffmpeg` (libmp3lame) or `lame` to encode MP3. `--provider auto` (the default) uses the first available in that order. If none is available, `say` fails with a clear error. Keys come from the environment only and are never printed; provider error messages are redacted.
+- **Configuration.** Flags win over environment variables: `--provider` / `SAMOGRAPH_TTS_PROVIDER`, `--voice` / `SAMOGRAPH_TTS_VOICE` (ElevenLabs voice ID, OpenAI voice such as `alloy` or `nova`, or a macOS/espeak-ng voice), `--model` / `SAMOGRAPH_TTS_MODEL` (defaults: `eleven_multilingual_v2`, `gpt-4o-mini-tts`), `--speed` / `SAMOGRAPH_TTS_SPEED` (multiplier, default 1). `--lang ru|en|auto` picks the local voice and the language of the ask line (auto: by script). samograph has no config file; put the env vars in your shell profile.
+- **One sentence at a time.** Text is split into sentences (long ones at commas), each synthesized and posted as its own clip. `say` waits for each clip's MP3 duration before it posts the next one, and synthesizes the next sentence while the current one plays. It blocks until done; run it in the background if the agent must keep working.
+- **Recall limits.** The `b64_data` field is limited to 1,835,008 characters (~1.4 MB MP3) per request, and the API allows 300 requests/min per workspace. A sentence is a few KB, far below the limit; a larger chunk is refused with an error. Recall describes `output_audio` as meant for short clips, not for conversational audio; streaming voice through Output Media is a follow-up.
+- **Presence.** While speaking, the presence camera shows `speaking`; afterwards it goes back to `listening` (best-effort; skipped without a presence server).
+- **Audition a voice** without a call: `samograph say "Test" --out /tmp/test.mp3` writes the MP3 and touches neither Recall nor chat.
+
+### Interrupting
+
+- `samograph say --stop` stops a running `say`: the remaining sentences are dropped, and samograph calls Recall's stop endpoint (`DELETE /bot/{id}/output_audio/`).
+- **Barge-in** (on by default; `--no-barge-in` disables it): while speaking, `say` watches the live transcript file. A new spoken line from a human stops the remaining sentences and calls the same Recall stop. Chat lines, `SAMOGRAPH-WARNING` lines, the bot's own name, and utterances that started before playback do not count.
+- **What can and cannot be cancelled.** The sentences that are not yet posted are always cancelled. Recall documents the stop endpoint but does not say whether a clip that is already playing is cut mid-clip. If it is not, the current sentence plays to its end; this is why chunks are single short sentences. Barge-in also depends on transcript latency (usually 1-2 s after the person starts talking).
+
+### Speaking policy: participate, don't get in the way
+
+samograph provides the mechanism; the agent decides when to talk. Recommended policy:
+
+1. **Speak when addressed** (someone asks the bot a question or calls it by name). Keep it short.
+2. **Speak on your own only for important items:** a factual error that carries risk, a safety or security issue, or a direct question that nobody answered. Use `--priority high` for these. Be brief.
+3. **Everything else goes to chat** (`samograph chat`), or stays in the agent session.
+4. **Long content: ask first.** Don't read out long text unasked. This is the default behavior of `say` (see below). If people say yes, run `say` again with `--max-words 0`.
+5. **Stop when someone talks.** Leave barge-in on.
+
+Built-in "don't over-talk" guards:
+
+- **Spoken-length limit** `--max-words N` (env `SAMOGRAPH_SAY_MAX_WORDS`, default 40 words, about 15 s; `0` = no limit). Longer text is not read out. By default (`--ask-first`) the bot posts the full text to chat and says one short line: "I have a longer note on <topic>. I posted it in the chat. Want me to read it out?" (`--topic`, or replace the line with `--ask-text`; a Russian line is used for Russian text). `--truncate` instead speaks the first sentence(s) that fit and posts the full text to chat.
+- **Cooldown** `--cooldown S` (env `SAMOGRAPH_SAY_COOLDOWN`, default 15 s; `0` disables). A normal-priority `say` within the cooldown after the previous one is refused with a message that suggests `chat`. `--priority high` bypasses the cooldown.
+- **One voice at a time.** A second `say` while one is speaking is refused; use `say --stop` first.
 
 ## Dynamic Bot Presence
 
@@ -190,6 +233,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
 - `join --presence-bg MODE` - presence camera background: `sphere` (default), `field`, `static` (cheapest), or `cycle` (alternates field/sphere); fixed at join time.
 - `join --chime NAME` - default chat chime for the session (saved in state), played into the call audio when the bot posts a meeting-chat message. Defaults to `blip`. `chat --chime NAME` overrides it per message. Run `samograph chimes` for the list.
+- `join --enable-voice` - configure Recall `automatic_audio_output` (a silent clip) so `say` can play speech into the call. Recall requires it for `output_audio`.
 - `join --frame-dir DIR` - where on-demand frame files are written.
 - `join --dict postgresfm` - Deepgram keyterm hints from `dictionaries/postgresfm.txt`.
 - `join --transcript-dir DIR` - timestamped transcript file location, default `~/.samograph/`.
@@ -215,6 +259,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `chat <message> [--chime NAME] [--list-chimes]` - send meeting chat. After a successful send it best-effort plays a short, soft chime **into the call's audio** via Recall's `output_audio` endpoint, so participants actually hear that the bot posted; chat still succeeds if audio output fails. It also pings the local presence server so the bot camera animates the same cue (camera-page WebAudio is video-only and inaudible in Recall's headless renderer, so the call-audio path is what people hear). Pick from a library of ~10 soft chimes with `--chime NAME` (default `blip`); an unknown name falls back to the default with a warning. `--chime` overrides the session default set at join; `--list-chimes` prints the names and exits.
 - `intro [--intro-text TEXT] [--context] [--bot-id ID]` - post a short self-introduction (who the bot is and what it can do) into the meeting chat on demand. Reuses `chat` (same bot-id resolution, error handling, and chime). Default text is English and concise; override it with `--intro-text` (e.g. a localized or freshly generated intro the agent composes). `--context` appends the first spoken line the bot has heard so far ("The first thing I heard was — …"), skipped when the transcript is still empty. See also `join --intro`, which posts the default intro automatically once the bot is admitted (English, since no transcript exists yet to detect the call's language).
 - `chimes` - list the available chat chime sounds. The library default is marked `default`; a session default set via `join --chime` is marked `session`. The chimes are short (~0.2-0.4s), low-gain MP3s inlined as base64 (no binary asset files); regenerate them with `scripts/gen-chimes.sh` (needs `ffmpeg` + `libmp3lame`).
+- `say <text> [--voice NAME] [--lang ru|en|auto] [--also-chat] [--provider P] [--model M] [--speed X] [--max-words N] [--ask-first|--truncate] [--topic T] [--ask-text TEXT] [--priority normal|high] [--cooldown S] [--no-barge-in] [--out FILE]` and `say --stop` - speak into the call; see Voice.
 - `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; explicit messages are shown as live Comments activity on the camera page, bare state toggles only switch the state with its default message, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
 - `frames` - list buffered WebSocket frame sources and metadata.
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
@@ -231,6 +276,7 @@ Runtime files live under `~/.samograph/` by default:
 - `state.json` - active bot id, process ids, URLs, paths.
 - `YYYYMMDD_HHMMSS_transcript.txt` - per-call live transcript; `join` never overwrites older transcripts.
 - `frames/latest.png` and `frames/latest.json` - written only by `samograph frame`.
+- `say.lock.json`, `say.stop`, `say.json` - `say` playback lock, stop request, and last-utterance time (for the cooldown).
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.
 
@@ -243,6 +289,14 @@ Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out
 - `SAMOGRAPH_PRESENCE_TOKEN` - read token for the presence page and `/presence.json`.
 - `SAMOGRAPH_PRESENCE_WRITE_TOKEN` - write token required by `POST /presence`.
 - `SAMOGRAPH_PUBLIC_BASE` - public tunnel base URL for the mid-call tunnel watchdog (`join` passes it as `--public-base`; the env var is the fallback for manual `_serve` runs; empty disables the watchdog).
+
+Voice (`say`):
+
+- `ELEVENLABS_API_KEY`, `OPENAI_API_KEY` - TTS provider keys (never logged).
+- `SAMOGRAPH_TTS_PROVIDER` - `auto` (default), `elevenlabs`, `openai`, `macos`, or `espeak`.
+- `SAMOGRAPH_TTS_VOICE`, `SAMOGRAPH_TTS_MODEL`, `SAMOGRAPH_TTS_SPEED` - voice, model, and speed multiplier.
+- `SAMOGRAPH_SAY_LANG` - `ru`, `en`, or `auto` (default).
+- `SAMOGRAPH_SAY_MAX_WORDS` (default 40), `SAMOGRAPH_SAY_COOLDOWN` (default 15 s).
 
 Tunnel binaries:
 

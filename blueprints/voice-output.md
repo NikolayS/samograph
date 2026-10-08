@@ -1,5 +1,7 @@
 # Voice Output — Feature Spec
 
+> **Status (2026-10-08):** Option A shipped as `samograph say` (Recall `output_audio`, sentence chunks, `say --stop`, transcript-based barge-in, brevity limit with ask-first, cooldown; ElevenLabs/OpenAI/macOS `say`/espeak-ng providers). Recall answers to the open questions: there is a stop endpoint (`DELETE /bot/{id}/output_audio/`), and `output_audio` needs `automatic_audio_output` at bot creation (`join --enable-voice`). See README "Voice". Option B (Output Media streaming) remains a follow-up.
+
 Adds spoken TTS voice to the bot in the call, with barge-in interruption support.
 
 ## Goal
