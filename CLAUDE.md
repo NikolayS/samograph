@@ -42,7 +42,7 @@ Start `watch` immediately after `join` with your persistent monitor. Keep it run
 [timestamp] Speaker: utterance
 ```
 
-React in your agent session. Use meeting chat only for deliberate call-visible messages:
+React in your agent session. Read every line. Use meeting chat only for deliberate call-visible messages (and never a blocking terminal prompt; see Hard Rules below):
 
 ```bash
 samograph chat "Short message to the meeting"
@@ -63,6 +63,22 @@ Speaking policy (participate, don't get in the way):
 - Everything else goes to chat, or stays in your session.
 - Long content: don't read it out unasked. `say` does this by default: over the limit it posts the full text to chat and only says "I have a longer note... want me to read it out?" (`--topic` names it). If someone says yes in the transcript, run `say` again with `--max-words 0`.
 - Leave barge-in on: a human speaking stops the remaining sentences. `say --stop` stops it manually.
+
+## Hard Rules While In A Call
+
+On 2026-10-08 an agent following a call asked the human a question through a blocking terminal dialog (Claude Code `AskUserQuestion`). The session blocked and stopped reading the transcript for about 8 minutes; people in the call asked "do you hear us?" and got no answer. Decisions must be made through the call, not through the terminal.
+
+- **NEVER use blocking interactive prompts while in a call:** no `AskUserQuestion`, no plan-approval dialogs, no terminal prompts, nothing that pauses the session. A blocked agent stops reading the transcript and goes deaf.
+- **Ask questions and get decisions through the call:** `samograph ask` (run it in the background), or a short `samograph say` and/or `samograph chat`. Then keep listening.
+- **If nobody answers within the timeout, pick a sensible default and say it in the call.** `samograph ask --default X` does this for you.
+- **Read EVERY transcript line** (no keyword filtering). When addressed, reply briefly by voice (`say`) if voice is enabled, else in chat. Put links and long text in chat.
+
+```bash
+samograph ask "Run the migration on staging first?" --options "yes|no" --default yes --voice
+# -> {"question":"...","options":["yes","no"],"answer":"yes","by":"Alice","source":"voice","timed_out":false,"text":"Yes, staging first","heard":[]}
+```
+
+`ask` posts the question to chat (and speaks it with `--voice`), waits up to `--timeout` seconds (default 60, max 600) for an answer in the live transcript (speech and incoming chat), and prints one JSON line. An option counts by name, number, ordinal ("second", "второй"), letter ("B", "вариант Б"), or yes/no synonym ("да", "ok", "нет"); without `--options` the first human reply is the answer. On timeout it returns `--default` with `"timed_out":true` and announces the choice in the call.
 
 ## Tunnel Health Warnings
 

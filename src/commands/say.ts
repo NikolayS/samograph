@@ -1,20 +1,11 @@
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { samographDir } from "../config.ts";
 import { botIdFromArgsOrState, loadState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
 import { mp3DurationSeconds } from "../mp3.ts";
+import { TranscriptTail } from "../transcriptTail.ts";
 import {
   chunkText,
   DEFAULT_COOLDOWN_SECONDS,
@@ -151,52 +142,29 @@ async function stopRecallAudio(recall: RecallClient, botId: string): Promise<str
   }
 }
 
-const LINE_RE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (.+?): (.*)$/;
-
 /**
  * Watches the live transcript file for a human speaking after `startMs`.
  * Ignores chat lines, samograph warnings/sentinels, the bot's own name, and
  * utterances that started before playback (late transcript delivery).
  */
 export class BargeInWatcher {
-  private offset: number;
-  private partial = "";
+  private tail: TranscriptTail;
   constructor(
-    private path: string,
+    path: string,
     private startMs: number,
     private botName: string | null,
   ) {
-    this.offset = existsSync(path) ? statSync(path).size : 0;
+    this.tail = new TranscriptTail(path);
   }
 
   /** Returns the interrupting speaker's name, or null. */
   poll(): string | null {
-    if (!existsSync(this.path)) return null;
-    const size = statSync(this.path).size;
-    if (size <= this.offset) return null;
-    const fd = openSync(this.path, "r");
-    let text = "";
-    try {
-      const buf = Buffer.alloc(size - this.offset);
-      readSync(fd, buf, 0, buf.length, this.offset);
-      text = buf.toString("utf-8");
-    } finally {
-      closeSync(fd);
-    }
-    this.offset = size;
-    const lines = (this.partial + text).split("\n");
-    this.partial = lines.pop() ?? "";
     const startSec = Math.floor(this.startMs / 1000) * 1000;
-    for (const line of lines) {
-      const m = line.trim().match(LINE_RE);
-      if (!m) continue;
-      const speaker = m[2]!;
-      if (speaker.endsWith(" (chat)")) continue;
-      if (speaker.startsWith("SAMOGRAPH")) continue;
-      if (this.botName && speaker === this.botName) continue;
-      const ts = Date.parse(m[1]!.replace(" ", "T") + "Z");
-      if (Number.isFinite(ts) && ts < startSec) continue;
-      return speaker;
+    for (const e of this.tail.readEntries()) {
+      if (e.source === "chat" || e.system) continue;
+      if (this.botName && e.speaker === this.botName) continue;
+      if (Number.isFinite(e.ts) && e.ts < startSec) continue;
+      return e.speaker;
     }
     return null;
   }
