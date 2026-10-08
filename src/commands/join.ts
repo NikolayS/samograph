@@ -1,4 +1,5 @@
 import { SILENT_MP3_B64 } from "../silentMp3.ts";
+import { formatInCallRules } from "../agentRules.ts";
 import { writeFileSync } from "node:fs";
 import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -649,11 +650,18 @@ export async function cmdJoin(
     `Each line you receive is a new utterance: [timestamp] Speaker: text\n`,
   );
   process.stdout.write(
-    `React to what is said. If someone addresses you or asks a question, respond in chat.\n`,
+    `React to what is said. If someone addresses you or asks a question, respond in the call.\n`,
   );
+  process.stdout.write(formatInCallRules());
   process.stdout.write(
     `To send a message in the meeting chat: samograph chat 'your message'\n`,
   );
+  process.stdout.write(
+    `To ask the call and wait for an answer: samograph ask 'question' --options 'A|B' --default A\n`,
+  );
+  if (args.enable_voice) {
+    process.stdout.write(`To answer out loud:            samograph say 'short answer'\n`);
+  }
   if (presencePageUrl) {
     process.stdout.write(
       `To update bot presence:       samograph presence thinking 'short status'\n`,

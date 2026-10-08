@@ -111,7 +111,25 @@ Run `watch` immediately after `join` and keep it running for the whole call. It 
 
 `watch` exits automatically when `leave` is run. If there is no active session, it prints `No active session.` to stderr and exits.
 
-Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session. Use `say` to answer out loud; follow the speaking policy in Voice.
+Use `chat` only when you intentionally want to write into the meeting chat. Otherwise respond in your agent session. Use `say` to answer out loud; follow the speaking policy in Voice. Never open a blocking terminal prompt while in a call; ask through the call with `ask` (see Hard Rules For Agents In A Call).
+
+## Hard Rules For Agents In A Call
+
+On 2026-10-08 an agent following a call asked the human a question through a blocking terminal dialog (Claude Code `AskUserQuestion`). The session blocked and stopped reading the transcript for about 8 minutes; people in the call asked "do you hear us?" and got no answer. Decisions must be made through the call, not through the terminal.
+
+- **NEVER use blocking interactive prompts while in a call:** no `AskUserQuestion`, no plan-approval dialogs, no terminal prompts, nothing that pauses the session. A blocked agent stops reading the transcript and goes deaf.
+- **Ask questions and get decisions through the call:** `samograph ask` (run it in the background), or a short `samograph say` and/or `samograph chat`. Then keep listening.
+- **If nobody answers within the timeout, pick a sensible default and say it in the call.** `samograph ask --default X` does this for you.
+- **Read EVERY transcript line** (no keyword filtering). When addressed, reply briefly by voice (`say`) if voice is enabled, else in chat. Put links and long text in chat.
+
+### Asking the call (`ask`)
+
+```bash
+samograph ask "Run the migration on staging first?" --options "yes|no" --default yes --voice
+# -> {"question":"...","options":["yes","no"],"answer":"yes","by":"Alice","source":"voice","timed_out":false,"text":"Yes, staging first","heard":[]}
+```
+
+`ask` posts the question to chat (and speaks it with `--voice`), waits up to `--timeout` seconds (default 60, max 600) for an answer in the live transcript (speech and incoming chat), and prints one JSON line. An option counts by name, number, ordinal ("second", "второй"), letter ("B", "вариант Б"), or yes/no synonym ("да", "ok", "нет"); without `--options` the first human reply is the answer. On timeout it returns `--default` with `"timed_out":true` and announces the choice in the call.
 
 ## Voice (`say`)
 
@@ -260,6 +278,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `intro [--intro-text TEXT] [--context] [--bot-id ID]` - post a short self-introduction (who the bot is and what it can do) into the meeting chat on demand. Reuses `chat` (same bot-id resolution, error handling, and chime). Default text is English and concise; override it with `--intro-text` (e.g. a localized or freshly generated intro the agent composes). `--context` appends the first spoken line the bot has heard so far ("The first thing I heard was — …"), skipped when the transcript is still empty. See also `join --intro`, which posts the default intro automatically once the bot is admitted (English, since no transcript exists yet to detect the call's language).
 - `chimes` - list the available chat chime sounds. The library default is marked `default`; a session default set via `join --chime` is marked `session`. The chimes are short (~0.2-0.4s), low-gain MP3s inlined as base64 (no binary asset files); regenerate them with `scripts/gen-chimes.sh` (needs `ffmpeg` + `libmp3lame`).
 - `say <text> [--voice NAME] [--lang ru|en|auto] [--also-chat] [--provider P] [--model M] [--speed X] [--max-words N] [--ask-first|--truncate] [--topic T] [--ask-text TEXT] [--priority normal|high] [--cooldown S] [--no-barge-in] [--out FILE]` and `say --stop` - speak into the call; see Voice.
+- `ask <question> [--options "A|B|C"] [--timeout S] [--default X] [--voice] [--lang ru|en|auto]` - ask the call a question and wait (bounded, default 60 s, max 600 s) for an answer in the live transcript, which includes incoming chat; prints one JSON line `{question, options, answer, by, source, timed_out, text, heard}`. On timeout returns `--default` and announces it in the call. The replacement for blocking terminal prompts during a call; see Hard Rules For Agents In A Call.
 - `presence <listening|thinking|speaking|acting|idle> [message]` - update the bot camera state; explicit messages are shown as live Comments activity on the camera page, bare state toggles only switch the state with its default message, and transcript webhooks add recent "heard" lines automatically without changing the agent-set state.
 - `frames` - list buffered WebSocket frame sources and metadata.
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.

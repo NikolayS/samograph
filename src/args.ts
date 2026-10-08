@@ -61,4 +61,9 @@ export interface ParsedArgs {
   priority?: "normal" | "high";
   cooldown?: number | null;
   no_barge_in?: boolean;
+  // ask
+  ask_options?: string[];
+  ask_timeout?: number;
+  ask_default?: string | null;
+  ask_voice?: boolean;
 }
