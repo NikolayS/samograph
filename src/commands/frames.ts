@@ -45,6 +45,7 @@ export async function cmdFrames(deps: FramesDeps = {}): Promise<void> {
     const at = frame.timestamp?.absolute ?? frame.updated_at ?? "?";
     const bytes = frame.raw_bytes === undefined ? "?" : String(frame.raw_bytes);
     const visual = frame.visual_status ?? "unknown";
-    process.stdout.write(`${source}\t${type}\t${participant}\t${at}\t${bytes} bytes\t${visual}\n`);
+    const age = frame.age_seconds === undefined ? "age ?" : `age ${frame.age_seconds}s`;
+    process.stdout.write(`${source}\t${type}\t${participant}\t${at}\t${bytes} bytes\t${visual}\t${age}\n`);
   }
 }

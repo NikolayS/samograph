@@ -847,8 +847,8 @@ describe("webhook handler", () => {
         data: {
           data: {
             buffer: Buffer.from([2, 2, 2]).toString("base64"),
-            type: "screen_share",
-            participant: { id: "screen", name: "Screen", is_host: false },
+            type: "screenshare",
+            participant: { id: "p1", name: "Alice", is_host: true },
             timestamp: { absolute: "2026-05-30T15:00:01Z" },
           },
         },
@@ -862,9 +862,10 @@ describe("webhook handler", () => {
       const json = (await inventory.json()) as {
         frames: Array<{ source_key: string; type: string; participant: { id: string } }>;
       };
+      // Same participant, two streams: webcam and screenshare must not overwrite each other.
       expect(json.frames.map((f) => f.source_key).sort()).toEqual([
-        "participant:p1",
-        "type:screen_share",
+        "participant:p1:screenshare",
+        "participant:p1:webcam",
       ]);
 
       const screen = await fetch(`http://localhost:${server.port}/frame?source=screen`, {
@@ -873,11 +874,54 @@ describe("webhook handler", () => {
       expect(screen.status).toBe(200);
       expect(new Uint8Array(await screen.arrayBuffer())).toEqual(new Uint8Array([2, 2, 2]));
 
-      const webcam = await fetch(`http://localhost:${server.port}/frame?source=participant:p1`, {
+      const meta = screen.headers.get("x-samograph-frame-metadata");
+      expect(meta).toBeTruthy();
+      const parsed = JSON.parse(Buffer.from(meta!, "base64").toString("utf-8"));
+      expect(parsed.type).toBe("screenshare");
+      expect(typeof parsed.age_seconds).toBe("number");
+
+      // A webcam frame arriving after the screenshare must not hide it.
+      ws.send(JSON.stringify({
+        event: "video_separate_png.data",
+        data: {
+          data: {
+            buffer: Buffer.from([3, 3, 3]).toString("base64"),
+            type: "webcam",
+            participant: { id: "p1", name: "Alice", is_host: true },
+          },
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      for (const src of ["screen", "participant:p1", "participant:p1:screenshare", ""]) {
+        const q = src ? `?source=${src}` : "";
+        const r = await fetch(`http://localhost:${server.port}/frame${q}`, {
+          headers: { "X-Samograph-Frame-Token": "frame-token" },
+        });
+        expect(new Uint8Array(await r.arrayBuffer())).toEqual(new Uint8Array([2, 2, 2]));
+      }
+
+      const webcam = await fetch(`http://localhost:${server.port}/frame?source=participant:p1:webcam`, {
         headers: { "X-Samograph-Frame-Token": "frame-token" },
       });
       expect(webcam.status).toBe(200);
-      expect(new Uint8Array(await webcam.arrayBuffer())).toEqual(new Uint8Array([1, 1, 1]));
+      expect(new Uint8Array(await webcam.arrayBuffer())).toEqual(new Uint8Array([3, 3, 3]));
+
+      // Requested type missing: wait (bounded) for it to arrive.
+      const pending = fetch(`http://localhost:${server.port}/frame?source=participant:p2:screenshare&wait_ms=2000`, {
+        headers: { "X-Samograph-Frame-Token": "frame-token" },
+      });
+      setTimeout(() => ws.send(JSON.stringify({
+        event: "video_separate_png.data",
+        data: { data: { buffer: Buffer.from([4, 4, 4]).toString("base64"), type: "screenshare", participant: { id: "p2" } } },
+      })), 200);
+      const waited = await pending;
+      expect(waited.status).toBe(200);
+      expect(new Uint8Array(await waited.arrayBuffer())).toEqual(new Uint8Array([4, 4, 4]));
+
+      const missing = await fetch(`http://localhost:${server.port}/frame?source=participant:p9&wait_ms=150`, {
+        headers: { "X-Samograph-Frame-Token": "frame-token" },
+      });
+      expect(missing.status).toBe(404);
       ws.close();
     } finally {
       server.stop(true);

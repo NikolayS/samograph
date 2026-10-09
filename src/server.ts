@@ -5,8 +5,9 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { normalizeTranscriptEvent } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
-  frameSourceAliases,
-  normalizeFrameSource,
+  frameAgeSeconds,
+  selectFrame,
+  type StoredFrame,
   type DecodedVideoFrame,
   type VideoFrameMetadata,
 } from "./frameStore.ts";
@@ -371,31 +372,46 @@ export interface ServeOptions {
   currentCallId?: () => string | null;
 }
 
-export interface LatestVideoFrame {
-  raw: Uint8Array | null;
-  metadata: VideoFrameMetadata | null;
+function withAge(frame: StoredFrame, now = Date.now()): VideoFrameMetadata {
+  return { ...frame.metadata, age_seconds: frameAgeSeconds(frame, now) };
 }
 
-function selectedFrame(
-  latest: LatestVideoFrame,
-  bySource: Map<string, LatestVideoFrame>,
-  source?: string | null,
-): LatestVideoFrame {
-  const key = normalizeFrameSource(source);
-  return key ? (bySource.get(key) ?? { raw: null, metadata: null }) : latest;
+const MAX_FRAME_WAIT_MS = 10_000;
+
+function intParam(url: URL, name: string): number {
+  const v = Number(url.searchParams.get(name) ?? "");
+  return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-function frameInventory(bySource: Map<string, LatestVideoFrame>): VideoFrameMetadata[] {
-  const seen = new Set<string>();
-  const frames: VideoFrameMetadata[] = [];
-  for (const frame of bySource.values()) {
-    const sourceKey = frame.metadata?.source_key;
-    if (!frame.metadata || !sourceKey || seen.has(sourceKey)) continue;
-    seen.add(sourceKey);
-    frames.push(frame.metadata);
+/**
+ * Select a frame; if it is missing or older than max_age_ms, wait up to
+ * wait_ms (bounded) for a fresh one so the first request returns the
+ * current view instead of a stale/wrong-type frame.
+ */
+async function selectFrameWaiting(
+  frames: Map<string, StoredFrame>,
+  url: URL,
+): Promise<StoredFrame | null> {
+  const source = url.searchParams.get("source");
+  const maxAge = intParam(url, "max_age_ms");
+  const waitMs = Math.min(intParam(url, "wait_ms"), MAX_FRAME_WAIT_MS);
+  const deadline = Date.now() + waitMs;
+  let frame = selectFrame(frames.values(), source);
+  while (
+    (frame === null || (maxAge > 0 && Date.now() - frame.receivedAt > maxAge)) &&
+    Date.now() < deadline
+  ) {
+    await new Promise((r) => setTimeout(r, 100));
+    frame = selectFrame(frames.values(), source);
   }
-  frames.sort((a, b) => String(a.source_key).localeCompare(String(b.source_key)));
-  return frames;
+  return frame;
+}
+
+function inventory(frames: Map<string, StoredFrame>): VideoFrameMetadata[] {
+  const now = Date.now();
+  return [...frames.values()]
+    .map((f) => withAge(f, now))
+    .sort((a, b) => String(a.source_key).localeCompare(String(b.source_key)));
 }
 
 export function callIdFromStateFile(path?: string | null): string | null {
@@ -421,9 +437,8 @@ export function serve(
     typeof options === "string" || options === null
       ? { webhookToken: options }
       : options;
-  const latestVideoFrame: LatestVideoFrame = { raw: null, metadata: null };
   let presence: PresenceSnapshot = newPresenceSnapshot();
-  const framesBySource = new Map<string, LatestVideoFrame>();
+  const framesBySource = new Map<string, StoredFrame>();
   const frameAuthorized = (req: Request): boolean =>
     tokensEqual(req.headers.get("X-Samograph-Frame-Token"), opts.frameToken);
   // The read token rides in the page URL handed to Recall, so it must never
@@ -489,29 +504,34 @@ export function serve(
         if (!frameAuthorized(req)) {
           return new Response("", { status: 403 });
         }
-        const frame = selectedFrame(latestVideoFrame, framesBySource, url.searchParams.get("source"));
-        if (frame.raw === null) {
+        const frame = await selectFrameWaiting(framesBySource, url);
+        if (frame === null) {
           return new Response("", { status: 404 });
         }
         return new Response(frame.raw, {
-          headers: { "Content-Type": "image/png" },
+          headers: {
+            "Content-Type": "image/png",
+            // Metadata of exactly this frame, so the client need not race a
+            // second /frame.json request that may pick a newer frame.
+            "X-Samograph-Frame-Metadata": Buffer.from(JSON.stringify(withAge(frame))).toString("base64"),
+          },
         });
       }
       if (req.method === "GET" && url.pathname === "/frame.json") {
         if (!frameAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
-        const frame = selectedFrame(latestVideoFrame, framesBySource, url.searchParams.get("source"));
-        if (frame.metadata === null) {
+        const frame = await selectFrameWaiting(framesBySource, url);
+        if (frame === null) {
           return Response.json({ error: "no frame" }, { status: 404 });
         }
-        return Response.json(frame.metadata);
+        return Response.json(withAge(frame));
       }
       if (req.method === "GET" && url.pathname === "/frames.json") {
         if (!frameAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
-        return Response.json({ frames: frameInventory(framesBySource) });
+        return Response.json({ frames: inventory(framesBySource) });
       }
       if (req.method === "GET" && url.pathname === "/presence") {
         if (!presencePageAuthorized(req, url)) {
@@ -613,12 +633,11 @@ export function serve(
           opts.currentCallId?.() ?? null,
         );
         if (decoded === null) return;
-        latestVideoFrame.raw = decoded.raw;
-        latestVideoFrame.metadata = decoded.metadata;
-        const frame = { raw: decoded.raw, metadata: decoded.metadata };
-        for (const alias of frameSourceAliases(decoded.metadata)) {
-          framesBySource.set(alias, frame);
-        }
+        framesBySource.set(decoded.metadata.source_key ?? "latest", {
+          raw: decoded.raw,
+          metadata: decoded.metadata,
+          receivedAt: Date.now(),
+        });
       },
     },
   });
