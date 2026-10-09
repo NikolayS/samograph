@@ -26,12 +26,41 @@ function defaultRun(cmd: string[]): { returncode: number; stderr: Uint8Array } {
   return { returncode: proc.exitCode, stderr: proc.stderr };
 }
 
+/** Ask the server for a frame no older than this... */
+export const FRAME_MAX_AGE_MS = 3000;
+/** ...waiting at most this long for one to arrive. */
+export const FRAME_WAIT_MS = 5000;
+/** Warn when the returned frame is older than this. */
+export const FRAME_STALE_WARN_S = 10;
+
 function withFrameSource(url: string, source?: string | null): string {
   const key = normalizeFrameSource(source);
   if (!key) return url;
   const u = new URL(url);
   u.searchParams.set("source", source!);
   return u.toString();
+}
+
+function withFreshness(url: string): string {
+  const u = new URL(url);
+  u.searchParams.set("max_age_ms", String(FRAME_MAX_AGE_MS));
+  u.searchParams.set("wait_ms", String(FRAME_WAIT_MS));
+  return u.toString();
+}
+
+function reportFrameAge(metadata: VideoFrameMetadata): void {
+  const age = metadata.age_seconds;
+  const src = metadata.source_key ?? "?";
+  const type = metadata.type ?? "?";
+  const who = metadata.participant?.name ?? metadata.participant?.id ?? "?";
+  process.stderr.write(
+    `FRAME_INFO: source=${src} type=${type} participant=${who} age=${age === undefined ? "?" : `${age}s`}\n`,
+  );
+  if (age !== undefined && age > FRAME_STALE_WARN_S) {
+    process.stderr.write(
+      `FRAME_STALE: frame is ${age}s old (> ${FRAME_STALE_WARN_S}s); Recall may have stopped sending this source.\n`,
+    );
+  }
 }
 
 export async function cmdFrame(
@@ -87,7 +116,7 @@ export async function cmdFrame(
     }
     let resp: Response;
     try {
-      resp = await fetchFn(withFrameSource(localFrameUrl, args.frame_source), { headers });
+      resp = await fetchFn(withFreshness(withFrameSource(localFrameUrl, args.frame_source)), { headers });
     } catch (e) {
       process.stderr.write(
         `FRAME_UNAVAILABLE: local WebSocket frame server is not reachable: ${e instanceof Error ? e.message : String(e)}\n`,
@@ -97,8 +126,15 @@ export async function cmdFrame(
     const contentType = resp.headers.get("content-type") ?? "";
     if (resp.status === 200 && contentType.startsWith("image/")) {
       let metadata: VideoFrameMetadata = {};
+      const metaHeader = resp.headers.get("x-samograph-frame-metadata");
       const metadataUrl = state.local_frame_metadata_url;
-      if (typeof metadataUrl === "string" && metadataUrl) {
+      if (metaHeader) {
+        try {
+          metadata = JSON.parse(Buffer.from(metaHeader, "base64").toString("utf-8")) as VideoFrameMetadata;
+        } catch {
+          metadata = {};
+        }
+      } else if (typeof metadataUrl === "string" && metadataUrl) {
         try {
           const metaResp = await fetchFn(withFrameSource(metadataUrl, args.frame_source), { headers });
           if (metaResp.status === 200) {
@@ -108,6 +144,7 @@ export async function cmdFrame(
           metadata = {};
         }
       }
+      reportFrameAge(metadata);
       const raw = new Uint8Array(await resp.arrayBuffer());
       // Always write latest.png (or explicit --out); --archive additionally creates a timestamped copy.
       writeFrameFiles(out, raw, metadata);
@@ -117,7 +154,11 @@ export async function cmdFrame(
       process.stdout.write(resolve(output) + "\n");
       return;
     }
-    process.stderr.write("FRAME_UNAVAILABLE: no WebSocket video frame received yet.\n");
+    process.stderr.write(
+      args.frame_source
+        ? `FRAME_UNAVAILABLE: no WebSocket video frame for source "${args.frame_source}" within ${FRAME_WAIT_MS / 1000}s (see: samograph frames).\n`
+        : "FRAME_UNAVAILABLE: no WebSocket video frame received yet.\n",
+    );
     process.stderr.write("Wait for Recall to deliver video_separate_png.data, then retry.\n");
     throw new ExitError(1);
   }

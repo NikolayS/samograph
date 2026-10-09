@@ -235,11 +235,44 @@ describe("cmdFrame — no RTMP", () => {
     );
 
     expect(calls).toEqual([
-      "http://127.0.0.1:18080/frame?source=screen",
+      "http://127.0.0.1:18080/frame?source=screen&max_age_ms=3000&wait_ms=5000",
       "http://127.0.0.1:18080/frame.json?source=screen",
     ]);
     expect(new Uint8Array(readFileSync(out))).toEqual(new Uint8Array([9, 8, 7]));
     expect(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).toContain("screen_share");
+  });
+
+  it("uses frame metadata header, reports age, and warns when stale", async () => {
+    const out = join(tmp, "stale.png");
+    writeFileSync(sf, JSON.stringify({
+      local_frame_url: "http://127.0.0.1:18080/frame",
+      local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
+      frame_token: "t",
+    }));
+    const meta = { source_key: "participant:300:screenshare", type: "screenshare", age_seconds: 42 };
+    const calls: string[] = [];
+    const errs: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((c: string) => { errs.push(String(c)); return true; }) as typeof process.stderr.write;
+    try {
+      await cmdFrame({ command: "frame", out, frame_source: "screen", bot_id: null }, {
+        fetchFn: async (url) => {
+          calls.push(String(url));
+          return new Response(new Uint8Array([5]), {
+            headers: {
+              "content-type": "image/png",
+              "x-samograph-frame-metadata": Buffer.from(JSON.stringify(meta)).toString("base64"),
+            },
+          });
+        },
+      });
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    expect(calls.length).toBe(1);
+    expect(errs.join("")).toContain("age=42s");
+    expect(errs.join("")).toContain("FRAME_STALE");
+    expect(JSON.parse(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).type).toBe("screenshare");
   });
 
   it("writes metadata as sibling when --out has no extension", async () => {

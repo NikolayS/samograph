@@ -27,6 +27,7 @@ export interface VideoFrameMetadata {
   visual_status?: string;
   archive_file?: string;
   archived_at?: string;
+  age_seconds?: number;
 }
 
 export interface DecodedVideoFrame {
@@ -102,31 +103,98 @@ export function archivedFramePath(frameDir: string, metadata: VideoFrameMetadata
   return join(frameDir, `${callPart}_${timestampPart}_${sourceType}_${participantId}.png`);
 }
 
+/**
+ * Recall's video_separate_png sends `type: "webcam" | "screenshare"`.
+ * Older code (and tests) assumed "screen_share"; accept every spelling and
+ * normalize to "screenshare".
+ */
+export function normalizeFrameType(type?: string | null): string | null {
+  if (!type) return null;
+  const t = type.toLowerCase();
+  if (t === "screenshare" || t === "screen_share" || t === "screen") return "screenshare";
+  return t;
+}
+
+/**
+ * Frames are keyed by (participant, type). A participant who shares a screen
+ * sends BOTH a webcam stream and a screenshare stream with the same
+ * participant id, so keying by participant alone makes them overwrite each
+ * other.
+ */
 export function frameSourceKey(metadata: VideoFrameMetadata): string {
-  const type = metadata.type ?? null;
+  const type = normalizeFrameType(metadata.type);
   const participantId = metadata.participant?.id;
-  if (type === "screen_share") return "type:screen_share";
   if (participantId !== undefined && participantId !== null && String(participantId) !== "") {
-    return `participant:${participantId}`;
+    return `participant:${participantId}:${type ?? "unknown"}`;
   }
   if (type) return `type:${type}`;
   return "latest";
 }
 
-export function frameSourceAliases(metadata: VideoFrameMetadata): string[] {
-  const aliases = new Set<string>([frameSourceKey(metadata)]);
-  if (metadata.type) {
-    aliases.add(`type:${metadata.type}`);
-  }
-  return [...aliases];
-}
-
 export function normalizeFrameSource(source?: string | null): string | null {
   if (!source || source === "latest") return null;
-  if (source === "screen" || source === "screen_share") return "type:screen_share";
-  if (source === "webcam") return "type:webcam";
-  if (source.startsWith("participant:") || source.startsWith("type:")) return source;
-  return `participant:${source}`;
+  const s = source.trim();
+  if (s === "screen" || s === "screen_share" || s === "screenshare") return "type:screenshare";
+  if (s === "webcam") return "type:webcam";
+  if (s.startsWith("type:")) return `type:${normalizeFrameType(s.slice(5))}`;
+  if (s.startsWith("participant:")) {
+    const rest = s.slice("participant:".length);
+    const m = rest.match(/^(.*):(webcam|screenshare|screen_share|screen)$/);
+    return m ? `participant:${m[1]}:${normalizeFrameType(m[2])}` : `participant:${rest}`;
+  }
+  return `participant:${s}`;
+}
+
+export interface StoredFrame {
+  raw: Uint8Array;
+  metadata: VideoFrameMetadata;
+  /** Server receive time, ms since epoch. */
+  receivedAt: number;
+}
+
+/** A screenshare newer than this wins the default (no --source) selection. */
+export const SCREENSHARE_PREFER_MS = 10_000;
+
+function newest(frames: StoredFrame[]): StoredFrame | null {
+  let best: StoredFrame | null = null;
+  for (const f of frames) if (!best || f.receivedAt > best.receivedAt) best = f;
+  return best;
+}
+
+function preferFreshScreenshare(frames: StoredFrame[], now: number): StoredFrame | null {
+  const screen = newest(frames.filter((f) => normalizeFrameType(f.metadata.type) === "screenshare"));
+  if (screen && now - screen.receivedAt <= SCREENSHARE_PREFER_MS) return screen;
+  return newest(frames);
+}
+
+/**
+ * Pick a frame for a requested source.
+ * - none/latest: a fresh screenshare if someone is sharing, else newest frame.
+ * - screen / type:screenshare: newest screenshare frame (any participant).
+ * - participant:<id>:<type>: exact.
+ * - participant:<id>: that participant's fresh screenshare, else newest.
+ */
+export function selectFrame(
+  frames: Iterable<StoredFrame>,
+  source?: string | null,
+  now = Date.now(),
+): StoredFrame | null {
+  const all = [...frames];
+  const key = normalizeFrameSource(source);
+  if (!key) return preferFreshScreenshare(all, now);
+  if (key.startsWith("type:")) {
+    const type = key.slice(5);
+    return newest(all.filter((f) => normalizeFrameType(f.metadata.type) === type));
+  }
+  const exact = all.find((f) => f.metadata.source_key === key);
+  if (exact) return exact;
+  const pid = key.slice("participant:".length);
+  const mine = all.filter((f) => String(f.metadata.participant?.id ?? "") === pid);
+  return mine.length ? preferFreshScreenshare(mine, now) : null;
+}
+
+export function frameAgeSeconds(frame: StoredFrame, now = Date.now()): number {
+  return Math.max(0, Math.round((now - frame.receivedAt) / 100) / 10);
 }
 
 export function frameVisualStatus(raw: Uint8Array): string {

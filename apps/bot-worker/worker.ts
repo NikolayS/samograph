@@ -32,7 +32,8 @@ import {
 } from "../../src/presence.ts";
 import {
   frameSourceKey,
-  normalizeFrameSource,
+  selectFrame,
+  type StoredFrame,
   type VideoFrameMetadata,
 } from "../../src/frameStore.ts";
 
@@ -105,15 +106,13 @@ export function inMemoryPresenceStore(): WorkerPresenceStore {
   };
 }
 
-/** Fresh in-memory frame store keyed by `frameSourceKey`, tracking newest-overall. */
+/** Fresh in-memory frame store keyed by `frameSourceKey`; reads go through `selectFrame`. */
 export function inMemoryFrameStore(): WorkerFrameStore {
-  const bySource = new Map<string, WorkerFrame>();
-  let latest: WorkerFrame | null = null;
+  const bySource = new Map<string, StoredFrame>();
   return {
     put(frame) {
       const key = frame.metadata.source_key ?? frameSourceKey(frame.metadata);
-      bySource.set(key, frame);
-      latest = frame;
+      bySource.set(key, { ...frame, receivedAt: Date.now() });
     },
     inventory() {
       return [...bySource.values()]
@@ -121,9 +120,9 @@ export function inMemoryFrameStore(): WorkerFrameStore {
         .sort((a, b) => String(a.source_key).localeCompare(String(b.source_key)));
     },
     get(source) {
-      const key = normalizeFrameSource(source);
-      if (!key) return latest;
-      return bySource.get(key) ?? null;
+      // Same selection rules as the CLI server: screen aliases, participant
+      // keys, and a fresh screenshare preferred when no source is given.
+      return selectFrame(bySource.values(), source);
     },
   };
 }
