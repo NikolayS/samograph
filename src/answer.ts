@@ -29,7 +29,7 @@ const PICK_WORDS = new Set([
   "за", "берем", "возьмем", "выбираю", "выбираем", "ответ",
 ]);
 
-// Ordinal words (any grammatical form) -> 0-based index. Count anywhere in a reply.
+// Ordinal words (any grammatical form) -> 0-based index, in option context.
 const ORDINALS: [RegExp, number][] = [
   [/^(first|перв(ый|ая|ое|ого|ую|ой|ом|ые))$/, 0],
   [/^(second|втор(ой|ая|ое|ого|ую|ом|ые))$/, 1],
@@ -92,7 +92,7 @@ export type OptionMatch =
  */
 export function matchOption(reply: string, options: string[]): OptionMatch {
   const tokens = normalizeReply(reply);
-  if (!tokens.length || !options.length) return { kind: "none" };
+  if (!tokens.length || !options.length || reply.trimEnd().endsWith("?")) return { kind: "none" };
   const short = tokens.length <= SHORT_REPLY_TOKENS;
   const padded = ` ${tokens.join(" ")} `;
   const hits = new Set<number>();
@@ -113,7 +113,10 @@ export function matchOption(reply: string, options: string[]): OptionMatch {
   normOptions.forEach((o, i) => {
     if (!o) return;
     if (YES.has(o)) {
-      if (tokens.some((t) => YES.has(t))) add(i);
+      // Acknowledgements embedded in deliberation are not authorization.
+      const answerWords = tokens.every((t) => YES.has(t) || NO.has(t) ||
+        ["please", "thanks", "thank", "you", "пожалуйста", "спасибо"].includes(t));
+      if (short && answerWords && tokens.some((t) => YES.has(t))) add(i);
       return;
     }
     if (NO.has(o)) {
@@ -130,8 +133,17 @@ export function matchOption(reply: string, options: string[]): OptionMatch {
   });
 
   tokens.forEach((t, j) => {
-    for (const [re, idx] of ORDINALS) if (re.test(t)) add(idx);
-    if (LAST.test(t)) add(options.length - 1);
+    const prev = tokens[j - 1] ?? "";
+    const next = tokens[j + 1] ?? "";
+    const incidental = ["a", "one"].includes(prev) ||
+      ["time", "раз", "times", "секунду"].includes(next);
+    const ordinalContext = !incidental && (short || OPTION_WORDS.has(prev) ||
+      PICK_WORDS.has(prev) || OPTION_WORDS.has(next) || next === "one" ||
+      next === "or" || prev === "or" || next === "или" || prev === "или");
+    if (ordinalContext) {
+      for (const [re, idx] of ORDINALS) if (re.test(t)) add(idx);
+      if (LAST.test(t)) add(options.length - 1);
+    }
     if (!explicitAt(j)) return;
     if (/^\d+$/.test(t)) add(Number(t) - 1);
     if (t in CARDINALS) add(CARDINALS[t]!);

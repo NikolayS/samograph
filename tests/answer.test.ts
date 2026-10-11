@@ -117,3 +117,18 @@ describe("resolveDefault", () => {
     expect(resolveDefault(null, ["A"])).toBeNull();
   });
 });
+
+
+describe("matchOption: conversational mentions are not decisions", () => {
+  it.each(["just a second", "Just a second, let me check", "last time", "Last time we tried this it broke", "First, can you explain", "первый раз", "one second"])("ignores incidental ordinals: %s", (reply) => {
+    expect(matchOption(reply, ["red", "blue", "green"])).toEqual({ kind: "none" });
+  });
+  it.each(["ok so let me think about it", "ok let me think", "is that correct?", "yes?", "sure let me check"])("ignores tentative acknowledgements: %s", (reply) => {
+    expect(matchOption(reply, ["yes", "no"])).toEqual({ kind: "none" });
+  });
+  it("preserves explicit ordinal picks", () => {
+    expect(pick("I choose second because it is cheaper", ["red", "blue"])).toBe("blue");
+    expect(pick("the second one", ["red", "blue"])).toBe("blue");
+    expect(pick("second please", ["red", "blue"])).toBe("blue");
+  });
+});

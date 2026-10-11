@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { CHAT_LINE_MARKER } from "./transcript.ts";
 
@@ -43,6 +44,7 @@ export function parseTranscriptLine(line: string): TranscriptEntry | null {
 export class TranscriptTail {
   private offset: number;
   private partial = "";
+  private decoder = new StringDecoder("utf8");
 
   constructor(private path: string) {
     this.offset = existsSync(path) ? statSync(path).size : 0;
@@ -56,18 +58,19 @@ export class TranscriptTail {
       // File was truncated/replaced: start over from its beginning.
       this.offset = 0;
       this.partial = "";
+      this.decoder = new StringDecoder("utf8");
     }
     if (size <= this.offset) return [];
     const fd = openSync(this.path, "r");
     let text = "";
     try {
       const buf = Buffer.alloc(size - this.offset);
-      readSync(fd, buf, 0, buf.length, this.offset);
-      text = buf.toString("utf-8");
+      const bytesRead = readSync(fd, buf, 0, buf.length, this.offset);
+      text = this.decoder.write(buf.subarray(0, bytesRead));
+      this.offset += bytesRead;
     } finally {
       closeSync(fd);
     }
-    this.offset = size;
     const lines = (this.partial + text).split("\n");
     this.partial = lines.pop() ?? "";
     return lines;

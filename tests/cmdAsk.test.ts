@@ -1,5 +1,6 @@
+import { TranscriptTail } from "../src/transcriptTail.ts";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cmdAsk, chatQuestion, timeoutAnnouncement } from "../src/commands/ask.ts";
 import type { RecallClient } from "../src/recall.ts";
@@ -274,4 +275,21 @@ describe("join agent rules", () => {
     expect(rules).toContain("pick a sensible default and say it in the call");
     expect(rules).toContain("Read EVERY transcript line");
   });
+});
+
+
+it("TranscriptTail preserves UTF-8 across partial writes", () => {
+  const path = `/tmp/samograph-tail-${crypto.randomUUID()}.txt`;
+  writeFileSync(path, "");
+  const tail = new TranscriptTail(path);
+  const bytes = Buffer.from("[2026-10-08 12:00:04] Денис: второй\n");
+  const split = bytes.indexOf(Buffer.from("второй")) + 1;
+  appendFileSync(path, bytes.subarray(0, split));
+  expect(tail.readEntries()).toEqual([]);
+  appendFileSync(path, bytes.subarray(split));
+  try {
+    expect(tail.readEntries().map((entry) => entry.text)).toEqual(["второй"]);
+  } finally {
+    unlinkSync(path);
+  }
 });
