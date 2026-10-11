@@ -17,6 +17,7 @@ import { cmdServe } from "./commands/serve.ts";
 import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
+import { cmdReact } from "./commands/react.ts";
 import { cmdChimes } from "./commands/chimes.ts";
 import { cmdSay } from "./commands/say.ts";
 import { cmdAsk, DEFAULT_ASK_TIMEOUT_SECONDS, MAX_ASK_TIMEOUT_SECONDS } from "./commands/ask.ts";
@@ -45,6 +46,7 @@ commands:
   intro [--intro-text TEXT] [--context] [--bot-id ID]
   chimes
   presence <listening|thinking|speaking|acting|idle> [message]
+  react <emoji> [--count N]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
   transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]
   dicts
@@ -252,6 +254,17 @@ examples:
   samograph presence thinking "Checking the migration plan"
   samograph presence speaking "Answering in chat"
 `,
+  react: `usage: samograph react <emoji> [--count N]
+
+Burst floating emoji across the bot camera so everyone in the call sees it.
+Visible on every presence background, including the default robot image.
+
+--count N   how many emoji fly per burst (1-24, default 8)
+
+examples:
+  samograph react 🎉
+  samograph react 👍 --count 12
+`,
   notes: `usage: samograph notes <init|point|decision|action|transcript> [options]
 
 Maintain a GitLab-style live meeting doc.
@@ -355,6 +368,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     chat: new Set(["--bot-id", "--chime"]),
     chimes: new Set(),
     presence: new Set(),
+    react: new Set(["--count"]),
     transcript: new Set(["--cursor", "--file", "--limit", "--since"]),
     dicts: new Set(),
     watch: new Set(),
@@ -375,6 +389,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     chat: new Set(["--list-chimes"]),
     chimes: new Set(),
     presence: new Set(),
+    react: new Set(),
     transcript: new Set(["--local", "--json"]),
     dicts: new Set(),
     watch: new Set(),
@@ -703,6 +718,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.message = positionals.slice(1).join(" ") || undefined;
       break;
     }
+    case "react": {
+      if (positionals.length < 1) {
+        throw new ArgError("the following arguments are required: emoji");
+      }
+      result.emoji = positionals[0];
+      if (opts["--count"] !== undefined) {
+        const c = Number(opts["--count"]);
+        if (!Number.isInteger(c) || c < 1) {
+          throw new ArgError(`argument --count: invalid count: '${opts["--count"]}'`);
+        }
+        result.reaction_count = c;
+      }
+      break;
+    }
     case "dicts":
     case "watch":
     case "doctor":
@@ -777,6 +806,8 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdChimes();
     case "presence":
       return cmdPresence(args);
+    case "react":
+      return cmdReact(args);
     case "frame":
       return cmdFrame(args);
     case "frames":

@@ -17,6 +17,7 @@ export interface PresenceSnapshot {
   message: string;
   updated_at: string;
   activities: PresenceActivity[];
+  reaction: PresenceReaction | null;
   chime: PresenceChime | null;
 }
 
@@ -26,6 +27,20 @@ export interface PresenceSnapshot {
 export interface PresenceChime {
   at: string;
 }
+
+// A transient emoji burst shown on the presence camera. It is not persistent
+// state: the page fires the floating-emoji animation once per distinct `at`
+// timestamp, so an unchanged reaction sitting in the snapshot replays nothing.
+export interface PresenceReaction {
+  emoji: string;
+  count: number;
+  at: string;
+}
+
+// Cap how many emoji fly per burst: enough to feel celebratory, bounded so a
+// caller cannot ask the page to spawn thousands of animated nodes.
+export const REACTION_MAX_COUNT = 24;
+const REACTION_DEFAULT_COUNT = 8;
 
 export type PresenceActivityKind = "heard" | "comment";
 
@@ -77,7 +92,44 @@ export function newPresenceSnapshot(
     message,
     updated_at: new Date().toISOString(),
     activities,
+    reaction: null,
     chime: null,
+  };
+}
+
+// Accept a short run of emoji (or any non-whitespace glyphs) and reject empty
+// or control-only input. Count graphemes so ZWJ, flag and skin-tone sequences
+// remain intact; separately bound input size to limit combining-mark abuse.
+const REACTION_MAX_GLYPHS = 6;
+
+export function sanitizeReactionEmoji(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 256) return null;
+  const cleaned = value.replace(/[\s\x00-\x1f\x7f]+/gu, "");
+  if (!cleaned) return null;
+  return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(cleaned), (s) => s.segment)
+    .slice(0, REACTION_MAX_GLYPHS).join("");
+}
+
+export function sanitizeReactionCount(value: unknown): number {
+  // Treat absent/blank input as "not provided" so it takes the default rather
+  // than coercing (e.g. Number(null) === 0) into the clamped minimum.
+  if (value === null || value === undefined || value === "") return REACTION_DEFAULT_COUNT;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return REACTION_DEFAULT_COUNT;
+  return Math.max(1, Math.min(REACTION_MAX_COUNT, Math.floor(n)));
+}
+
+// Stamp a transient reaction onto the snapshot. Bumping updated_at makes the
+// page's adaptive poller treat it as fresh activity and pick it up quickly.
+export function withReaction(
+  snapshot: PresenceSnapshot,
+  emoji: string,
+  count: number,
+): PresenceSnapshot {
+  return {
+    ...snapshot,
+    updated_at: new Date().toISOString(),
+    reaction: { emoji, count, at: new Date().toISOString() },
   };
 }
 
@@ -424,12 +476,44 @@ export function presencePageHtml(): string {
         order: -1;
       }
     }
+    .reactions {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483646;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .reaction-emoji {
+      position: absolute;
+      bottom: -12vh;
+      /* font-size drives the text fallback; images size off width below. */
+      font-size: clamp(40px, 7vw, 96px);
+      line-height: 1;
+      will-change: transform, opacity;
+      filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45));
+      animation: reaction-float var(--dur, 2.6s) cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+    }
+    img.reaction-emoji {
+      width: clamp(40px, 7vw, 96px);
+      height: auto;
+    }
+    @keyframes reaction-float {
+      0% { transform: translate3d(0, 0, 0) scale(0.4) rotate(0deg); opacity: 0; }
+      12% { opacity: 1; }
+      85% { opacity: 1; }
+      100% {
+        transform: translate3d(var(--drift, 0px), -116vh, 0) scale(1.15) rotate(var(--spin, 0deg));
+        opacity: 0;
+      }
+    }
     @media (prefers-reduced-motion: reduce) {
       .plasma-canvas,
       .tile::after,
       .item {
         animation: none;
       }
+      /* Keep reactions readable but skip the long upward flight. */
+      .reaction-emoji { animation-duration: 0.9s; }
     }
   </style>
 </head>
@@ -461,6 +545,7 @@ export function presencePageHtml(): string {
       </footer>
     </section>
   </main>
+  <div class="reactions" id="reactions" aria-hidden="true"></div>
   <script>
     const params = new URLSearchParams(location.search);
     const token = params.get("token") || "";
@@ -634,6 +719,87 @@ export function presencePageHtml(): string {
       resize();
       requestAnimationFrame(draw);
     }
+    // Fire the floating-emoji burst once per distinct reaction timestamp.
+    // Each glyph gets randomized launch column, horizontal drift, spin, and
+    // duration so a burst reads as confetti rather than a rigid column.
+    let lastReactionAt = "";
+    let reactionSnapshotSeen = false;
+    const reactionLayer = document.getElementById("reactions");
+    // The headless browser that renders this page (Recall's compositor) has no
+    // color-emoji font, so a bare emoji glyph shows as a tofu box. Render each
+    // reaction as a Twemoji SVG instead; fall back to the raw glyph only if the
+    // image fails to load. Mirrors twemoji's own codepoint rules: strip the
+    // FE0F variation selector unless the sequence is a ZWJ (U+200D) emoji.
+    const TWEMOJI_BASE = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/";
+    function emojiToCodepoints(str) {
+      const hasZwj = str.indexOf("\\u200d") >= 0;
+      const normalized = hasZwj ? str : str.replace(/\\uFE0F/g, "");
+      return [...normalized].map((ch) => ch.codePointAt(0).toString(16)).join("-");
+    }
+    function twemojiUrl(emoji) {
+      const id = emojiToCodepoints(emoji);
+      return id ? TWEMOJI_BASE + id + ".svg" : "";
+    }
+    function spawnReaction(reaction) {
+      if (!reactionLayer) return;
+      // Seed from the first successful snapshot, even when it has no reaction.
+      // Do not compare clocks across the local server and Recall renderer.
+      if (!reactionSnapshotSeen) {
+        reactionSnapshotSeen = true;
+        lastReactionAt = String(reaction?.at || "");
+        return;
+      }
+      if (!reaction) return;
+      const emoji = String(reaction.emoji || "").trim();
+      if (!emoji) return;
+      const at = String(reaction.at || "");
+      if (!at || at === lastReactionAt) return;
+      lastReactionAt = at;
+      const count = Math.max(1, Math.min(24, Number(reaction.count) || 1));
+      // A single reaction emoji field may hold several glyphs; cycle through
+      // them so a multi-emoji burst mixes all of them.
+      const glyphs = typeof Intl.Segmenter === "function"
+        ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(emoji), (s) => s.segment).filter((g) => g.trim())
+        : [emoji];
+      for (let i = 0; i < count; i++) {
+        const glyph = glyphs[i % glyphs.length] || emoji;
+        const url = twemojiUrl(glyph);
+        let node;
+        if (url) {
+          node = document.createElement("img");
+          node.src = url;
+          node.alt = glyph;
+          // If the CDN is unreachable, swap in the raw glyph so something shows.
+          node.addEventListener("error", () => {
+            const span = document.createElement("span");
+            span.className = node.className;
+            span.style.cssText = node.style.cssText;
+            span.textContent = glyph;
+            node.replaceWith(span);
+            span.addEventListener("animationend", () => span.remove());
+          });
+        } else {
+          node = document.createElement("span");
+          node.textContent = glyph;
+        }
+        node.className = "reaction-emoji";
+        const startPct = 4 + Math.random() * 92;
+        const drift = Math.round((Math.random() - 0.5) * 220);
+        const spin = Math.round((Math.random() - 0.5) * 120);
+        const dur = (2.1 + Math.random() * 1.4).toFixed(2);
+        node.style.left = startPct + "vw";
+        node.style.setProperty("--drift", drift + "px");
+        node.style.setProperty("--spin", spin + "deg");
+        node.style.setProperty("--dur", dur + "s");
+        node.style.animationDelay = (Math.random() * 0.35).toFixed(2) + "s";
+        node.addEventListener("animationend", () => node.remove());
+        reactionLayer.append(node);
+      }
+      // Belt-and-suspenders cleanup in case animationend is missed.
+      setTimeout(() => {
+        if (reactionLayer.childElementCount > 240) reactionLayer.replaceChildren();
+      }, 6000);
+    }
     // Soft "blip" audio cue, synthesized with WebAudio (no asset files). Played
     // once per new chime timestamp — e.g. when the bot posts a meeting-chat
     // message — so people notice it without watching the camera. Recall renders
@@ -752,6 +918,7 @@ export function presencePageHtml(): string {
           lastSignature = signature;
           lastActivityAt = Date.now();
         }
+        spawnReaction(data.reaction);
         const state = String(data.state || "listening");
         document.getElementById("live").textContent = state;
         const buckets = { heard: [], comment: [] };

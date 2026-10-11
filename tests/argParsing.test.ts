@@ -529,3 +529,16 @@ describe("argParsing", () => {
     expect(args.bot_id).toBeNull();
   });
 });
+
+
+describe("react arguments", () => {
+  it("requires an emoji", () => expect(() => parseArgs(["react"])).toThrow());
+  for (const count of ["0", "1.5", "abc"]) {
+    it(`rejects count ${count}`, () => expect(() => parseArgs(["react", "🎉", "--count", count])).toThrow());
+  }
+  it("parses count and compound emoji", () => {
+    const args = parseArgs(["react", "👍🏽", "--count", "12"]);
+    expect(args.emoji).toBe("👍🏽");
+    expect(args.reaction_count).toBe(12);
+  });
+});
