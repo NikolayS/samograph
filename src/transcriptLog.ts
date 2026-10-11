@@ -62,7 +62,12 @@ export class TranscriptLog {
   private sync(): void {
     if (!existsSync(this.path) || statSync(this.path).size === this.offset) return;
     const data = readFileSync(this.path);
-    if (data.length < this.offset) throw new Error("transcript file was truncated while serving");
+    if (data.length < this.offset) {
+      this.entries = [];
+      this.offset = 0;
+      this.pending = Buffer.alloc(0);
+      this.endedSeq = undefined;
+    }
     // Revisit the incomplete tail, never decode a split UTF-8 character early.
     let start = this.offset - this.pending.length;
     for (let end = data.indexOf(10, start); end !== -1; end = data.indexOf(10, start)) {
@@ -79,7 +84,7 @@ export class TranscriptLog {
   }
 
   /** Append one line to the file and the log, then wake every waiter. */
-  append(line: string): TranscriptLogEntry {
+  append(line: string): void {
     this.sync();
     if (this.pending.length) {
       // append() receives a new logical line, not continuation bytes. Preserve
@@ -88,12 +93,12 @@ export class TranscriptLog {
       this.sync();
     }
     appendFileSync(this.path, line + "\n");
-    this.offset += Buffer.byteLength(line + "\n");
-    const entry = this.record(line);
+    // Another process may append between sync() and our write. Read the
+    // actual byte stream back rather than inventing offsets/order.
+    this.sync();
     const ws = [...this.waiters];
     this.waiters.clear();
     for (const w of ws) w();
-    return entry;
   }
 
   private record(line: string): TranscriptLogEntry {
@@ -153,11 +158,18 @@ export class TranscriptLog {
   }
 
   /** Call onEntry for every entry after `since`, now and as they arrive. Returns an unsubscribe. */
-  subscribe(onEntry: (e: TranscriptLogEntry) => void, since: number): () => void {
+  subscribe(
+    onEntry: (e: TranscriptLogEntry) => void,
+    since: number,
+    onError: (error: unknown) => void = (error) => { throw error; },
+  ): () => void {
+    this.sync();
     let cursor = since > this.entries.length ? 0 : since;
     let active = true;
     const pump = () => {
       if (!active) return;
+      this.sync();
+      if (cursor > this.entries.length) cursor = 0;
       while (cursor < this.entries.length) {
         onEntry(this.entries[cursor]!);
         cursor += 1;
@@ -165,9 +177,14 @@ export class TranscriptLog {
       this.waiters.add(pump);
     };
     pump();
-    return () => {
+    const timer = setInterval(() => {
+      try { pump(); } catch (error) { stop(); onError(error); }
+    }, 100);
+    const stop = () => {
       active = false;
+      clearInterval(timer);
       this.waiters.delete(pump);
     };
+    return stop;
   }
 }

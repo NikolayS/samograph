@@ -583,7 +583,10 @@ export function serve(
               send(": samograph transcript stream\n\n");
               unsubscribe = transcriptLog.subscribe((e) => {
                 send(`id: ${e.seq}\ndata: ${JSON.stringify({ ...wireEntry(e), offset: e.offset })}\n\n`);
-              }, since);
+              }, since, (error) => {
+                if (keepalive) clearInterval(keepalive);
+                controller.error(error);
+              });
               keepalive = setInterval(() => send(": keepalive\n\n"), TRANSCRIPT_SSE_KEEPALIVE_MS);
             },
             cancel() {

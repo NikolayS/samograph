@@ -193,7 +193,7 @@ Pass it back as --since on the next call. Start with --since 0. Treat the
 cursor as opaque; it is never a timestamp (lines can arrive slightly out of
 timestamp order). Two kinds:
   s:<seq>:<offset>  from the active call's local server (join's callback
-                    server): line number in its in-memory log. --wait returns
+                    server): durable file line number, preserved across server restarts. --wait returns
                     the moment a line arrives. If the server is gone (after
                     leave), the CLI falls back to the file at <offset>.
   b:<offset>        byte offset in the append-only transcript file. Used with

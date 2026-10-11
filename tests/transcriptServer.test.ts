@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { isDirectLocalRequest, serve } from "../src/server.ts";
@@ -126,6 +127,38 @@ describe("GET /transcript long-poll", () => {
     expect(completed.since(1).lines.map(l => l.line)).toEqual(["Боб: 🌍", "watchdog warning"]);
     expect(completed.since(3).offset).toBe(readFileSync(tf).length);
     expect(new TranscriptLog(tf).since(0)).toEqual(completed.since(0));
+  });
+
+  it("continues persisting new speech after detected file truncation", () => {
+    log.append("old first");
+    log.append("old second");
+    writeFileSync(tf, "");
+    log.append("new");
+    const page = log.since(2);
+    expect(page.reset).toBe(true);
+    expect(page.lines.map(l => l.line)).toEqual(["new"]);
+    expect(page.offset).toBe(4);
+  });
+
+  it("resyncs durable bytes when another writer races with append", () => {
+    const original = fs.appendFileSync;
+    const append = spyOn(fs, "appendFileSync").mockImplementation((path, data, options) => {
+      original(path, "racing external\n");
+      original(path, data, options);
+    });
+    try { log.append("own line"); } finally { append.mockRestore(); }
+    expect(log.since(0).lines.map(l => l.line)).toEqual(["racing external", "own line"]);
+    expect(log.since(2).offset).toBe(readFileSync(tf).length);
+  });
+
+  it("streams external writes to existing subscriptions", async () => {
+    const lines: string[] = [];
+    const stop = log.subscribe(e => lines.push(e.line), 0);
+    try {
+      appendFileSync(tf, "external stream line\n");
+      await new Promise(resolve => setTimeout(resolve, 250));
+      expect(lines).toEqual(["external stream line"]);
+    } finally { stop(); }
   });
 
   it("includes external writes before a later log append with accurate cursors", () => {
