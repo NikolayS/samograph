@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   decodeVideoSeparatePng,
+  frameAgeSeconds,
   frameSourceKey,
   normalizeFrameSource,
   selectFrame,
@@ -69,4 +70,14 @@ describe("selectFrame", () => {
     expect(selectFrame([cam], "screen", now)).toBeNull();
     expect(selectFrame(all, "participant:999", now)).toBeNull();
   });
+});
+
+// Pin the window used by the CLI default freshness request.
+it("selects a 3–10s-old static screen and rounds frame age", () => {
+  const screen = f("p", "screenshare", 4000, 2);
+  const webcam = f("p", "webcam", 9900, 1);
+  expect(selectFrame([screen, webcam], null, 10000)).toBe(screen);
+  expect(frameAgeSeconds(screen, 10049)).toBe(6);
+  expect(frameAgeSeconds(screen, 10050)).toBe(6.1);
+  expect(frameAgeSeconds(screen, 3999)).toBe(0);
 });

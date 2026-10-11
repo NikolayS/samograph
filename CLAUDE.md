@@ -112,7 +112,7 @@ samograph frame --archive
 
 `samograph frames` lists one row per (participant, stream) with its age, e.g. `participant:300:webcam` and `participant:300:screenshare` (a sharer has both). `frame --source` accepts those keys, `participant:300` (that person's fresh screenshare, else webcam), and aliases `screen` (newest screenshare from anyone) and `webcam`.
 
-When someone shares their screen, use `samograph frame --source screen` (plain `samograph frame` also prefers a screenshare received in the last 10s). `frame` waits up to 5s for a frame newer than 3s, prints `FRAME_INFO: ... age=Ns` to stderr, and `FRAME_STALE` if the frame is older than 10s.
+When someone shares their screen, use `samograph frame --source screen` (plain `samograph frame` also prefers a screenshare received in the last 10s). `frame` waits up to 5s for a frame no older than 10s by default (3s with an explicit source), prints `FRAME_INFO: ... age=Ns` to stderr, and `FRAME_STALE` if the frame is older than 10s.
 
 `--archive` creates a timestamped filename with bot id, source type, and participant id.
 

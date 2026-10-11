@@ -5,6 +5,7 @@ import { loadState, botIdFromArgsOrState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
 import {
+  SCREENSHARE_PREFER_MS,
   archiveExistingFrame,
   archiveFrameBytes,
   frameMetadataPath,
@@ -43,16 +44,21 @@ function withFrameSource(url: string, source?: string | null): string {
 
 function withFreshness(url: string): string {
   const u = new URL(url);
-  u.searchParams.set("max_age_ms", String(FRAME_MAX_AGE_MS));
+  // Default selection prefers screenshares up to this age; do not wait for
+  // a newer frame while the selected static screenshare is still preferred.
+  const maxAge = normalizeFrameSource(u.searchParams.get("source"))
+    ? FRAME_MAX_AGE_MS : SCREENSHARE_PREFER_MS;
+  u.searchParams.set("max_age_ms", String(maxAge));
   u.searchParams.set("wait_ms", String(FRAME_WAIT_MS));
   return u.toString();
 }
 
 function reportFrameAge(metadata: VideoFrameMetadata): void {
   const age = metadata.age_seconds;
-  const src = metadata.source_key ?? "?";
-  const type = metadata.type ?? "?";
-  const who = metadata.participant?.name ?? metadata.participant?.id ?? "?";
+  const safe = (value: unknown) => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  const src = safe(metadata.source_key ?? "?");
+  const type = safe(metadata.type ?? "?");
+  const who = safe(metadata.participant?.name ?? metadata.participant?.id ?? "?");
   process.stderr.write(
     `FRAME_INFO: source=${src} type=${type} participant=${who} age=${age === undefined ? "?" : `${age}s`}\n`,
   );

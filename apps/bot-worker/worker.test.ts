@@ -201,3 +201,15 @@ describe("bot-worker command/act surface (§5.8 / §6.2 #9)", () => {
     expect(recall.seen.leave).toBe(1);
   });
 });
+
+it("worker keeps same-participant webcam and screen independently", () => {
+  const store = inMemoryFrameStore();
+  const screen = { raw: new Uint8Array([2]), metadata: { type: "screenshare", source_key: "participant:p:screenshare", participant: { id: "p" } } };
+  const webcam = { raw: new Uint8Array([1]), metadata: { type: "webcam", source_key: "participant:p:webcam", participant: { id: "p" } } };
+  store.put(screen);
+  store.put(webcam);
+  expect(store.get("screen")?.raw).toEqual(screen.raw);
+  expect(store.get(null)?.raw).toEqual(screen.raw);
+  expect(store.get("participant:p:webcam")?.raw).toEqual(webcam.raw);
+  expect(store.inventory().map((f) => f.source_key)).toEqual(["participant:p:screenshare", "participant:p:webcam"]);
+});

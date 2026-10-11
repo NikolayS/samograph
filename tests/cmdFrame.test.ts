@@ -197,6 +197,7 @@ describe("cmdFrame — no RTMP", () => {
 
     expect(new Uint8Array(readFileSync(out))).toEqual(new Uint8Array([1, 2, 3]));
     expect(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).toContain("bot-123");
+    expect(new URL(calls[0]!.url).searchParams.get("max_age_ms")).toBe("10000");
     expect(calls[0]?.headers).toEqual({ "X-Samograph-Frame-Token": "secret-token" });
     expect(calls[1]?.headers).toEqual({ "X-Samograph-Frame-Token": "secret-token" });
     expect(existsSync(join(tmp, "latest.png"))).toBe(false);
@@ -249,7 +250,7 @@ describe("cmdFrame — no RTMP", () => {
       local_frame_metadata_url: "http://127.0.0.1:18080/frame.json",
       frame_token: "t",
     }));
-    const meta = { source_key: "participant:300:screenshare", type: "screenshare", age_seconds: 42 };
+    const meta = { source_key: "participant:300:screenshare", type: "screenshare", participant: { name: "Nik\x1b[2J\nFORGED\r\x7f" }, age_seconds: 42 };
     const calls: string[] = [];
     const errs: string[] = [];
     const origWrite = process.stderr.write.bind(process.stderr);
@@ -270,6 +271,8 @@ describe("cmdFrame — no RTMP", () => {
       process.stderr.write = origWrite;
     }
     expect(calls.length).toBe(1);
+    expect(errs.join("")).toContain("participant=Nik[2JFORGED age=42s");
+    expect(errs.join("")).not.toContain("\x1b");
     expect(errs.join("")).toContain("age=42s");
     expect(errs.join("")).toContain("FRAME_STALE");
     expect(JSON.parse(readFileSync(out.replace(/\.png$/, ".json"), "utf-8")).type).toBe("screenshare");
