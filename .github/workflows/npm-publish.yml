@@ -53,6 +53,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
       - name: Pin release commit
         if: steps.deploy.outputs.skip != 'true'
         id: resolve

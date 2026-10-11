@@ -51,6 +51,7 @@ describe("npm release workflow wiring", () => {
     for (const job of Object.values(workflow.jobs) as any[]) {
       for (const step of job.steps) {
         if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
+        if (step.uses?.startsWith("actions/checkout@")) expect(step.with["persist-credentials"]).toBe(false);
         if (step.uses?.startsWith("oven-sh/setup-bun@")) expect(step.with["bun-version"]).toBe("1.3.8");
       }
     }
