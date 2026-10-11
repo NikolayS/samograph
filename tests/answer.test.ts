@@ -96,6 +96,7 @@ describe("matchOption: yes/no", () => {
     expect(matchOption("not option 1", ["yes", "no"])).toEqual({ kind: "none" });
     expect(matchOption("не второй", ["A", "B"])).toEqual({ kind: "none" });
     expect(matchOption("not option B", ["A", "B"])).toEqual({ kind: "none" });
+    expect(matchOption("no option B", ["A", "B"])).toEqual({ kind: "none" });
     expect(matchOption("do not deploy", ["deploy", "wait"])).toEqual({ kind: "none" });
   });
   it("'не знаю' is not a no", () => {

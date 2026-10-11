@@ -11,7 +11,7 @@ const NO = new Set(["no", "nope", "nah", "negative", "нет", "неа"]);
 
 // This is a conservative option matcher, not a natural-language polarity
 // parser. A negated or tentative mention must not authorize a decision.
-const NEGATION = new Set(["not", "never", "neither", "nor", "without", "не", "ни", "нельзя"]);
+const NEGATION = new Set(["no", "not", "never", "neither", "nor", "without", "не", "ни", "нельзя"]);
 const UNCERTAINTY = new Set([
   "maybe", "perhaps", "probably", "possibly", "unsure", "uncertain", "might",
   "возможно", "наверное", "наверно", "может", "пожалуй",
