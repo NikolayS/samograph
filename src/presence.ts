@@ -98,16 +98,16 @@ export function newPresenceSnapshot(
 }
 
 // Accept a short run of emoji (or any non-whitespace glyphs) and reject empty
-// or control-only input. We count Unicode code points, not UTF-16 units, so a
-// single 😀 (two surrogate halves) reads as one glyph and a 6-emoji limit is
-// generous without letting a caller paste an essay onto the camera.
+// or control-only input. Count graphemes so ZWJ, flag and skin-tone sequences
+// remain intact; separately bound input size to limit combining-mark abuse.
 const REACTION_MAX_GLYPHS = 6;
 
 export function sanitizeReactionEmoji(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+  if (typeof value !== "string" || value.length > 256) return null;
   const cleaned = value.replace(/[\s\x00-\x1f\x7f]+/gu, "");
   if (!cleaned) return null;
-  return [...cleaned].slice(0, REACTION_MAX_GLYPHS).join("");
+  return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(cleaned), (s) => s.segment)
+    .slice(0, REACTION_MAX_GLYPHS).join("");
 }
 
 export function sanitizeReactionCount(value: unknown): number {
@@ -746,10 +746,14 @@ export function presencePageHtml(): string {
       const at = String(reaction.at || "");
       if (!at || at === lastReactionAt) return;
       lastReactionAt = at;
+      const age = Date.now() - Date.parse(at);
+      if (!Number.isFinite(age) || age > 10000 || age < -10000) return;
       const count = Math.max(1, Math.min(24, Number(reaction.count) || 1));
       // A single reaction emoji field may hold several glyphs; cycle through
       // them so a multi-emoji burst mixes all of them.
-      const glyphs = [...emoji].filter((g) => g.trim());
+      const glyphs = typeof Intl.Segmenter === "function"
+        ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(emoji), (s) => s.segment).filter((g) => g.trim())
+        : [emoji];
       for (let i = 0; i < count; i++) {
         const glyph = glyphs[i % glyphs.length] || emoji;
         const url = twemojiUrl(glyph);

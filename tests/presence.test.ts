@@ -324,3 +324,43 @@ describe("presencePageHtml polling", () => {
     expect(pollAt).toBeGreaterThan(elseClose);
   });
 });
+
+
+describe("reaction graphemes and page rendering", () => {
+  it("caps whole graphemes without cutting compound emoji", () => {
+    expect(sanitizeReactionEmoji("👨‍👩‍👧👍🏽🇺🇸1️⃣❤️🎉🤖")).toBe("👨‍👩‍👧👍🏽🇺🇸1️⃣❤️🎉");
+  });
+
+  it("rejects oversized combining sequences without truncating a glyph", () => {
+    expect(sanitizeReactionEmoji("a" + "\u0301".repeat(300))).toBeNull();
+  });
+
+  function renderer() {
+    const nodes: Array<{ src?: string; alt?: string }> = [];
+    const document = {
+      getElementById: () => ({ append: (node: object) => nodes.push(node), childElementCount: 0 }),
+      createElement: () => ({ style: { setProperty() {} }, addEventListener() {} }),
+    };
+    const html = presencePageHtml();
+    const code = html.slice(html.indexOf('let lastReactionAt = "";'), html.indexOf('// Soft "blip"'));
+    const spawn = new Function("document", "setTimeout", code + "\nreturn spawnReaction;")(document, () => {});
+    return { nodes, spawn };
+  }
+
+  it("emitted page keeps compound emoji together in image URLs", () => {
+    const { nodes, spawn } = renderer();
+    spawn({ emoji: "👨‍👩‍👧👍🏽🇺🇸1️⃣❤️", count: 5, at: new Date().toISOString() });
+    expect(nodes.map((n) => n.alt)).toEqual(["👨‍👩‍👧", "👍🏽", "🇺🇸", "1️⃣", "❤️"]);
+    expect(nodes.map((n) => n.src?.split("/").pop())).toEqual([
+      "1f468-200d-1f469-200d-1f467.svg", "1f44d-1f3fd.svg", "1f1fa-1f1f8.svg", "31-20e3.svg", "2764.svg",
+    ]);
+  });
+
+  it("does not replay an old reaction after page reload", () => {
+    const { nodes, spawn } = renderer();
+    spawn({ emoji: "🎉", count: 5, at: new Date(Date.now() - 60_000).toISOString() });
+    expect(nodes).toHaveLength(0);
+    spawn({ emoji: "🎉", count: 5, at: new Date().toISOString() });
+    expect(nodes).toHaveLength(5);
+  });
+});
