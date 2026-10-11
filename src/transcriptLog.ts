@@ -1,9 +1,9 @@
-import { appendFileSync, existsSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 /**
  * One transcript line as served by `GET /transcript` on the local callback
- * server. `seq` is 1-based and strictly increasing for the life of the
- * `_serve` process (one call).
+ * server. `seq` is 1-based and strictly increasing within the
+ * transcript file (one call), including after a server restart.
  */
 export interface TranscriptLogEntry {
   seq: number;
@@ -40,22 +40,33 @@ export interface TranscriptLogPage {
 }
 
 /**
- * In-memory, monotonically numbered log of the lines this server process
- * appends to the transcript file. It is the low-latency path for agents: a
+ * In-memory, monotonically numbered log of the complete lines in the transcript
+ * file. It is the low-latency path for agents: a
  * long-poll waiter is woken the moment a line is appended, with no file
  * polling. The file stays the source of truth; this log mirrors it.
  */
 export class TranscriptLog {
   private entries: TranscriptLogEntry[] = [];
   private waiters = new Set<() => void>();
-  private readonly initialOffset: number;
-  private offset: number;
+  private offset = 0;
+  private pending = Buffer.alloc(0);
 
   constructor(readonly path: string) {
-    // The file normally starts empty (join creates it), but tolerate a
-    // pre-existing file: offsets continue from its current size.
-    this.initialOffset = existsSync(path) ? statSync(path).size : 0;
-    this.offset = this.initialOffset;
+    // Rebuild sequence numbers and byte boundaries from durable history so
+    // a cursor issued before restart still refers to the same line.
+    if (existsSync(path)) {
+      const data = readFileSync(path);
+      let start = 0;
+      for (let end = data.indexOf(10); end !== -1; end = data.indexOf(10, start)) {
+        this.offset = end + 1;
+        this.record(data.subarray(start, end).toString("utf-8"));
+        start = end + 1;
+      }
+      // An interrupted write is not a complete line: don't move a caller's
+      // fallback cursor past it. The next append will finish this line.
+      this.pending = Buffer.from(data.subarray(start));
+      this.offset = data.length;
+    }
   }
 
   get lastSeq(): number {
@@ -66,6 +77,15 @@ export class TranscriptLog {
   append(line: string): TranscriptLogEntry {
     appendFileSync(this.path, line + "\n");
     this.offset += Buffer.byteLength(line + "\n");
+    const entry = this.record(Buffer.concat([this.pending, Buffer.from(line)]).toString("utf-8"));
+    this.pending = Buffer.alloc(0);
+    const ws = [...this.waiters];
+    this.waiters.clear();
+    for (const w of ws) w();
+    return entry;
+  }
+
+  private record(line: string): TranscriptLogEntry {
     const entry: TranscriptLogEntry = {
       seq: this.entries.length + 1,
       ...parseTranscriptLine(line),
@@ -73,9 +93,6 @@ export class TranscriptLog {
       offset: this.offset,
     };
     this.entries.push(entry);
-    const ws = [...this.waiters];
-    this.waiters.clear();
-    for (const w of ws) w();
     return entry;
   }
 
@@ -93,7 +110,7 @@ export class TranscriptLog {
     return {
       lines,
       next,
-      offset: next > 0 ? this.entries[next - 1]!.offset : this.initialOffset,
+      offset: next > 0 ? this.entries[next - 1]!.offset : 0,
       reset,
     };
   }

@@ -88,6 +88,47 @@ describe("GET /transcript long-poll", () => {
     expect(j.lines.map((l: { line: string }) => l.line + "\n").join("")).toBe(readFileSync(tf, "utf-8"));
   });
 
+  it("reopens persisted lines with stable cursors and UTF-8 byte offsets", async () => {
+    const first = "[2026-10-06 16:46:18] Alice: already read";
+    const unread = "[2026-10-06 16:46:19] Боб: ещё не прочитано 🌍";
+    log.append(first);
+    log.append(unread);
+    server.stop(true);
+    log = new TranscriptLog(tf);
+    server = serve(0, tf, { webhookToken: "wh", transcriptToken: TOKEN, transcriptLog: log });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const start = await getJson("?since=0&limit=1");
+    expect(start.lines.map((l: { line: string }) => l.line)).toEqual([first]);
+    expect(start.next).toBe(1);
+    expect(start.offset).toBe(Buffer.byteLength(first + "\n"));
+    const resumed = await getJson("?since=1");
+    expect(resumed.lines.map((l: { line: string }) => l.line)).toEqual([unread]);
+    expect(resumed.next).toBe(2);
+    expect(resumed.offset).toBe(Buffer.byteLength(first + "\n" + unread + "\n"));
+    expect(resumed.reset).toBe(false);
+    log.append("new line");
+    expect(log.since(2).lines.map(l => l.line)).toEqual(["new line"]);
+    expect(log.since(3).offset).toBe(readFileSync(tf).length);
+    expect(new TranscriptLog(tf).since(0)).toEqual(log.since(0));
+  });
+
+  it("keeps an incomplete persisted UTF-8 line behind the cursor until completed", () => {
+    const prefix = Buffer.from("complete\nБоб: 🌍");
+    writeFileSync(tf, prefix.subarray(0, prefix.length - 2));
+    const reopened = new TranscriptLog(tf);
+    expect(reopened.since(0).lines.map(l => l.line)).toEqual(["complete"]);
+    expect(reopened.since(1).offset).toBe(Buffer.byteLength("complete\n"));
+    // A subsequent append completes the durable byte stream, including a
+    // multibyte character split by the interrupted write.
+    appendFileSync(tf, prefix.subarray(prefix.length - 2));
+    const completed = new TranscriptLog(tf);
+    completed.append(" done");
+    expect(completed.since(1).lines.map(l => l.line)).toEqual(["Боб: 🌍 done"]);
+    expect(completed.since(2).offset).toBe(readFileSync(tf).length);
+    expect(new TranscriptLog(tf).since(0)).toEqual(completed.since(0));
+  });
+
   it("returns as soon as a new line arrives", async () => {
     setTimeout(() => log.append("[2026-10-06 16:46:18] Alice: late"), 150);
     const t0 = Date.now();
