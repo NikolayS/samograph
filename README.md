@@ -238,7 +238,9 @@ samograph frame --out /tmp/call.png
 samograph frame --archive
 ```
 
-`frames` lists buffered source keys such as `type:screen_share` or `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
+`samograph frames` lists one row per (participant, stream) with its age, e.g. `participant:300:webcam` and `participant:300:screenshare` (a sharer has both). `frame --source` accepts those keys, `participant:300` (that person's fresh screenshare, else webcam), and aliases `screen` (newest screenshare from anyone) and `webcam`.
+
+When someone shares their screen, use `samograph frame --source screen` (plain `samograph frame` also prefers a screenshare received in the last 10s). `frame` waits up to 5s for a frame no older than 10s (including explicit sources), prints `FRAME_INFO: ... age=Ns` to stderr, and `FRAME_STALE` if the frame is older than 10s.
 
 Archive filenames include call id, UTC timestamp, source type, and participant id. Source type and participant id come from the Recall event metadata and may be `unknown` if Recall does not provide them.
 
@@ -249,7 +251,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting one. Mutually exclusive with `--tunnel`. E.g. run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here. The join-time health round-trip still verifies it relays requests.
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
 - `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
-- `join --presence-bg MODE` - presence camera background: `sphere` (default), `field`, `static` (cheapest), or `cycle` (alternates field/sphere); fixed at join time.
+- `join --presence-bg MODE` - presence camera background: `robot` (default, the static samograph avatar from `docs/avatar.png`), `sphere`, `field`, `static` (cheapest), or `cycle`; fixed at join time.
 - `join --chime NAME` - default chat chime for the session (saved in state), played into the call audio when the bot posts a meeting-chat message. Defaults to `blip`. `chat --chime NAME` overrides it per message. Run `samograph chimes` for the list.
 - `join --enable-voice` - configure Recall `automatic_audio_output` (a silent clip) so `say` can play speech into the call. Recall requires it for `output_audio`.
 - `join --frame-dir DIR` - where on-demand frame files are written.
