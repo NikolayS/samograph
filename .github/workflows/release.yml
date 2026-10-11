@@ -1,0 +1,137 @@
+name: Cut production release tag
+
+# Manual production release for the samohost deploy channel.
+#
+# samohost ships PROD only on a dated release tag matching
+# (NikolayS/samohost src/commands/app.ts:1212):
+#
+#     ^v(\d{4})(\d{2})(\d{2})\.([1-9]\d*)$        e.g. v20260904.1
+#
+# and only when that tag is STRICTLY NEWER than the last deployed one, its SHA
+# is an ancestor of `main`, and CI (.github/workflows/ci.yml, pinned by
+# `releaseCiWorkflow` in .samohost.toml) is GREEN on that exact SHA.
+#
+# This workflow does all of that mechanically: pick today's date, take
+# max(N for today) + 1, verify CI is green on origin/main HEAD and that the SHA
+# is an ancestor of origin/main, then cut the release pinned to that SHA. It
+# creates no deployment itself — the samohost control plane polls, sees the new
+# tag, and deploys within ~5 min.
+#
+# `.github/workflows/npm-publish.yml` has a guard job that recognises this tag
+# shape and skips the npm publish it would otherwise trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute and validate the tag but do not create the release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read      # gh api .../actions/workflows/ci.yml/runs
+
+# Never cut two release tags at once; a queued run must wait, not be cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Cut vYYYYMMDD.N from main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve main HEAD
+        id: head
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "main HEAD = $sha"
+
+      - name: Verify CI is green on main HEAD
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # samohost gates the deploy on the CI workflow named by
+          # `releaseCiWorkflow` in .samohost.toml (.github/workflows/ci.yml).
+          # Refuse to cut a tag CI has not already greened on that SHA.
+          runs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=100" \
+            --jq '[.workflow_runs[] | {status, conclusion}]')"
+          echo "CI runs for ${SHA}: $runs"
+          total="$(printf '%s' "$runs" | jq 'length')"
+          if [ "$total" -eq 0 ]; then
+            echo "::error::No ci.yml run found for main HEAD ${SHA}. Wait for CI, then re-run."
+            exit 1
+          fi
+          bad="$(printf '%s' "$runs" | jq '[.[] | select(.status != "completed" or .conclusion != "success")] | length')"
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::CI is not green on main HEAD ${SHA} (${bad}/${total} runs not successful)."
+            exit 1
+          fi
+          echo "CI green on ${SHA} (${total} run(s))."
+
+      - name: Compute next vYYYYMMDD.N
+        id: tag
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          # N is max(N for today) + 1 — see scripts/next-release-tag.sh for why
+          # "first free N" would be wrong. The script also enforces the
+          # strictly-newer rule against the newest existing deploy tag.
+          tag="$(git tag --list 'v*' | ./scripts/next-release-tag.sh "$(date -u +%Y%m%d)")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Next release tag: $tag"
+
+      - name: Verify main HEAD is an ancestor of origin/main
+        env:
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::${SHA} is not an ancestor of origin/main — samohost will refuse to deploy this tag."
+            exit 1
+          fi
+          echo "${SHA} is an ancestor of origin/main."
+
+      - name: Create the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Pin the release to the exact SHA whose CI we verified. Targeting the
+          # branch ref instead would re-resolve it at creation time and could tag
+          # a commit that landed after the CI check — never do that here.
+          gh release create "$TAG" \
+            --target "$SHA" \
+            --title "$TAG" \
+            --generate-notes
+          echo "Created release $TAG. samohost polls every ~5 min; verify https://samograph.samo.team after the deploy."
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ steps.head.outputs.sha }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Release tag \`$TAG\`"
+            echo ""
+            echo "- main HEAD: \`$SHA\`"
+            echo "- dry run: \`$DRY\`"
+            echo "- Runbook: \`docs/runbooks/deploy-release.md\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,621 @@
+/**
+ * Bot-orchestrator unit suite — no DB, no network (SPEC §6.1: the Recall fake is
+ * the only client). Exercises the §5.2 createBot path: mint a per-call
+ * `ingest_secret`, persist ONLY its SHA-256 hash, call createBot through a
+ * swappable `RecallClient` backed by `packages/test-fakes/recall`, and flip
+ * PENDING→JOINING. Exact-value assertions throughout.
+ */
+import { describe, it, expect } from "bun:test";
+import { createHash } from "node:crypto";
+import { createRecallFake, type RecallFake } from "../../packages/test-fakes/recall/index.ts";
+import { MetricsRegistry } from "../../packages/shared/observe/registry.ts";
+import { inMemoryBotJoinMetrics } from "./botJoinMetrics.ts";
+import {
+  BOT_NAME,
+  DEFAULT_REGION,
+  DEFAULT_REGIONS,
+  SERVICE_NAME,
+  buildWebhookUrl,
+  envSecretProvider,
+  generateIngestSecret,
+  ingestSecretHash,
+  inMemorySecretProvider,
+  orchestrateJoin,
+  pickRegion,
+  publicWebhookBase,
+  regionsFromEnv,
+  regionTunnelBase,
+  runJoinJob,
+  sanitizeFailureReason,
+  type CallStore,
+  type CreateBotRequest,
+  type Logger,
+  type RecallClient,
+  type RegionHealth,
+} from "./index.ts";
+
+const CALL_ID = "11111111-1111-1111-1111-111111111111";
+const MEETING_URL = "https://meet.google.com/abc-defg-hij";
+
+/** A `RecallClient` backed by the deterministic Recall fake; captures the call. */
+function fakeRecall(
+  fake: RecallFake,
+  capture?: (c: { req: CreateBotRequest; webhookUrl: string }) => void,
+): RecallClient {
+  return {
+    async createBot(req: CreateBotRequest) {
+      const { id } = fake.createBot();
+      const webhookUrl = req.buildWebhookUrl(id);
+      capture?.({ req, webhookUrl });
+      return { id, webhookUrl };
+    },
+  };
+}
+
+interface RecordedCall {
+  method: "recordIngestSecret" | "markJoining" | "markCouldNotJoin";
+  args: string[];
+}
+
+/** In-memory `CallStore` that records every method + argument, in order. */
+function memStore(order: string[] = []) {
+  const recorded: RecordedCall[] = [];
+  const store: CallStore = {
+    async recordIngestSecret(callId, hash, region) {
+      order.push("recordIngestSecret");
+      recorded.push({ method: "recordIngestSecret", args: [callId, hash, region] });
+    },
+    async markJoining(callId, recallBotId) {
+      order.push("markJoining");
+      recorded.push({ method: "markJoining", args: [callId, recallBotId] });
+    },
+    async markCouldNotJoin(callId, reason) {
+      order.push("markCouldNotJoin");
+      recorded.push({ method: "markCouldNotJoin", args: [callId, reason] });
+    },
+  };
+  return { store, recorded, order };
+}
+
+describe("bot-orchestrator service identity", () => {
+  it("names itself bot-orchestrator and defaults to the single v1 region us-east (§4.7)", () => {
+    expect(SERVICE_NAME).toBe("bot-orchestrator");
+    expect(DEFAULT_REGION).toBe("us-east");
+    expect(pickRegion()).toBe("us-east");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §4.7 region-selection policy. The set of regions (each {healthy, latencyMs}) is
+// configurable/injectable and defaults to the single us-east region so production
+// behavior is UNCHANGED until a 2nd region is deployed. Selection: (a) honor a
+// user-pinned override; else (b) lowest-latency HEALTHY region, deterministic
+// round-robin within a latency tie; a degraded region FAILS CLOSED (skipped).
+// ─────────────────────────────────────────────────────────────────────────────
+/** A `Logger` that records every event + fields, in order. */
+function captureLogger(): { logger: Logger; logs: { event: string; fields?: Record<string, unknown> }[] } {
+  const logs: { event: string; fields?: Record<string, unknown> }[] = [];
+  return { logger: { info: (event, fields) => logs.push({ event, fields }) }, logs };
+}
+
+describe("region selection policy (§4.7)", () => {
+  it("single-region config still returns us-east (prod behavior UNCHANGED)", () => {
+    // No args, and the explicit default set, both resolve to the one v1 region.
+    expect(pickRegion()).toBe("us-east");
+    expect(pickRegion({ regions: DEFAULT_REGIONS })).toBe("us-east");
+    expect(DEFAULT_REGIONS).toEqual([{ region: "us-east", healthy: true, latencyMs: 0 }]);
+  });
+
+  const twoRegions: RegionHealth[] = [
+    { region: "us-east", healthy: true, latencyMs: 40 },
+    { region: "eu-west", healthy: true, latencyMs: 12 },
+  ];
+
+  it("picks the lowest-latency HEALTHY region (§4.7b)", () => {
+    expect(pickRegion({ regions: twoRegions })).toBe("eu-west");
+  });
+
+  it("honors a user-pinned override even when a lower-latency region exists (§4.7a)", () => {
+    // eu-west is faster, but the pin wins.
+    expect(pickRegion({ regions: twoRegions, pinned: "us-east" })).toBe("us-east");
+  });
+
+  it("skips a DEGRADED region (fails closed) and LOGS the chosen alternative (§4.7)", () => {
+    const { logger, logs } = captureLogger();
+    const regions: RegionHealth[] = [
+      { region: "eu-west", healthy: false, latencyMs: 12 }, // lowest latency but degraded
+      { region: "us-east", healthy: true, latencyMs: 40 },
+    ];
+    expect(pickRegion({ regions, logger })).toBe("us-east");
+    const line = logs.find((l) => l.event === "orchestrate.region_selected");
+    expect(line).toBeDefined();
+    expect(line!.fields).toEqual({ chosen: "us-east", skipped: ["eu-west"] });
+  });
+
+  it("resolves latency ties DETERMINISTICALLY via round-robin (§4.7b)", () => {
+    const tied: RegionHealth[] = [
+      { region: "us-east", healthy: true, latencyMs: 20 },
+      { region: "eu-west", healthy: true, latencyMs: 20 },
+      { region: "us-west", healthy: true, latencyMs: 20 },
+    ];
+    // Tie set sorted by region name is [eu-west, us-east, us-west]; the injected
+    // round-robin cursor selects deterministically and wraps.
+    expect(pickRegion({ regions: tied, tieBreaker: 0 })).toBe("eu-west");
+    expect(pickRegion({ regions: tied, tieBreaker: 1 })).toBe("us-east");
+    expect(pickRegion({ regions: tied, tieBreaker: 2 })).toBe("us-west");
+    expect(pickRegion({ regions: tied, tieBreaker: 3 })).toBe("eu-west"); // wraps
+    // Same input → same output (no hidden global state).
+    expect(pickRegion({ regions: tied, tieBreaker: 1 })).toBe("us-east");
+  });
+
+  it("a lower-latency degraded region does not win the tie among healthy peers", () => {
+    const regions: RegionHealth[] = [
+      { region: "eu-west", healthy: false, latencyMs: 5 }, // fastest but degraded → skipped
+      { region: "us-east", healthy: true, latencyMs: 20 },
+      { region: "us-west", healthy: true, latencyMs: 20 },
+    ];
+    expect(pickRegion({ regions, tieBreaker: 0 })).toBe("us-east");
+    expect(pickRegion({ regions, tieBreaker: 1 })).toBe("us-west");
+  });
+
+  it("a PINNED but degraded region fails closed and falls back to a healthy peer (§4.7)", () => {
+    const { logger, logs } = captureLogger();
+    const regions: RegionHealth[] = [
+      { region: "eu-west", healthy: false, latencyMs: 12 },
+      { region: "us-east", healthy: true, latencyMs: 40 },
+    ];
+    expect(pickRegion({ regions, pinned: "eu-west", logger })).toBe("us-east");
+    const skip = logs.find((l) => l.event === "orchestrate.region_pin_skipped");
+    expect(skip).toBeDefined();
+    expect(skip!.fields).toEqual({ pinned: "eu-west", reason: "degraded" });
+  });
+
+  it("an unknown pinned region falls back to auto-selection with a log", () => {
+    const { logger, logs } = captureLogger();
+    expect(pickRegion({ regions: twoRegions, pinned: "ap-south", logger })).toBe("eu-west");
+    const skip = logs.find((l) => l.event === "orchestrate.region_pin_skipped");
+    expect(skip!.fields).toEqual({ pinned: "ap-south", reason: "unknown" });
+  });
+
+  it("throws when EVERY region is degraded (no healthy target — fail closed)", () => {
+    const allDown: RegionHealth[] = [
+      { region: "us-east", healthy: false, latencyMs: 40 },
+      { region: "eu-west", healthy: false, latencyMs: 12 },
+    ];
+    expect(() => pickRegion({ regions: allDown })).toThrow(/no healthy region/);
+  });
+
+  it("throws on an empty region set (misconfiguration)", () => {
+    expect(() => pickRegion({ regions: [] })).toThrow(/no regions/);
+  });
+});
+
+describe("regionsFromEnv (§4.7 config/env seam)", () => {
+  it("defaults to the single us-east region when SAMOGRAPH_REGIONS is unset", () => {
+    expect(regionsFromEnv({})).toEqual(DEFAULT_REGIONS);
+  });
+
+  it("parses a JSON array of {region,healthy,latencyMs} from SAMOGRAPH_REGIONS", () => {
+    expect(
+      regionsFromEnv({
+        SAMOGRAPH_REGIONS:
+          '[{"region":"us-east","healthy":true,"latencyMs":40},{"region":"eu-west","healthy":false,"latencyMs":12}]',
+      }),
+    ).toEqual([
+      { region: "us-east", healthy: true, latencyMs: 40 },
+      { region: "eu-west", healthy: false, latencyMs: 12 },
+    ]);
+  });
+
+  it("throws on malformed JSON", () => {
+    expect(() => regionsFromEnv({ SAMOGRAPH_REGIONS: "not json" })).toThrow(/SAMOGRAPH_REGIONS/);
+  });
+
+  it("throws on a non-array / empty configuration", () => {
+    expect(() => regionsFromEnv({ SAMOGRAPH_REGIONS: "[]" })).toThrow(/SAMOGRAPH_REGIONS/);
+    expect(() => regionsFromEnv({ SAMOGRAPH_REGIONS: '{"region":"x"}' })).toThrow(/SAMOGRAPH_REGIONS/);
+  });
+});
+
+describe("orchestrateJoin — region override + policy wiring (§4.7)", () => {
+  it("honors the explicit deps.region hard override (unchanged behavior)", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store, recorded } = memStore();
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store, region: "us-east" },
+    );
+    expect(result.region).toBe("us-east");
+    // The persisted region is the override.
+    expect(recorded[0].args[2]).toBe("us-east");
+  });
+
+  it("falls back to the §4.7 policy (single us-east) when no override is given", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store } = memStore();
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store },
+    );
+    expect(result.region).toBe("us-east");
+  });
+});
+
+describe("ingest_secret minting (§4.2)", () => {
+  it("mints a high-entropy base64url secret (>=256 bits) that is unique per call", () => {
+    const secrets = new Set<string>();
+    for (let i = 0; i < 1000; i += 1) {
+      const s = generateIngestSecret();
+      // 32 random bytes → 43-char unpadded base64url string (256 bits of entropy).
+      expect(s).toMatch(/^[A-Za-z0-9_-]{43,}$/);
+      secrets.add(s);
+    }
+    // All 1000 distinct: no collisions, never a constant.
+    expect(secrets.size).toBe(1000);
+  });
+
+  it("hashes a secret with SHA-256 hex — known vector, and never equals the plaintext", () => {
+    // Exact, well-known SHA-256("test") vector pins the hash function precisely.
+    expect(ingestSecretHash("test")).toBe(
+      "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    );
+    const secret = generateIngestSecret();
+    const hash = ingestSecretHash(secret);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).not.toBe(secret);
+  });
+});
+
+describe("webhook URL shape (§5.2)", () => {
+  it("resolves the region tunnel base and embeds ?bot=<id>&t=<secret>", () => {
+    expect(regionTunnelBase("us-east")).toBe("https://us-east.tunnel.samograph.dev");
+    expect(buildWebhookUrl("https://us-east.tunnel.samograph.dev", "bot_abc", "sek")).toBe(
+      "https://us-east.tunnel.samograph.dev/webhook?bot=bot_abc&t=sek",
+    );
+  });
+});
+
+describe("configurable public webhook base (§5.2; issue #88 VM deploy)", () => {
+  it("publicWebhookBase reads PUBLIC_WEBHOOK_BASE and returns its origin", () => {
+    expect(publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "https://samograph-main.samo.cat" })).toBe(
+      "https://samograph-main.samo.cat",
+    );
+    // Trailing path/slash is normalized away to the origin.
+    expect(publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "https://h.example/ignored" })).toBe(
+      "https://h.example",
+    );
+  });
+
+  it("publicWebhookBase is undefined when unset (regional tunnel default applies)", () => {
+    expect(publicWebhookBase({})).toBeUndefined();
+  });
+
+  it("publicWebhookBase rejects a non-https base with a clear error", () => {
+    expect(() => publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "http://insecure" })).toThrow(/https/);
+    expect(() => publicWebhookBase({ PUBLIC_WEBHOOK_BASE: "not a url" })).toThrow(
+      /PUBLIC_WEBHOOK_BASE/,
+    );
+  });
+
+  it("orchestrateJoin builds the webhook URL against deps.webhookBase when provided", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    let captured: { req: CreateBotRequest; webhookUrl: string } | null = null;
+    const { store } = memStore();
+    const secret = "fixed-secret-for-webhookbase-test-00000000000";
+
+    await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      {
+        recall: fakeRecall(fake, (c) => (captured = c)),
+        store,
+        generateSecret: () => secret,
+        webhookBase: "https://samograph-main.samo.cat",
+      },
+    );
+
+    const cap = captured as unknown as { webhookUrl: string };
+    expect(cap.webhookUrl).toBe(
+      `https://samograph-main.samo.cat/webhook?bot=${fake.botId}&t=${secret}`,
+    );
+  });
+});
+
+describe("publicWebhookBase — per-env host preference (#193; same class as #190/#191)", () => {
+  const PREVIEW = "https://samograph-b.samo.cat";
+  const PROD = "https://samograph.samo.team";
+
+  it("(a) prefers BASE_URL over PUBLIC_WEBHOOK_BASE (preview → its own host)", () => {
+    // samohost preview shape: BASE_URL = the env's own https host, while
+    // PUBLIC_WEBHOOK_BASE stays pointed at prod. The webhook that carries the
+    // ingest secret MUST register against the preview host or the live transcript
+    // lands in prod's stream (an empty preview transcript).
+    expect(publicWebhookBase({ BASE_URL: PREVIEW, PUBLIC_WEBHOOK_BASE: PROD })).toBe(PREVIEW);
+  });
+
+  it("(c) falls back to PUBLIC_WEBHOOK_BASE when BASE_URL is unset/empty (prod unchanged)", () => {
+    // Prod sets neither a preview BASE_URL nor a divergent PUBLIC_WEBHOOK_BASE, so
+    // prod behavior is IDENTICAL to before this change.
+    expect(publicWebhookBase({ PUBLIC_WEBHOOK_BASE: PROD })).toBe(PROD);
+    expect(publicWebhookBase({ BASE_URL: "", PUBLIC_WEBHOOK_BASE: PROD })).toBe(PROD);
+    expect(publicWebhookBase({ BASE_URL: "   ", PUBLIC_WEBHOOK_BASE: PROD })).toBe(PROD);
+  });
+
+  it("(d) rejects a non-https / malformed BASE_URL (existing https validation preserved)", () => {
+    // A webhook carrying the ingest secret must never target an insecure/malformed
+    // host — the same fail-closed https guard the function already applied to
+    // PUBLIC_WEBHOOK_BASE now covers the preferred BASE_URL.
+    expect(() =>
+      publicWebhookBase({ BASE_URL: "http://insecure", PUBLIC_WEBHOOK_BASE: PROD }),
+    ).toThrow(/https/);
+    expect(() =>
+      publicWebhookBase({ BASE_URL: "not a url", PUBLIC_WEBHOOK_BASE: PROD }),
+    ).toThrow(/BASE_URL/);
+  });
+
+  it("trims surrounding whitespace on BASE_URL and returns the bare origin", () => {
+    expect(publicWebhookBase({ BASE_URL: `  ${PREVIEW}/ignored  `, PUBLIC_WEBHOOK_BASE: PROD })).toBe(
+      PREVIEW,
+    );
+  });
+});
+
+describe("orchestrateJoin — createBot path (§5.2, §5.3, §4.4)", () => {
+  it("mints secret, persists ONLY the hash, calls createBot, flips PENDING→JOINING", async () => {
+    const secret = "fixed-deterministic-ingest-secret-000000000";
+    const fake = createRecallFake({ seed: CALL_ID });
+    let captured: { req: CreateBotRequest; webhookUrl: string } | null = null;
+    const { store, recorded, order } = memStore();
+
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake, (c) => (captured = c)), store, generateSecret: () => secret },
+    );
+
+    const expectedHash = createHash("sha256").update(secret).digest("hex");
+
+    // Result reports the JOINING transition + the Recall-assigned bot id.
+    expect(result).toEqual({
+      callId: CALL_ID,
+      recallBotId: fake.botId,
+      region: "us-east",
+      status: "JOINING",
+      ingestSecretHash: expectedHash,
+    });
+
+    // Persistence is hash-only: the stored value is the SHA-256, never the plaintext.
+    expect(recorded[0]).toEqual({
+      method: "recordIngestSecret",
+      args: [CALL_ID, expectedHash, "us-east"],
+    });
+    expect(recorded[0].args[1]).not.toBe(secret);
+
+    // createBot was called with the canonical webhook_url embedding ?bot=<id>&t=<secret>.
+    expect(captured).not.toBeNull();
+    const cap = captured as unknown as { req: CreateBotRequest; webhookUrl: string };
+    expect(cap.req.meetingUrl).toBe(MEETING_URL);
+    expect(cap.req.botName).toBe(BOT_NAME);
+    expect(cap.webhookUrl).toBe(
+      `https://us-east.tunnel.samograph.dev/webhook?bot=${fake.botId}&t=${secret}`,
+    );
+    expect(cap.webhookUrl).toContain(`?bot=${fake.botId}&t=${secret}`);
+
+    // Ack → status flips to JOINING and records recall_bot_id (no workers row yet).
+    expect(recorded[1]).toEqual({
+      method: "markJoining",
+      args: [CALL_ID, fake.botId],
+    });
+
+    // §5.2 ordering: store hash, THEN createBot, THEN mark JOINING.
+    expect(order).toEqual(["recordIngestSecret", "markJoining"]);
+  });
+
+  it("never persists, returns, or logs the plaintext ingest_secret (§4.2)", async () => {
+    const secret = generateIngestSecret();
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store, recorded } = memStore();
+    const logs: string[] = [];
+
+    const result = await orchestrateJoin(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      {
+        recall: fakeRecall(fake),
+        store,
+        generateSecret: () => secret,
+        logger: { info: (event, fields) => logs.push(`${event} ${JSON.stringify(fields ?? {})}`) },
+      },
+    );
+
+    // Never RETURNED: no result value carries the plaintext.
+    expect(Object.values(result)).not.toContain(secret);
+    // Never PERSISTED: no stored argument is the plaintext.
+    const persisted = recorded.flatMap((r) => r.args);
+    expect(persisted).not.toContain(secret);
+    expect(persisted).toContain(ingestSecretHash(secret)); // the hash IS persisted
+    // Never LOGGED: progress IS logged, but the secret never appears in it.
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.join("\n")).not.toContain(secret);
+  });
+
+  it("mints a UNIQUE ingest_secret per call (two calls → two distinct hashes)", async () => {
+    const fakeA = createRecallFake({ seed: "call-A" });
+    const fakeB = createRecallFake({ seed: "call-B" });
+    const a = memStore();
+    const b = memStore();
+
+    const resA = await orchestrateJoin(
+      { callId: "call-A", meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fakeA), store: a.store },
+    );
+    const resB = await orchestrateJoin(
+      { callId: "call-B", meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fakeB), store: b.store },
+    );
+
+    expect(resA.ingestSecretHash).not.toBe(resB.ingestSecretHash);
+    expect(resA.ingestSecretHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(resB.ingestSecretHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("shared Recall key boundary (§4.4)", () => {
+  it("inMemorySecretProvider returns the configured key", async () => {
+    expect(await inMemorySecretProvider("recall-key-xyz").recallApiKey()).toBe("recall-key-xyz");
+  });
+
+  it("envSecretProvider reads RECALL_API_KEY and throws cleanly when unset", async () => {
+    const prev = process.env.RECALL_API_KEY;
+    try {
+      process.env.RECALL_API_KEY = "env-recall-key";
+      expect(await envSecretProvider().recallApiKey()).toBe("env-recall-key");
+
+      delete process.env.RECALL_API_KEY;
+      await expect(envSecretProvider().recallApiKey()).rejects.toThrow(/RECALL_API_KEY/);
+    } finally {
+      if (prev === undefined) delete process.env.RECALL_API_KEY;
+      else process.env.RECALL_API_KEY = prev;
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Story-4 silent hang: a createBot/join FAILURE must persist COULD_NOT_JOIN +
+// a sanitized status_reason — never leave the call PENDING forever (§5.2, §5.16).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("sanitizeFailureReason (§5.16 reason, §4.4 key hygiene)", () => {
+  it("returns the error message with whitespace collapsed", () => {
+    expect(sanitizeFailureReason(new Error("recall.ai bot creation failed: 507\n  out of capacity"), [])).toBe(
+      "recall.ai bot creation failed: 507 out of capacity",
+    );
+  });
+
+  it("REDACTS every occurrence of a provided secret (the Recall API key never persists)", () => {
+    const key = "sk-recall-test-0123456789abcdef";
+    const err = new Error(`recall.ai bot creation failed: 401 {"detail":"bad token ${key}"} (key=${key})`);
+    const reason = sanitizeFailureReason(err, [key]);
+    expect(reason).not.toContain(key);
+    expect(reason).toBe(
+      'recall.ai bot creation failed: 401 {"detail":"bad token [redacted]"} (key=[redacted])',
+    );
+  });
+
+  it("defense in depth: an `Authorization: Token …` value is redacted even when the secret list misses it", () => {
+    const reason = sanitizeFailureReason(new Error("HTTP 401 sent Token abcdef0123456789 to recall"), []);
+    expect(reason).not.toContain("abcdef0123456789");
+    expect(reason).toContain("Token [redacted]");
+  });
+
+  it("stringifies non-Error throwables and falls back on an empty message", () => {
+    expect(sanitizeFailureReason("recall exploded", [])).toBe("recall exploded");
+    expect(sanitizeFailureReason(new Error(""), [])).toBe("bot could not be created");
+    expect(sanitizeFailureReason(undefined, [])).toBe("bot could not be created");
+  });
+
+  it("truncates an oversized reason to 300 chars (ellipsis-terminated)", () => {
+    const reason = sanitizeFailureReason(new Error("x".repeat(1000)), []);
+    expect(reason.length).toBe(300);
+    expect(reason.endsWith("…")).toBe(true);
+  });
+});
+
+describe("runJoinJob — join failure persists COULD_NOT_JOIN + reason (Story 4)", () => {
+  const failingRecall = (message: string): RecallClient => ({
+    async createBot() {
+      throw new Error(message);
+    },
+  });
+
+  it("on createBot failure marks the call COULD_NOT_JOIN with the sanitized reason", async () => {
+    const { store, recorded } = memStore();
+    const outcome = await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall("recall.ai bot creation failed: 507 out of capacity"), store, secrets: [] },
+    );
+
+    expect(outcome).toEqual({
+      callId: CALL_ID,
+      status: "COULD_NOT_JOIN",
+      reason: "recall.ai bot creation failed: 507 out of capacity",
+    });
+    // The failure was PERSISTED (not just logged): the exact store write happened.
+    expect(recorded.at(-1)).toEqual({
+      method: "markCouldNotJoin",
+      args: [CALL_ID, "recall.ai bot creation failed: 507 out of capacity"],
+    });
+  });
+
+  it("the persisted reason never contains the Recall API key (§4.4)", async () => {
+    const key = "sk-recall-live-9876543210fedcba";
+    const { store, recorded } = memStore();
+    await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall(`recall.ai bot creation failed: 401 key ${key} rejected`), store, secrets: [key] },
+    );
+    const persisted = recorded.at(-1);
+    expect(persisted?.method).toBe("markCouldNotJoin");
+    expect(persisted?.args[1]).not.toContain(key);
+    expect(persisted?.args[1]).toContain("[redacted]");
+  });
+
+  it("on success it is exactly orchestrateJoin (JOINING; markCouldNotJoin untouched)", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store, order } = memStore();
+    const outcome = await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store, secrets: [] },
+    );
+    expect(outcome.status).toBe("JOINING");
+    expect(order).toEqual(["recordIngestSecret", "markJoining"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §5.11 bot_join_total{result} producer (issue #107): the orchestrator emits the
+// terminal join-outcome counter EXACTLY once per call, and never leaks the key.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("runJoinJob — bot_join_total{could_not_join} producer (§5.11, issue #107)", () => {
+  const failingRecall = (message: string): RecallClient => ({
+    async createBot() {
+      throw new Error(message);
+    },
+  });
+
+  it("a failed join increments bot_join_total{could_not_join} EXACTLY once", async () => {
+    const { store } = memStore();
+    const metrics = inMemoryBotJoinMetrics();
+    await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall("507 out of capacity"), store, secrets: [], metrics },
+    );
+    expect(metrics.get("could_not_join")).toBe(1);
+    // Only the failure result moved — no phantom in_call / could_not_record.
+    expect(metrics.get("in_call")).toBe(0);
+    expect(metrics.get("could_not_record")).toBe(0);
+  });
+
+  it("a successful join does NOT touch bot_join_total (JOINING is not terminal)", async () => {
+    const fake = createRecallFake({ seed: CALL_ID });
+    const { store } = memStore();
+    const metrics = inMemoryBotJoinMetrics();
+    const outcome = await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: fakeRecall(fake), store, secrets: [], metrics },
+    );
+    expect(outcome.status).toBe("JOINING");
+    expect(metrics.get("could_not_join")).toBe(0);
+    expect(metrics.counts.size).toBe(0);
+  });
+
+  it("the shared MetricsRegistry is a drop-in producer and renders the incremented line", async () => {
+    const registry = new MetricsRegistry();
+    const { store } = memStore();
+    await runJoinJob(
+      { callId: CALL_ID, meetingUrl: MEETING_URL },
+      { recall: failingRecall("507 out of capacity"), store, secrets: [], metrics: registry },
+    );
+    expect(registry.get("bot_join_total", "could_not_join")).toBe(1);
+    // Exposition (§5.11): the /metrics endpoint now shows a non-zero series.
+    expect(registry.renderPrometheus()).toContain(
+      'bot_join_total{result="could_not_join"} 1',
+    );
+  });
+});

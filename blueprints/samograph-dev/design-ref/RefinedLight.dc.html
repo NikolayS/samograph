@@ -1,0 +1,315 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<!--
+  ============================================================================
+  samograph.dev — REFINED landing. Design tokens (roles, both modes).
+  The transcript panel is an INSTRUMENT: it keeps the panel-* tokens in BOTH
+  modes (a terminal is dark everywhere). Page tokens flip.
+  ----------------------------------------------------------------------------
+  role            LIGHT      DARK       used for
+  ----------------------------------------------------------------------------
+  ground          #F4F2ED    #111110    page background (toned, never pure)
+  surface         #FAF9F6    #191918    raised strips, code box, nav fill
+  ink             #14130F    #EDEAE2    headlines, wordmark, primary text
+  ink-soft        #3A382F    #C6C2B7    body copy that must stay readable
+  muted           #6B675C    #918C80    secondary copy, nav links
+  faint           #9C978A    #6A665D    indices, meta, legal
+  line            #DFDBD1    #2A2926    hairline rules, 1px borders
+  line-strong     #B9B4A6    #45433D    control borders, 2px kicker rule
+  ----------------------------------------------------------------------------
+  panel-ground    #0C0C0B    #0C0C0B    transcript instrument background
+  panel-surface   #141413    #141413    instrument header / footer strips
+  panel-strip     #1C1B18    #1C1B18    degraded-delivery banner strip
+  panel-ink       #E2DFD7    #E2DFD7    transcript utterances
+  panel-muted     #837F76    #837F76    timestamps, gutter, speakers
+  panel-line      #24231F    #24231F    instrument hairlines + gutter rail
+  panel-gutter    #4A4842    #4A4842    line-number tally in the gutter
+  accent-live     #4ED18A    #4ED18A    live dot, presence pill, $ prompt
+  signal-magenta  #FF4FB0    #FF4FB0    streaming caret ONLY (rationed)
+  ----------------------------------------------------------------------------
+  Type: JetBrains Mono 400 / 500 / 700 only. Display = body face.
+        Headlines 700 / letter-spacing -0.02em. Body 0.78–0.88rem / 1.65–1.7.
+  ============================================================================
+-->
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: #3A382F; text-decoration: none; }
+    a:hover { color: #14130F; text-decoration: underline; text-underline-offset: 3px; }
+    @keyframes sg-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+    @keyframes sg-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  </style>
+</helmet>
+<div style="width: 1280px; background: #F4F2ED; color: #14130F; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; -webkit-font-smoothing: antialiased;">
+
+  <!-- ===================== NAV ===================== -->
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 32px; height: 68px; padding: 0 56px; border-bottom: 1px solid #DFDBD1; background: #FAF9F6;">
+    <div style="display: flex; align-items: center; gap: 30px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <img src="robot.jpg" alt="samograph" width="32" height="32" style="width: 32px; height: 32px; display: block; border-radius: 4px; border: 1px solid #DFDBD1;">
+        <span style="font-size: 0.95rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">samograph<span style="color: #9C978A;">.dev</span></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 22px; font-size: 0.75rem; color: #6B675C;">
+        <a href="#" style="color: #6B675C;">how it works</a>
+        <a href="#" style="color: #6B675C;">dictionaries</a>
+        <a href="#" style="color: #6B675C;">cli</a>
+        <a href="#" style="color: #6B675C;">docs</a>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <div style="display: inline-flex; align-items: center; gap: 0; border: 1px solid #B9B4A6; border-radius: 999px; padding: 2px; background: #F4F2ED;">
+        <span style="display: block; padding: 3px 11px; font-size: 0.68rem; letter-spacing: 0.01em; border-radius: 999px; background: #14130F; color: #F4F2ED; font-weight: 500;">light</span>
+        <span style="display: block; padding: 3px 11px; font-size: 0.68rem; letter-spacing: 0.01em; border-radius: 999px; color: #6B675C;">dark</span>
+        <span style="display: block; padding: 3px 11px; font-size: 0.68rem; letter-spacing: 0.01em; border-radius: 999px; color: #6B675C;">sys</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: #9C978A;">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9C978A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"></circle><path d="M2.8 13.4c0-2.6 2.3-4 5.2-4s5.2 1.4 5.2 4"></path></svg>
+        <span>dana@example.dev</span>
+      </div>
+      <a href="/auth" style="display: block; padding: 7px 15px; font-size: 0.74rem; font-weight: 500; letter-spacing: -0.01em; background: #14130F; color: #F4F2ED; border: 1px solid #14130F;">Get started</a>
+    </div>
+  </div>
+
+  <!-- ===================== HERO ===================== -->
+  <div style="display: flex; flex-direction: column; gap: 38px; padding: 68px 56px 60px 56px;">
+    <div style="display: flex; flex-direction: column; gap: 26px;">
+      <div style="display: flex; align-items: center; gap: 14px;">
+        <span style="display: block; width: 44px; height: 2px; background: #14130F;"></span>
+        <span style="font-size: 0.7rem; letter-spacing: 0.09em; color: #6B675C;">zero-setup live transcription — zoom &amp; google meet</span>
+      </div>
+      <h1 style="margin: 0; max-width: 880px; font-size: 2.65rem; line-height: 1.14; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Paste a meeting link.<br>The transcript starts arriving.</h1>
+      <p style="margin: 0; max-width: 790px; font-size: 0.85rem; line-height: 1.7; color: #3A382F;">Paste a Zoom or Google Meet URL to stream a keyterm-aware transcript, then share it read-only or download plain text.</p>
+      <div style="display: flex; align-items: center; gap: 18px; font-size: 0.75rem;">
+        <a href="/auth" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 20px; border-radius: 6px; background: #14130F; color: #F4F2ED; border: 1px solid #14130F; font-weight: 500;">Get started</a>
+        <span style="color: #9C978A;">free while v1 is open · no install · no calendar scopes</span>
+      </div>
+    </div>
+
+    <!-- ---------- THE INSTRUMENT: live transcript panel (dark in both themes) ---------- -->
+    <div style="border: 1px solid #24231F; background: #0C0C0B;">
+      <!-- instrument header -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 11px 16px; background: #141413; border-bottom: 1px solid #24231F;">
+        <div style="display: flex; align-items: center; gap: 14px; font-size: 0.72rem; color: #837F76;">
+          <span style="color: #E2DFD7; font-weight: 500;">call / 4f2a9c1e</span>
+          <span style="color: #24231F;">|</span>
+          <span>meet.google.com/qty-hqvr-xnb</span>
+          <span style="color: #24231F;">|</span>
+          <span>dict: <span style="color: #E2DFD7;">custom</span></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px; border: 1px solid #24231F; border-radius: 999px; font-size: 0.66rem; color: #4ED18A; letter-spacing: 0.04em;">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#4ED18A" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M8 2.5v7"></path><path d="M4.5 6.5v3"></path><path d="M11.5 6.5v3"></path><path d="M2 8.5v1"></path><path d="M14 8.5v1"></path></svg>
+            listening
+          </span>
+          <span style="display: inline-flex; align-items: center; gap: 7px; font-size: 0.7rem; color: #837F76; font-variant-numeric: tabular-nums;">
+            <span style="display: block; width: 7px; height: 7px; border-radius: 50%; background: #4ED18A; animation: sg-pulse 1.6s ease-in-out infinite;"></span>
+            <span style="color: #E2DFD7;">live</span> 00:12:41
+          </span>
+        </div>
+      </div>
+
+      <!-- degraded-delivery banner (loud failures, by design) -->
+      <div style="display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #1C1B18; border-bottom: 1px solid #24231F; font-size: 0.7rem; color: #837F76;">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#837F76" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2 14.6 13.5H1.4z"></path><path d="M8 6.4v3.1"></path><path d="M8 11.6v.1"></path></svg>
+        <span>delivery degraded 14:02:09 — websocket reconnecting, attempt 2. lines are buffered, not dropped.</span>
+      </div>
+
+      <!-- transcript body: gutter rail + lines -->
+      <div style="display: flex; align-items: stretch; gap: 0; padding: 18px 0 20px 0;">
+        <div style="display: flex; flex-direction: column; gap: 11px; width: 56px; padding: 0 14px 0 0; border-right: 1px solid #24231F; text-align: right; font-size: 0.72rem; line-height: 1.5; color: #4a4842; font-variant-numeric: tabular-nums;">
+          <span>141</span><span>142</span><span>143</span><span>144</span><span>145</span><span>146</span><span>147</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 11px; padding: 0 18px 0 18px; font-size: 0.78rem; line-height: 1.5; color: #E2DFD7;">
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:11:52]</span><span style="color: #837F76; width: 66px;">Dana:</span><span>P99 climbed right after we expanded the canary rollout to ten percent.</span></div>
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:12:04]</span><span style="color: #837F76; width: 66px;">Morgan:</span><span>The incident timeline shows the same three retries as last week.</span></div>
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:12:11]</span><span style="color: #837F76; width: 66px;">Jamie:</span><span>Then check idempotency and pull error rates per service.</span></div>
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:12:19]</span><span style="color: #837F76; width: 66px;">Dana:</span><span>Error rate is two percent. Not the emergency threshold, but close.</span></div>
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:12:27]</span><span style="color: #837F76; width: 66px;">Morgan:</span><span>Pause the rollout first; I will post the graph in chat.</span></div>
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:12:35]</span><span style="color: #837F76; width: 66px;">Jamie:</span><span>Agreed. I will write it up on the call page.</span></div>
+          <div style="display: flex; gap: 14px;"><span style="color: #837F76; font-variant-numeric: tabular-nums; width: 82px;">[00:12:41]</span><span style="color: #837F76; width: 66px;">Dana:</span><span style="color: #837F76;">And the dictionary caught idempoten<span style="display: inline-block; width: 8px; height: 0.95em; background: #FF4FB0; vertical-align: -0.15em; animation: sg-caret 1s steps(1, end) infinite;"></span></span></div>
+        </div>
+      </div>
+
+      <!-- instrument footer: keyterms + actions -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 10px 16px; background: #141413; border-top: 1px solid #24231F;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 0.66rem; color: #837F76;">
+          <span style="padding-right: 4px;">keyterms matched</span>
+          <span style="display: block; padding: 2px 8px; border: 1px solid #24231F; color: #E2DFD7;">rollout</span>
+          <span style="display: block; padding: 2px 8px; border: 1px solid #24231F; color: #E2DFD7;">canary</span>
+          <span style="display: block; padding: 2px 8px; border: 1px solid #24231F; color: #E2DFD7;">idempotency</span>
+          <span style="display: block; padding: 2px 8px; border: 1px solid #24231F; color: #E2DFD7;">wraparound</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 18px; font-size: 0.68rem; color: #837F76;">
+          <span>ru→en code-switching on</span>
+          <span style="color: #24231F;">|</span>
+          <span>share link · revocable</span>
+          <span style="color: #24231F;">|</span>
+          <span>download .txt</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 1px; background: #DFDBD1;"></div>
+
+  <!-- ===================== DIFFERENTIATORS ===================== -->
+  <div style="display: flex; flex-direction: column; gap: 42px; padding: 56px 56px;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px;">
+      <h2 style="margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">What it does that a generic notetaker does not</h2>
+      <span style="font-size: 0.7rem; color: #9C978A; letter-spacing: 0.06em;">04 / differentiators</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 34px;">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <span style="font-size: 0.7rem; color: #9C978A; font-variant-numeric: tabular-nums;">01</span>
+        <div style="height: 1px; background: #B9B4A6;"></div>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Keyterm dictionaries</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Load technical terms, product names, and names before the call.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <span style="font-size: 0.7rem; color: #9C978A; font-variant-numeric: tabular-nums;">02</span>
+        <div style="height: 1px; background: #B9B4A6;"></div>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Code-switching</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Mixed-language speech stays in one transcript line.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <span style="font-size: 0.7rem; color: #9C978A; font-variant-numeric: tabular-nums;">03</span>
+        <div style="height: 1px; background: #B9B4A6;"></div>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Failures are loud</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Join and delivery failures appear with actionable status.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <span style="font-size: 0.7rem; color: #9C978A; font-variant-numeric: tabular-nums;">04</span>
+        <div style="height: 1px; background: #B9B4A6;"></div>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Revocable sharing</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Signed read-only links revoke individually; plain-text download remains available.</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 1px; background: #DFDBD1;"></div>
+
+  <!-- ===================== FROM LINK TO LIVE PAGE ===================== -->
+  <div style="display: flex; flex-direction: column; gap: 36px; padding: 56px 56px;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px;">
+      <h2 style="margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">From link to live page</h2>
+      <span style="font-size: 0.7rem; color: #9C978A; letter-spacing: 0.06em;">four steps · about forty seconds</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 0;">
+      <div style="display: grid; grid-template-columns: 64px 300px minmax(0, 1fr); gap: 24px; align-items: baseline; padding: 13px 0; border-top: 1px solid #DFDBD1;">
+        <span style="font-size: 0.72rem; color: #9C978A; font-variant-numeric: tabular-nums;">01</span>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Sign in</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Use a magic link or Google; no install or calendar access.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 64px 300px minmax(0, 1fr); gap: 24px; align-items: baseline; padding: 13px 0; border-top: 1px solid #DFDBD1;">
+        <span style="font-size: 0.72rem; color: #9C978A; font-variant-numeric: tabular-nums;">02</span>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Paste the meeting link</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Paste Zoom or Google Meet and optionally select a dictionary.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 64px 300px minmax(0, 1fr); gap: 24px; align-items: baseline; padding: 13px 0; border-top: 1px solid #DFDBD1;">
+        <span style="font-size: 0.72rem; color: #9C978A; font-variant-numeric: tabular-nums;">03</span>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">The bot joins</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">A named participant joins with recording disclosure enabled.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 64px 300px minmax(0, 1fr); gap: 24px; align-items: baseline; padding: 13px 0; border-top: 1px solid #DFDBD1; border-bottom: 1px solid #DFDBD1;">
+        <span style="font-size: 0.72rem; color: #9C978A; font-variant-numeric: tabular-nums;">04</span>
+        <h3 style="margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">The page streams</h3>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">The call page streams over WebSocket and supports sharing or download.</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 1px; background: #DFDBD1;"></div>
+
+  <!-- ===================== PRICING ===================== -->
+  <div style="display: flex; flex-direction: column; gap: 32px; padding: 56px 56px;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px;">
+      <h2 style="margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">Pricing</h2>
+      <span style="font-size: 0.7rem; color: #9C978A; letter-spacing: 0.06em;">v1 / planned tiers</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 20px; padding: 24px; border: 1px solid #DFDBD1;">
+        <div style="display: flex; align-items: start; justify-content: space-between; gap: 16px;"><h3 style="margin: 0; font-size: 0.9rem; font-weight: 700; color: #14130F;">Free</h3><span style="font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9C978A;">today / v1</span></div>
+        <span style="font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">$0</span>
+        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.72rem; line-height: 1.5; color: #6B675C;"><span>— live transcripts for Zoom + Google Meet</span><span>— read-only share links</span><span>— plain-text download</span><span>— no card required</span></div>
+        <a href="/auth" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 6px; background: #14130F; color: #F4F2ED; border: 1px solid #14130F; font-size: 0.74rem; font-weight: 500;">Get started</a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 20px; padding: 24px; border: 1px solid #DFDBD1;">
+        <div style="display: flex; align-items: start; justify-content: space-between; gap: 16px;"><h3 style="margin: 0; font-size: 0.9rem; font-weight: 700; color: #14130F;">Individual</h3><span style="font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9C978A;">planned</span></div>
+        <span style="font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">$20/mo</span>
+        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.72rem; line-height: 1.5; color: #6B675C;"><span>— everything in Free</span><span>— custom keyterm dictionaries</span><span>— retention controls</span><span>— priority transcription</span></div>
+        <button type="button" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 6px; background: transparent; color: #3A382F; border: 1px solid #B9B4A6; font-family: inherit; font-size: 0.74rem; font-weight: 500;">Coming with billing</button>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 20px; padding: 24px; border: 1px solid #DFDBD1;">
+        <div style="display: flex; align-items: start; justify-content: space-between; gap: 16px;"><h3 style="margin: 0; font-size: 0.9rem; font-weight: 700; color: #14130F;">Team</h3><span style="font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9C978A;">planned</span></div>
+        <span style="font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; color: #14130F;">$25/user/mo</span>
+        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.72rem; line-height: 1.5; color: #6B675C;"><span>— everything in Individual</span><span>— shared calls across the team</span><span>— centralized billing</span><span>— access controls</span></div>
+        <button type="button" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 6px; background: transparent; color: #3A382F; border: 1px solid #B9B4A6; font-family: inherit; font-size: 0.74rem; font-weight: 500;">Coming with billing</button>
+      </div>
+    </div>
+    <span style="font-size: 0.68rem; color: #9C978A;">v1 is free while billing is built. Planned prices — may change.</span>
+  </div>
+
+  <div style="height: 1px; background: #DFDBD1;"></div>
+
+  <!-- ===================== HERITAGE ===================== -->
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 64px; padding: 56px 56px; background: #FAF9F6; border-top: 1px solid #DFDBD1; border-bottom: 1px solid #DFDBD1;">
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <span style="font-size: 0.7rem; letter-spacing: 0.09em; color: #6B675C;">heritage — the open-source cli</span>
+      <h2 style="margin: 0; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; color: #14130F;">The hosted product grew out of a CLI that puts an AI agent in the call.</h2>
+      <p style="margin: 0; font-size: 0.8rem; line-height: 1.7; color: #6B675C;">The open-source CLI lets coding agents join calls, read transcripts, use chat, and expose presence.</p>
+      <div style="display: flex; align-items: center; gap: 14px; font-size: 0.72rem; color: #9C978A;">
+        <a href="#" style="color: #3A382F; border-bottom: 1px solid #B9B4A6; padding-bottom: 2px;">github.com/NikolayS/samograph</a>
+        <span>MIT · Zoom, Meet</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 9px; padding: 20px 22px; border: 1px solid #B9B4A6; background: #F4F2ED; font-size: 0.755rem; line-height: 1.5; color: #3A382F;">
+        <div style="display: flex; gap: 10px;"><span style="color: #9C978A;">$</span><span>samograph join &quot;https://meet.google.com/...&quot; --dict custom</span></div>
+        <div style="display: flex; gap: 10px;"><span style="color: #9C978A;">$</span><span>samograph watch</span></div>
+        <div style="display: flex; gap: 10px;"><span style="color: #9C978A;">$</span><span>samograph presence thinking &quot;checking rollout metrics&quot;</span></div>
+        <div style="display: flex; gap: 10px;"><span style="color: #9C978A;">$</span><span>samograph chat &quot;plan attached — three retries, same as last week&quot;</span></div>
+        <div style="display: flex; gap: 10px;"><span style="color: #9C978A;">$</span><span>samograph leave</span></div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 10px; padding: 18px 22px; border: 1px dashed #B9B4A6;">
+        <span style="font-size: 0.65rem; letter-spacing: 0.08em; color: #9C978A;">roadmap — not shipped</span>
+        <p style="margin: 0; font-size: 0.775rem; line-height: 1.68; color: #6B675C;">Planned: scoped, revocable per-call agent access over MCP.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== CLOSING CTA ===================== -->
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 32px 56px; border-bottom: 1px solid #DFDBD1;">
+    <span style="font-size: 0.88rem; font-weight: 500; color: #14130F;">Paste a meeting link. Watch it stream.</span>
+    <a href="/auth" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 20px; border-radius: 6px; background: #14130F; color: #F4F2ED; border: 1px solid #14130F; font-size: 0.74rem; font-weight: 500;">Get started</a>
+  </div>
+
+  <!-- ===================== FOOTER ===================== -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 40px 56px 48px 56px;">
+    <div style="display: flex; align-items: center; gap: 12px; font-size: 0.73rem; color: #6B675C;">
+      <a href="#" style="color: #6B675C;">get started</a><span style="color: #9C978A;">·</span>
+      <a href="#" style="color: #6B675C;">docs</a><span style="color: #9C978A;">·</span>
+      <a href="#" style="color: #6B675C;">cli on github</a><span style="color: #9C978A;">·</span>
+      <a href="#" style="color: #6B675C;">dictionaries</a><span style="color: #9C978A;">·</span>
+      <a href="#" style="color: #6B675C;">status</a><span style="color: #9C978A;">·</span>
+      <a href="#" style="color: #6B675C;">privacy</a><span style="color: #9C978A;">·</span>
+      <a href="#" style="color: #6B675C;">hello@samograph.dev</a>
+    </div>
+    <span style="font-size: 0.68rem; color: #9C978A;">samograph.dev — live transcripts for Zoom and Google Meet. v1 is free.</span>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/bot-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Bun/Hono process-per-call command surface: chat/frame/frames/presence/leave (SPEC §4.1)."
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/test-fakes-google-oauth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "In-repo fake Google IdP — a real RSA keypair, a real JWKS document and genuinely signed RS256 ID tokens, driving the production verifier (SPEC §6.1)."
+}

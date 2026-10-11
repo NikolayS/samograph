@@ -1,0 +1,143 @@
+/**
+ * Transcript replay / backfill reads for the WS stream (SPEC §5.5, §5.10).
+ *
+ * The `transcripts` table is append-only with PK `(call_id, seq)` and carries
+ * ONLY finalized lines — partials are never persisted (§5.5: "drop partials,
+ * never finals"). These two RLS-scoped reads feed the WS upgrade and the REST
+ * gap-resync endpoint:
+ *
+ *   • {@link backfillRecent} — the last ~200 finalized lines of a call, returned
+ *     ascending. A fresh subscriber gets recent context before live frames.
+ *   • {@link replayTranscripts} — given a client's last-seen `since_seq`, the
+ *     EXACT missing tail `seq > since_seq`, ascending. The reconnect/gap-resync
+ *     path: no duplicate of the boundary `seq`, no gap.
+ *
+ * Both run on the request's transaction AFTER the tenancy gate (§5.6) has set
+ * `app.tenant_id`, so RLS scopes every row to the call's tenant: `transcripts`
+ * has no `tenant_id` column and is filtered through its call's tenant (§5.10).
+ * A query for another tenant's call therefore returns ZERO rows.
+ */
+import type { SQL } from "bun";
+import { canonicalTs } from "./timestamp.ts";
+
+/** Default backfill window: the most recent finalized lines (SPEC §5.5). */
+export const DEFAULT_BACKFILL_LIMIT = 200;
+
+/** One finalized transcript line on the wire / in a backfill response. */
+export interface TranscriptLine {
+  seq: number;
+  ts: string;
+  speaker: string | null;
+  text: string;
+  /**
+   * Line kind (#195): 'chat' re-renders as `[ts] speaker (chat): text`. OMITTED
+   * for a spoken line so the replay/backfill wire shape stays byte-identical to
+   * pre-#195 (a `chat` marker is a render concern, never stored in speaker/text).
+   */
+  kind?: "chat" | "speech";
+}
+
+/** A raw `transcripts` row as returned by the driver. */
+interface TranscriptRow {
+  seq: number | bigint | string;
+  ts: Date | string;
+  speaker: string | null;
+  text: string;
+  kind?: string | null;
+}
+
+/** Normalize a driver row into a JSON-stable {@link TranscriptLine}. */
+function mapRow(row: TranscriptRow): TranscriptLine {
+  const line: TranscriptLine = {
+    // `seq` is a Postgres bigint; coerce to a JS number (call seqs are well
+    // within Number.MAX_SAFE_INTEGER) so the wire shape is plain JSON.
+    seq: Number(row.seq),
+    ts: canonicalTs(row.ts),
+    speaker: row.speaker ?? null,
+    text: row.text,
+  };
+  // Only a chat line carries `kind` on the wire (#195); speech omits it.
+  if (row.kind === "chat") line.kind = "chat";
+  return line;
+}
+
+/**
+ * Replay the EXACT missing tail after `sinceSeq`: every finalized line with
+ * `seq > sinceSeq`, ascending. The boundary `seq === sinceSeq` is the client's
+ * last-known line and is deliberately excluded (no duplicate). `sinceSeq >= max`
+ * yields an empty array — not an error. RLS-scoped: a foreign call returns none.
+ */
+export async function replayTranscripts(
+  tx: SQL,
+  callId: string,
+  sinceSeq: number,
+): Promise<TranscriptLine[]> {
+  const rows = (await tx`
+    SELECT seq, ts, speaker, text, kind
+    FROM transcripts
+    WHERE call_id = ${callId} AND seq > ${sinceSeq}
+    ORDER BY seq ASC`) as unknown as TranscriptRow[];
+  return rows.map(mapRow);
+}
+
+/** Options for {@link fetchFullTranscript} (the `.txt` download read). */
+export interface FullTranscriptOptions {
+  /**
+   * Exclude typed meeting-chat comments (#197). When true the read filters to
+   * `kind = 'speech'` on the COLUMN — spoken lines only — so a "download without
+   * comments" can neither drop a genuine speech line that mentions "(chat)" nor
+   * keep a crafted chat line dressed up as speech. Default (false) is the full
+   * transcript, byte-identical to the pre-#197 download.
+   */
+  excludeComments?: boolean;
+}
+
+/**
+ * The WHOLE finalized transcript of a call, ascending by `seq` — every line,
+ * no window (Story 3: the downloadable transcript is the full call, not the
+ * ~200-line backfill tail). With {@link FullTranscriptOptions.excludeComments}
+ * the read is filtered to spoken lines (`kind='speech'`) by the COLUMN (#197).
+ * RLS-scoped like the other reads: a foreign call returns nothing. Runs after
+ * the tenancy gate has set `app.tenant_id`.
+ */
+export async function fetchFullTranscript(
+  tx: SQL,
+  callId: string,
+  opts: FullTranscriptOptions = {},
+): Promise<TranscriptLine[]> {
+  const rows = (opts.excludeComments
+    ? await tx`
+        SELECT seq, ts, speaker, text, kind
+        FROM transcripts
+        WHERE call_id = ${callId} AND kind = 'speech'
+        ORDER BY seq ASC`
+    : await tx`
+        SELECT seq, ts, speaker, text, kind
+        FROM transcripts
+        WHERE call_id = ${callId}
+        ORDER BY seq ASC`) as unknown as TranscriptRow[];
+  return rows.map(mapRow);
+}
+
+/**
+ * The last `limit` finalized lines of a call, returned ASCENDING (oldest first)
+ * so they can be streamed in delivery order before live frames resume. Reads the
+ * newest `limit` by `seq DESC` then re-sorts ascending. RLS-scoped.
+ */
+export async function backfillRecent(
+  tx: SQL,
+  callId: string,
+  limit: number = DEFAULT_BACKFILL_LIMIT,
+): Promise<TranscriptLine[]> {
+  const rows = (await tx`
+    SELECT seq, ts, speaker, text, kind
+    FROM (
+      SELECT seq, ts, speaker, text, kind
+      FROM transcripts
+      WHERE call_id = ${callId}
+      ORDER BY seq DESC
+      LIMIT ${limit}
+    ) recent
+    ORDER BY seq ASC`) as unknown as TranscriptRow[];
+  return rows.map(mapRow);
+}

@@ -138,6 +138,44 @@ describe("argParsing", () => {
     expect(parseArgs(["chat", "Hello meeting"]).message).toBe("Hello meeting");
   });
 
+  it("chat defaults chime to null", () => {
+    expect(parseArgs(["chat", "hi"]).chime).toBeNull();
+  });
+
+  it("chat parses --chime", () => {
+    expect(parseArgs(["chat", "hi", "--chime", "bell"]).chime).toBe("bell");
+  });
+
+  it("chat keeps an unknown --chime (lenient, runtime fallback)", () => {
+    expect(parseArgs(["chat", "hi", "--chime", "kazoo"]).chime).toBe("kazoo");
+  });
+
+  it("chat --list-chimes does not require a message", () => {
+    const args = parseArgs(["chat", "--list-chimes"]);
+    expect(args.list_chimes).toBe(true);
+    expect(args.message).toBeUndefined();
+  });
+
+  it("chimes command parses", () => {
+    expect(parseArgs(["chimes"]).command).toBe("chimes");
+  });
+
+  it("join defaults chime to null", () => {
+    expect(parseArgs(["join", "https://zoom.us/j/1"]).chime).toBeNull();
+  });
+
+  it("join parses and normalizes --chime", () => {
+    expect(
+      parseArgs(["join", "https://zoom.us/j/1", "--chime", "Bell"]).chime,
+    ).toBe("bell");
+  });
+
+  it("join rejects an unknown --chime at parse time", () => {
+    expect(() =>
+      parseArgs(["join", "https://zoom.us/j/1", "--chime", "kazoo"]),
+    ).toThrow("argument --chime: invalid choice: 'kazoo'");
+  });
+
   it("presence parses state and message", () => {
     const args = parseArgs(["presence", "thinking", "Checking", "indexes"]);
     expect(args.command).toBe("presence");
@@ -462,5 +500,32 @@ describe("argParsing", () => {
     const proc = Bun.spawnSync([process.execPath, "src/cli.ts", "-V"], { cwd: repoRoot });
     expect(proc.exitCode).not.toBe(0);
     expect(new TextDecoder().decode(proc.stdout)).not.toMatch(/^samograph \d+\.\d+\.\d+/);
+  });
+
+  it("join --intro flag and --intro-text are parsed", () => {
+    const args = parseArgs(["join", "https://zoom.us/j/1", "--intro", "--intro-text", "Hola"]);
+    expect(args.intro).toBe(true);
+    expect(args.intro_text).toBe("Hola");
+  });
+
+  it("join intro defaults: off, no custom text", () => {
+    const args = parseArgs(["join", "https://zoom.us/j/1"]);
+    expect(args.intro).toBe(false);
+    expect(args.intro_text).toBeNull();
+  });
+
+  it("intro command parses --intro-text, --context, --bot-id", () => {
+    const args = parseArgs(["intro", "--intro-text", "Hi there", "--context", "--bot-id", "bot-9"]);
+    expect(args.command).toBe("intro");
+    expect(args.intro_text).toBe("Hi there");
+    expect(args.context).toBe(true);
+    expect(args.bot_id).toBe("bot-9");
+  });
+
+  it("intro command defaults: no custom text, context off", () => {
+    const args = parseArgs(["intro"]);
+    expect(args.intro_text).toBeNull();
+    expect(args.context).toBe(false);
+    expect(args.bot_id).toBeNull();
   });
 });

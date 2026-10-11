@@ -9,13 +9,20 @@ __pycache__/
 !apple-touch-icon.png
 !favicon-192.png
 !favicon-512.png
+!apps/web/public/robot-mark.png
+!apps/web/public/favicon-32.png
 !docs/logos/*.png
 node_modules/
 .venv/
 dist/
-bun.lock
 .DS_Store
 
 # Demo recordings (generated, not committed)
 demo/*.cast
 demo/*.gif
+
+# Local dev stack runtime (scripts/dev-local.sh) — logs + pids, never committed
+.dev-local/
+
+# samospec local scratch state (spec rounds, reviews, config) — never committed
+.samo/

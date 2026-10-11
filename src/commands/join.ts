@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { SILENT_MP3_B64 } from "../silentMp3.ts";
 import { RECALL_BASE, ExitError, stateFile } from "../config.ts";
 import { resolveNewTranscriptFile } from "../transcript.ts";
 import { resolveVideoFrameDir, resolveVideoFrameFile } from "../frameStore.ts";
@@ -10,6 +11,8 @@ import { botName } from "../botName.ts";
 import { loadState, saveState } from "../state.ts";
 import type { ParsedArgs } from "../args.ts";
 import { makeRecallClient, type RecallClient } from "../recall.ts";
+import { postIntroOnJoin } from "./intro.ts";
+import { DEFAULT_INTRO_TEXT } from "../introText.ts";
 import { probeTunnelHealth, type TunnelProbeResult } from "../server.ts";
 import { startCloudflared, type CloudflaredTunnel } from "../tunnel.ts";
 import {
@@ -458,7 +461,9 @@ export async function cmdJoin(
     {
       type: "webhook",
       url: webhookUrl,
-      events: ["transcript.data"],
+      // Incoming meeting chat (#188) rides the same webhook callback as the
+      // transcript; the server renders it into the transcript as `(chat)`.
+      events: ["transcript.data", "participant_events.chat_message"],
     },
   ];
 
@@ -561,6 +566,13 @@ export async function cmdJoin(
       },
     };
   }
+  if (args.enable_voice) {
+    // Required by Recall for POST /bot/{id}/output_audio/ (used by
+    // `samograph say`). The clip is silent, so nothing audible plays on join.
+    payload.automatic_audio_output = {
+      in_call_recording: { data: { kind: "mp3", b64_data: SILENT_MP3_B64 } },
+    };
+  }
   if (args.variant) {
     payload.variant = {
       zoom: args.variant,
@@ -582,6 +594,8 @@ export async function cmdJoin(
     started_at: new Date().toISOString(),
     dict: args.dict ?? null,
     variant: args.variant ?? null,
+    chime: args.chime ?? null,
+    voice_enabled: args.enable_voice === true,
     meeting_url: args.url,
     transcript_file: transcriptFile,
   };
@@ -663,6 +677,19 @@ export async function cmdJoin(
   }
   process.stdout.write(`To stop:                      samograph leave\n`);
   process.stdout.write(`--------------------------\n`);
+
+  if (args.intro) {
+    // Best-effort, non-fatal, fire-and-forget: poll the bot status in the
+    // background and post a short self-introduction once it is admitted, so
+    // `join` returns promptly and the agent can start `watch` without waiting
+    // ~30s. Default text is English — at join time there is no transcript yet
+    // to detect the call's language. postIntroOnJoin never throws.
+    const introText =
+      args.intro_text && args.intro_text.trim()
+        ? args.intro_text.trim()
+        : DEFAULT_INTRO_TEXT;
+    void postIntroOnJoin(recall, bid, introText);
+  }
   } catch (err) {
     cleanupUnsaved();
     throw err;

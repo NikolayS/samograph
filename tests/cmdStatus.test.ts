@@ -10,6 +10,7 @@ function makeRecall(bot: unknown): RecallClient {
     async leaveCall() { return new Response(); },
     async getBot() { return bot as Record<string, unknown>; },
     async sendChat() { return new Response(); },
+    async outputAudio() { return new Response(); },
     async screenshot() { return new Response(); },
     async createBot() { return { id: "x" }; },
   };

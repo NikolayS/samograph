@@ -12,6 +12,8 @@ import {
   sanitizeReactionCount,
   withReaction,
   REACTION_MAX_COUNT,
+  withChime,
+  presencePageHtml,
   type PresenceSnapshot,
 } from "../src/presence.ts";
 
@@ -288,5 +290,37 @@ describe("withReaction", () => {
     expect(Number.isNaN(Date.parse(next.reaction?.at ?? ""))).toBe(false);
     expect(next.state).toBe("acting");
     expect(next.activities).toBe(base.activities);
+  });
+});
+
+describe("newPresenceSnapshot chime", () => {
+  it("starts with no chime", () => {
+    expect(newPresenceSnapshot().chime).toBeNull();
+  });
+});
+
+describe("withChime", () => {
+  it("stamps a chime timestamp and bumps updated_at without touching activities", () => {
+    const base = newPresenceSnapshot("listening", "Listening", [
+      { kind: "heard" as const, label: "Alice", text: "hi", at: "2024-01-01T00:00:00.000Z" },
+    ]);
+    const next = withChime(base);
+    expect(next.chime).not.toBeNull();
+    expect(Number.isNaN(Date.parse(next.chime?.at ?? ""))).toBe(false);
+    expect(next.state).toBe("listening");
+    expect(next.activities).toBe(base.activities);
+  });
+});
+
+describe("presencePageHtml polling", () => {
+  it("starts the poll loop on every background, including the static robot avatar", () => {
+    const html = presencePageHtml();
+    const dispatch = html.slice(html.indexOf('if (backgroundMode === "robot")'));
+    // The plasma-only branch ends here; pollLoop() must run after the dispatch,
+    // not nested inside it, so the static robot avatar still polls for chimes.
+    const elseClose = dispatch.indexOf("}", dispatch.indexOf("initFpsProbe();"));
+    const pollAt = dispatch.indexOf("pollLoop();");
+    expect(elseClose).toBeGreaterThan(-1);
+    expect(pollAt).toBeGreaterThan(elseClose);
   });
 });

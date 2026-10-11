@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/app-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Bun/Hono API: magic-link auth, /calls, share-token mint/revoke (SPEC §4.1)."
+}

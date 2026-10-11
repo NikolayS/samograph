@@ -1,0 +1,8 @@
+{
+  "name": "@samograph/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Bun/Hono ingest: Recall webhook verify + normalizer + fan-out + watchdog (SPEC §4.1)."
+}

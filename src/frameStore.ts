@@ -6,7 +6,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { homedir } from "node:os";
 import { Buffer } from "node:buffer";
 import { samographDir } from "./config.ts";
@@ -244,8 +244,4 @@ export function decodeVideoSeparatePng(
     raw,
     metadata,
   };
-}
-
-export function absolutePath(path: string): string {
-  return resolve(path);
 }

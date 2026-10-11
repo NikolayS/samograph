@@ -17,6 +17,7 @@ function recallWithScreenshot(resp: Response): RecallClient {
     async sendChat() {
       return new Response();
     },
+    async outputAudio() { return new Response(); },
     async screenshot() {
       return resp;
     },

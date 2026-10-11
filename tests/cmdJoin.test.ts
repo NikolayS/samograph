@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { SILENT_MP3_B64 } from "../src/silentMp3.ts";
 import {
   writeFileSync,
   readFileSync,
@@ -36,6 +37,7 @@ function makeFakeRecall(captured: { payload?: any; rejectCreateBot?: boolean }):
     async sendChat() {
       return new Response("{}", { status: 200 });
     },
+    async outputAudio() { return new Response(); },
     async screenshot() {
       return new Response("{}", { status: 200 });
     },
@@ -149,7 +151,11 @@ describe("cmdJoin payload + saved state", () => {
     );
     expect(webhookEp).toBeDefined();
     expect(webhookEp.url).toStartWith(WEBHOOK_PREFIX);
-    expect(webhookEp.events).toEqual(["transcript.data"]);
+    // The webhook endpoint now also carries incoming meeting chat (#188).
+    expect(webhookEp.events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
 
     expect(rc.video_mixed_flv).toBeUndefined();
     const rtmpEp = rc.realtime_endpoints.find((e: any) =>
@@ -157,6 +163,23 @@ describe("cmdJoin payload + saved state", () => {
     );
     expect(rtmpEp).toBeUndefined();
     expect(p.variant).toBeUndefined();
+  });
+
+  it("subscribes participant_events.chat_message so incoming chat is delivered (#188)", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ name: "TARS" }), makeDeps(captured));
+
+    const rc = captured.payload.recording_config;
+    const webhookEp = rc.realtime_endpoints.find((e: any) =>
+      Array.isArray(e.events) && e.events.includes("transcript.data"),
+    );
+    expect(webhookEp).toBeDefined();
+    // chat rides the SAME webhook endpoint as transcript (one callback URL)
+    expect(webhookEp.events).toContain("participant_events.chat_message");
+    expect(webhookEp.events).toEqual([
+      "transcript.data",
+      "participant_events.chat_message",
+    ]);
   });
 
   it("--variant adds recall bot variant for output media rendering", async () => {
@@ -171,6 +194,19 @@ describe("cmdJoin payload + saved state", () => {
 
     const state = JSON.parse(readFileSync(sf, "utf8"));
     expect(state.variant).toBe("web_4_core");
+  });
+
+  it("--enable-voice adds automatic_audio_output (silent clip) for say; off by default", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ enable_voice: true }), makeDeps(captured));
+    const aao = captured.payload.automatic_audio_output;
+    expect(aao.in_call_recording.data.kind).toBe("mp3");
+    expect(aao.in_call_recording.data.b64_data).toBe(SILENT_MP3_B64);
+    expect(JSON.parse(readFileSync(sf, "utf8")).voice_enabled).toBe(true);
+
+    const off: { payload?: any } = {};
+    await cmdJoin(joinArgs({}), makeDeps(off));
+    expect(off.payload.automatic_audio_output).toBeUndefined();
   });
 
   it("--dict with an existing dict file adds keyterms", async () => {

@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { formatTranscriptLine } from "./transcript.ts";
+import { normalizeTranscriptEvent } from "./transcript.ts";
 import {
   decodeVideoSeparatePng,
   frameSourceAliases,
@@ -24,6 +24,7 @@ import {
   sanitizeReactionCount,
   sanitizeReactionEmoji,
   withReaction,
+  withChime,
   type PresenceSnapshot,
 } from "./presence.ts";
 
@@ -59,7 +60,7 @@ export async function probeTunnelHealth(
   try {
     const response = await fetchFn(
       `${publicBaseUrl}/health?nonce=${encodeURIComponent(nonce)}`,
-      { cache: "no-store" },
+      { cache: "no-store", signal: AbortSignal.timeout(5000) },
     );
     const headerCode = response.headers.get("ngrok-error-code");
     if (headerCode) {
@@ -86,6 +87,23 @@ export async function probeTunnelHealth(
 export const TUNNEL_WATCHDOG_INTERVAL_MS = 60_000;
 // Two consecutive failed probes before warning: one failure can be a blip.
 const TUNNEL_WATCHDOG_FAILURE_THRESHOLD = 2;
+
+/**
+ * The exact `SAMOGRAPH-WARNING` outage line — the single source of truth for the
+ * text both the CLI watchdog and the server-side ingest watchdog (#81) emit, so
+ * the wording never drifts. `cause` is an `ERR_NGROK_*` code or `"health check
+ * failed"` (the fallback when a probe fails without one).
+ */
+export function tunnelUnreachableWarning(cause: string): string {
+  return (
+    `SAMOGRAPH-WARNING: tunnel unreachable (${cause}) - transcript may be ` +
+    "incomplete; rejoin with --tunnel cloudflared or --webhook-base"
+  );
+}
+
+/** The exact `SAMOGRAPH-WARNING` recovery line (shared with the ingest watchdog, #81). */
+export const TUNNEL_RECOVERED_WARNING =
+  "SAMOGRAPH-WARNING: tunnel recovered - live transcript delivery resumed";
 
 export interface TunnelWatchdogHandle {
   /** Run one probe + state transition (exposed for tests; the schedule calls it). */
@@ -159,7 +177,7 @@ export function startTunnelWatchdog(
       consecutiveFailures = 0;
       if (inOutage) {
         inOutage = false;
-        emit("SAMOGRAPH-WARNING: tunnel recovered - live transcript delivery resumed");
+        emit(TUNNEL_RECOVERED_WARNING);
       }
       return;
     }
@@ -167,10 +185,7 @@ export function startTunnelWatchdog(
     if (consecutiveFailures >= TUNNEL_WATCHDOG_FAILURE_THRESHOLD && !inOutage) {
       inOutage = true;
       const cause = probe.ngrokErrorCode ?? "health check failed";
-      emit(
-        `SAMOGRAPH-WARNING: tunnel unreachable (${cause}) - transcript may be ` +
-          "incomplete; rejoin with --tunnel cloudflared or --webhook-base",
-      );
+      emit(tunnelUnreachableWarning(cause));
     }
   };
 
@@ -179,6 +194,143 @@ export function startTunnelWatchdog(
     options.intervalMs ?? TUNNEL_WATCHDOG_INTERVAL_MS,
   );
   return { tick, stop: () => scheduled.stop() };
+}
+
+// Transcript-stream watchdog polls more often than the tunnel one: a provider
+// failure (e.g. Deepgram `provider_connection_failed`) is a reported terminal
+// status, not a flaky probe, so we want to surface it within ~20s rather than
+// at the 60s tunnel cadence.
+export const TRANSCRIPT_WATCHDOG_INTERVAL_MS = 20_000;
+
+export interface TranscriptStreamStatus {
+  /** Recall recording transcript status code, e.g. "processing" | "failed" | "done". */
+  code: string | null;
+  /** Recall sub_code, e.g. "provider_connection_failed". */
+  subCode: string | null;
+}
+
+export interface TranscriptWatchdogHandle {
+  /** Run one status poll + state transition (exposed for tests; the schedule calls it). */
+  tick(): Promise<void>;
+  stop(): void;
+}
+
+export interface TranscriptWatchdogOptions {
+  /**
+   * Fetches the current Recall transcript-stream status. Falsy disables the
+   * watchdog entirely (e.g. no bot id available). Returning null means "no
+   * status yet" (recording not started) and is treated as healthy.
+   */
+  fetchStatus:
+    | (() => Promise<TranscriptStreamStatus | null>)
+    | null
+    | undefined;
+  transcriptPath: string;
+  intervalMs?: number;
+  now?: () => Date;
+  stderr?: (s: string) => void;
+  schedule?: (fn: () => void, ms: number) => { stop(): void };
+}
+
+/**
+ * Mid-call transcript-stream watchdog. The tunnel watchdog catches a dead
+ * tunnel, but a *healthy* tunnel that delivers frames while the transcription
+ * provider connection has failed looks, to the agent, exactly like "nobody has
+ * spoken yet" — the bot sits deaf and silent. This watchdog polls Recall's
+ * recording transcript status and, the moment it reports `failed`, appends a
+ * SAMOGRAPH-WARNING line to the transcript file (so `samograph watch` relays it
+ * immediately) and mirrors it to stderr. It warns once per outage and writes a
+ * single recovery line if the stream comes back. Transient status-fetch errors
+ * are ignored — only a reported `failed` status warns.
+ */
+export function startTranscriptWatchdog(
+  options: TranscriptWatchdogOptions,
+): TranscriptWatchdogHandle | null {
+  const fetchStatus = options.fetchStatus;
+  if (!fetchStatus) return null;
+
+  const now = options.now ?? (() => new Date());
+  const writeStderr =
+    options.stderr ?? ((s: string) => void process.stderr.write(s));
+
+  let inFailure = false;
+
+  const emit = (text: string): void => {
+    const line = `[${fmtTranscriptTs(now())}] ${text}`;
+    try {
+      appendFileSync(options.transcriptPath, line + "\n");
+    } catch {
+      // Transcript file may be gone (call torn down) — stderr still fires.
+    }
+    writeStderr(line + "\n");
+  };
+
+  const tick = async (): Promise<void> => {
+    let status: TranscriptStreamStatus | null;
+    try {
+      status = await fetchStatus();
+    } catch {
+      // Transient Recall API error — not a transcript failure; ignore.
+      return;
+    }
+    if (!status || !status.code) return;
+
+    if (status.code === "failed") {
+      if (!inFailure) {
+        inFailure = true;
+        const sub = status.subCode ?? "unknown";
+        emit(
+          `SAMOGRAPH-WARNING: transcript stream failed (${sub}) - no transcript ` +
+            "is being produced; check the transcription provider key/credits in " +
+            "the Recall dashboard",
+        );
+      }
+      return;
+    }
+
+    // Any non-failed status is healthy.
+    if (inFailure) {
+      inFailure = false;
+      emit(
+        "SAMOGRAPH-WARNING: transcript stream recovered - transcript delivery resumed",
+      );
+    }
+  };
+
+  const scheduled = (options.schedule ?? defaultSchedule)(
+    () => void tick(),
+    options.intervalMs ?? TRANSCRIPT_WATCHDOG_INTERVAL_MS,
+  );
+  return { tick, stop: () => scheduled.stop() };
+}
+
+/**
+ * Extract the transcript-stream status from a Recall bot object
+ * (`recordings[].media_shortcuts.transcript.status`). Returns the first
+ * recording that carries a transcript status, or null when none is present yet
+ * (e.g. recording not started). Defensive against the API shape changing.
+ */
+export function transcriptStatusFromBot(
+  bot: unknown,
+): TranscriptStreamStatus | null {
+  if (typeof bot !== "object" || bot === null) return null;
+  const recordings = (bot as { recordings?: unknown }).recordings;
+  if (!Array.isArray(recordings)) return null;
+  for (const rec of recordings) {
+    const status = (
+      rec as {
+        media_shortcuts?: { transcript?: { status?: unknown } };
+      }
+    )?.media_shortcuts?.transcript?.status;
+    if (status && typeof status === "object") {
+      const code = (status as { code?: unknown }).code;
+      if (typeof code === "string") {
+        const sub = (status as { sub_code?: unknown }).sub_code;
+        return { code, subCode: typeof sub === "string" ? sub : null };
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -198,17 +350,20 @@ export function tokensEqual(
 
 /**
  * Process a webhook payload, appending a formatted transcript line to the
- * transcript file when the payload is a transcript.data event with words.
+ * transcript file when the payload is a spoken `transcript.data` event (with
+ * words) or an incoming `participant_events.chat_message` (#188), which is
+ * rendered with the ` (chat)` marker. Returns the appended line (or null when
+ * the payload is neither), so the caller can drive presence "heard" activity.
  */
 export async function handleWebhook(
   payload: unknown,
   transcriptPath: string,
 ): Promise<string | null> {
-  const line = formatTranscriptLine(payload);
-  if (line !== null) {
-    appendFileSync(transcriptPath, line + "\n");
+  const normalized = normalizeTranscriptEvent(payload);
+  if (normalized !== null) {
+    appendFileSync(transcriptPath, normalized.line + "\n");
   }
-  return line;
+  return normalized?.line ?? null;
 }
 
 export interface ServeOptions {
@@ -452,6 +607,15 @@ export function serve(
         const count = sanitizeReactionCount(rawPayload.count);
         presence = withReaction(presence, emoji, count);
         return Response.json({ ok: true, reaction: presence.reaction });
+      }
+      if (req.method === "POST" && url.pathname === "/chime") {
+        if (!presenceWriteAuthorized(req)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        // No body needed — a chime is a pure transient signal. The page plays a
+        // sound once per new chime timestamp.
+        presence = withChime(presence);
+        return Response.json({ ok: true, chime: presence.chime });
       }
       if (url.pathname === "/video-ws") {
         if (!tokensEqual(url.searchParams.get("token"), opts.frameToken)) {
