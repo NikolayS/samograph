@@ -193,14 +193,16 @@ Pass it back as --since on the next call. Start with --since 0. Treat the
 cursor as opaque; it is never a timestamp (lines can arrive slightly out of
 timestamp order). Two kinds:
   s:<seq>:<offset>  from the active call's local server (join's callback
-                    server): durable file line number, preserved across server restarts. --wait returns
-                    the moment a line arrives. If the server is gone (after
-                    leave), the CLI falls back to the file at <offset>.
+                    server): durable file line number, preserved across
+                    server restarts. --wait returns the moment a line arrives.
+                    If the server is gone (after leave), the CLI falls back
+                    to the file at <offset>.
   b:<offset>        byte offset in the append-only transcript file. Used with
                     --file, when no call server is reachable, and after a
                     fallback. --wait polls the file.
 Only complete lines are returned. If a b: cursor is past the end of the file
-(file replaced), reading restarts at 0 with a SAMOGRAPH-WARNING on stderr.
+or not on a line boundary, reading restarts at 0 with a SAMOGRAPH-WARNING
+on stderr.
 When the call has ended, SAMOGRAPH-CALL-ENDED is printed on stderr (every
 later call reports it again).
 
