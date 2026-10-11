@@ -26,7 +26,7 @@ try {
   await cmdSay({ command: "say", message: "Hello.", bot_id: "fixture", also_chat: true, no_barge_in: true, cooldown: 0 }, {
     recall,
     tts: { env: { OPENAI_API_KEY: "fixture" }, fetchFn: async () => new Response("fake mp3"), which: () => null, run: async () => ({ code: 0, stderr: "" }), platform: "linux" },
-    durationOf: () => 0,
+    durationOf: () => 0.001,
   });
 } catch (error) {
   process.stderr.write(String(error));

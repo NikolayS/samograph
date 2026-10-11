@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cmdSay, BargeInWatcher, RECALL_OUTPUT_AUDIO_MAX_B64 } from "../src/commands/say.ts";
+import { SILENT_MP3_B64 } from "../src/silentMp3.ts";
 import type { RecallClient } from "../src/recall.ts";
 import type { TtsDeps } from "../src/tts.ts";
 import { parseArgs } from "../src/cli.ts";
@@ -144,7 +145,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "Hi.", voice: "nova", tts_model: "tts-1", tts_speed: 1.25 },
-        { recall: makeRecall(log), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall(log), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } finally { cap.restore(); }
     const req = tts.requests[0]!;
@@ -163,7 +164,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "Hi." },
-        { recall: makeRecall(log), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall(log), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } finally { cap.restore(); }
     const req = tts.requests[0]!;
@@ -213,7 +214,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "Раз два три. Четыре пять шесть.", max_words: 2 },
-        { recall: makeRecall(log), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall(log), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } finally { cap.restore(); }
     expect(log.audio.join(" ")).toContain("Зачитать вслух?");
@@ -223,7 +224,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "One two three. Four five six.", max_words: 0, priority: "high" },
-        { recall: makeRecall(log2), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall(log2), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } finally { cap2.restore(); }
     expect(log2.audio).toEqual(["One two three.", "Four five six."]);
@@ -236,7 +237,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "Short note.", also_chat: true },
-        { recall: makeRecall(log), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall(log), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } finally { cap.restore(); }
     expect(log.chat).toEqual(["Short note."]);
@@ -352,7 +353,7 @@ describe("cmdSay", () => {
     let release!: () => void;
     const barrier = new Promise<void>(resolve => { release = resolve; });
     recall.sendChat = async () => { await barrier; return new Response("{}"); };
-    const deps = { recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 };
+    const deps = { recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 };
     const cap = capture();
     const first = cmdSay({ command: "say", message: "First.", also_chat: true }, deps);
     try {
@@ -374,7 +375,7 @@ describe("cmdSay", () => {
     try {
       await expect(cmdSay({ command: "say", message: "Hi." }, {
         recall: makeRecall({ events: [], audio: [], chat: [] }), tts: makeTts().deps,
-        now: clock.now, sleep: clock.sleep, durationOf: () => 0,
+        now: clock.now, sleep: clock.sleep, durationOf: () => 0.001,
       })).rejects.toThrow("already speaking");
       expect(readFileSync(join(dir, `owner-${owner}.json`), "utf8")).toBe(record);
     } finally { process.kill = kill; cap.restore(); }
@@ -385,7 +386,7 @@ describe("cmdSay", () => {
     const log: RecallLog = { events: [], audio: [], chat: [] };
     const recall = makeRecall(log);
     recall.sendChat = async () => { throw new Error("chat unavailable"); };
-    const deps = { recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 };
+    const deps = { recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 };
     await expect(cmdSay({ command: "say", message: "Fail.", also_chat: true }, deps)).rejects.toThrow("chat unavailable");
     expect(existsSync(join(tmp, ".samograph", "say.lock"))).toBe(false);
     const cap = capture();
@@ -425,7 +426,7 @@ describe("cmdSay", () => {
     const cap = capture();
     try {
       await cmdSay({ command: "say", message: "Do not play.", also_chat: true }, {
-        recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0,
+        recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001,
       });
     } finally { cap.restore(); }
     expect(log.audio).toEqual([]);
@@ -471,7 +472,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "Hi." },
-        { recall: makeRecall({ events: [], audio: [], chat: [] }, { audioStatus: 400 }), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall({ events: [], audio: [], chat: [] }, { audioStatus: 400 }), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } catch (e) { err = (e as Error).message; } finally { cap.restore(); }
     expect(err).toContain("output_audio failed: 400");
@@ -486,10 +487,48 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "Hi." },
-        { recall: makeRecall({ events: [], audio: [], chat: [] }), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall({ events: [], audio: [], chat: [] }), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } catch (e) { err = (e as Error).message; }
     expect(err).toContain("too large for Recall output_audio");
+  });
+
+  it("rejects unparseable provider audio before playback and releases ownership", async () => {
+    const clock = fakeClock();
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    const deps = { recall: makeRecall(log), tts: makeTts().deps, now: clock.now, sleep: clock.sleep };
+    const cap = capture();
+    try {
+      // The fake provider returns plain text: exercise the real MP3 parser.
+      await expect(cmdSay({ command: "say", message: "Invalid audio." }, deps)).rejects.toThrow("cannot determine audio duration");
+    } finally { cap.restore(); }
+    expect(log.audio).toEqual([]);
+    expect(existsSync(join(tmp, ".samograph", "say.lock"))).toBe(false);
+  });
+
+  it.each([0, -1, NaN, Infinity])("rejects invalid duration %s before posting audio", async (duration) => {
+    const clock = fakeClock();
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    await expect(cmdSay({ command: "say", message: "Hi." }, {
+      recall: makeRecall(log), tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => duration,
+    })).rejects.toThrow("cannot determine audio duration");
+    expect(log.audio).toEqual([]);
+  });
+
+  it("paces real MP3 frames using the default duration parser", async () => {
+    const clock = fakeClock();
+    const tts = makeTts();
+    tts.deps.fetchFn = async () => new Response(Buffer.from(SILENT_MP3_B64, "base64"));
+    const times: number[] = [];
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    const recall = makeRecall(log, { onAudio: () => times.push(clock.now()) });
+    const cap = capture();
+    try {
+      await cmdSay({ command: "say", message: "One. Two." }, { recall, tts: tts.deps, now: clock.now, sleep: clock.sleep });
+    } finally { cap.restore(); }
+    expect(times).toHaveLength(2);
+    // Fixture contains eleven 576-sample MPEG-2 frames at 24kHz: 264ms + 150ms gap.
+    expect(times[1]! - times[0]!).toBe(414);
   });
 
   it("no provider available -> clear error", async () => {
@@ -528,7 +567,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "A fairly long note. ".repeat(30), also_chat: true },
-        { recall: makeRecall({ events: [], audio: [], chat: [] }), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 },
+        { recall: makeRecall({ events: [], audio: [], chat: [] }), tts: tts.deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0.001 },
       );
     } finally { cap.restore(); }
     const all = cap.out.join("") + cap.err.join("");
@@ -543,7 +582,7 @@ describe("cmdSay", () => {
     try {
       await cmdSay(
         { command: "say", message: "One. Two.", out },
-        { recall: makeRecall(log), tts: makeTts().deps, durationOf: () => 0 },
+        { recall: makeRecall(log), tts: makeTts().deps, durationOf: () => 0.001 },
       );
     } finally { cap.restore(); }
     expect(readFileSync(out, "utf-8")).toBe("One.Two.");
