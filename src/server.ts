@@ -3,10 +3,12 @@ import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { normalizeTranscriptEvent } from "./transcript.ts";
+import { TranscriptLog, type TranscriptLogEntry } from "./transcriptLog.ts";
 import {
   decodeVideoSeparatePng,
-  frameSourceAliases,
-  normalizeFrameSource,
+  frameAgeSeconds,
+  selectFrame,
+  type StoredFrame,
   type DecodedVideoFrame,
   type VideoFrameMetadata,
 } from "./frameStore.ts";
@@ -115,6 +117,8 @@ export interface TunnelWatchdogOptions {
   /** Public tunnel base URL; falsy disables the watchdog entirely. */
   publicBase: string | null | undefined;
   transcriptPath: string;
+  /** Append a line to the transcript (default: append to transcriptPath). */
+  appendLine?: (line: string) => void;
   intervalMs?: number;
   fetch?: HealthFetch;
   nonce?: () => string;
@@ -164,7 +168,8 @@ export function startTunnelWatchdog(
   const emit = (text: string): void => {
     const line = `[${fmtTranscriptTs(now())}] ${text}`;
     try {
-      appendFileSync(options.transcriptPath, line + "\n");
+      if (options.appendLine) options.appendLine(line);
+      else appendFileSync(options.transcriptPath, line + "\n");
     } catch {
       // Transcript file may be gone (call torn down) — stderr still fires.
     }
@@ -226,6 +231,8 @@ export interface TranscriptWatchdogOptions {
     | null
     | undefined;
   transcriptPath: string;
+  /** Append a line to the transcript (default: append to transcriptPath). */
+  appendLine?: (line: string) => void;
   intervalMs?: number;
   now?: () => Date;
   stderr?: (s: string) => void;
@@ -258,7 +265,8 @@ export function startTranscriptWatchdog(
   const emit = (text: string): void => {
     const line = `[${fmtTranscriptTs(now())}] ${text}`;
     try {
-      appendFileSync(options.transcriptPath, line + "\n");
+      if (options.appendLine) options.appendLine(line);
+      else appendFileSync(options.transcriptPath, line + "\n");
     } catch {
       // Transcript file may be gone (call torn down) — stderr still fires.
     }
@@ -358,10 +366,12 @@ export function tokensEqual(
 export async function handleWebhook(
   payload: unknown,
   transcriptPath: string,
+  appendLine?: (line: string) => void,
 ): Promise<string | null> {
   const normalized = normalizeTranscriptEvent(payload);
   if (normalized !== null) {
-    appendFileSync(transcriptPath, normalized.line + "\n");
+    if (appendLine) appendLine(normalized.line);
+    else appendFileSync(transcriptPath, normalized.line + "\n");
   }
   return normalized?.line ?? null;
 }
@@ -371,34 +381,99 @@ export interface ServeOptions {
   frameToken?: string | null;
   presenceToken?: string | null;
   presenceWriteToken?: string | null;
+  /** Token for the local-only GET /transcript long-poll (header X-Samograph-Transcript-Token). */
+  transcriptToken?: string | null;
+  /** Shared numbered line log; serve() creates one when omitted. */
+  transcriptLog?: TranscriptLog;
   currentCallId?: () => string | null;
 }
 
-export interface LatestVideoFrame {
-  raw: Uint8Array | null;
-  metadata: VideoFrameMetadata | null;
-}
+/** Max seconds a GET /transcript long-poll may block. */
+export const TRANSCRIPT_WAIT_CAP_SECONDS = 60;
+/** SSE keepalive comment interval for GET /transcript/stream. */
+export const TRANSCRIPT_SSE_KEEPALIVE_MS = 15_000;
 
-function selectedFrame(
-  latest: LatestVideoFrame,
-  bySource: Map<string, LatestVideoFrame>,
-  source?: string | null,
-): LatestVideoFrame {
-  const key = normalizeFrameSource(source);
-  return key ? (bySource.get(key) ?? { raw: null, metadata: null }) : latest;
-}
+// Headers a reverse proxy or tunnel (ngrok, cloudflared, localtunnel) adds.
+// The tunnel client runs on this machine and connects to 127.0.0.1, so the
+// peer address of a tunneled request is loopback too; these headers and the
+// public Host are what tell it apart from a direct local request.
+const PROXY_HEADERS = [
+  "forwarded",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-real-ip",
+  "cf-connecting-ip",
+  "cf-ray",
+  "cdn-loop",
+  "true-client-ip",
+];
+const LOOPBACK_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const LOCAL_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-function frameInventory(bySource: Map<string, LatestVideoFrame>): VideoFrameMetadata[] {
-  const seen = new Set<string>();
-  const frames: VideoFrameMetadata[] = [];
-  for (const frame of bySource.values()) {
-    const sourceKey = frame.metadata?.source_key;
-    if (!frame.metadata || !sourceKey || seen.has(sourceKey)) continue;
-    seen.add(sourceKey);
-    frames.push(frame.metadata);
+/**
+ * True only for a request made directly on this machine: loopback peer,
+ * a loopback Host header, and no proxy/tunnel forwarding headers. Requests
+ * relayed through the public tunnel fail this check.
+ */
+export function isDirectLocalRequest(req: Request, peerAddress: string | null | undefined): boolean {
+  if (!peerAddress || !LOOPBACK_ADDRS.has(peerAddress)) return false;
+  for (const h of PROXY_HEADERS) {
+    if (req.headers.has(h)) return false;
   }
-  frames.sort((a, b) => String(a.source_key).localeCompare(String(b.source_key)));
-  return frames;
+  for (const name of req.headers.keys()) {
+    if (name.startsWith("ngrok-") || name.startsWith("x-forwarded-")) return false;
+  }
+  const host = req.headers.get("host");
+  if (!host) return false;
+  const hostname = host.replace(/:\d+$/, "").toLowerCase();
+  return LOCAL_HOSTNAMES.has(hostname);
+}
+
+function wireEntry(e: TranscriptLogEntry): Omit<TranscriptLogEntry, "offset"> {
+  return { seq: e.seq, ts: e.ts, speaker: e.speaker, text: e.text, line: e.line };
+}
+
+function withAge(frame: StoredFrame, now = Date.now()): VideoFrameMetadata {
+  return { ...frame.metadata, age_seconds: frameAgeSeconds(frame, now) };
+}
+
+const MAX_FRAME_WAIT_MS = 10_000;
+
+function intParam(url: URL, name: string): number {
+  const v = Number(url.searchParams.get(name) ?? "");
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/**
+ * Select a frame; if it is missing or older than max_age_ms, wait up to
+ * wait_ms (bounded) for a fresh one so the first request returns the
+ * current view instead of a stale/wrong-type frame.
+ */
+async function selectFrameWaiting(
+  frames: Map<string, StoredFrame>,
+  url: URL,
+): Promise<StoredFrame | null> {
+  const source = url.searchParams.get("source");
+  const maxAge = intParam(url, "max_age_ms");
+  const waitMs = Math.min(intParam(url, "wait_ms"), MAX_FRAME_WAIT_MS);
+  const deadline = Date.now() + waitMs;
+  let frame = selectFrame(frames.values(), source);
+  while (
+    (frame === null || (maxAge > 0 && Date.now() - frame.receivedAt > maxAge)) &&
+    Date.now() < deadline
+  ) {
+    await new Promise((r) => setTimeout(r, 100));
+    frame = selectFrame(frames.values(), source);
+  }
+  return frame;
+}
+
+function inventory(frames: Map<string, StoredFrame>): VideoFrameMetadata[] {
+  const now = Date.now();
+  return [...frames.values()]
+    .map((f) => withAge(f, now))
+    .sort((a, b) => String(a.source_key).localeCompare(String(b.source_key)));
 }
 
 export function callIdFromStateFile(path?: string | null): string | null {
@@ -424,9 +499,8 @@ export function serve(
     typeof options === "string" || options === null
       ? { webhookToken: options }
       : options;
-  const latestVideoFrame: LatestVideoFrame = { raw: null, metadata: null };
   let presence: PresenceSnapshot = newPresenceSnapshot();
-  const framesBySource = new Map<string, LatestVideoFrame>();
+  const framesBySource = new Map<string, StoredFrame>();
   const frameAuthorized = (req: Request): boolean =>
     tokensEqual(req.headers.get("X-Samograph-Frame-Token"), opts.frameToken);
   // The read token rides in the page URL handed to Recall, so it must never
@@ -440,6 +514,8 @@ export function serve(
     tokensEqual(req.headers.get("X-Samograph-Presence-Token"), opts.presenceToken);
   const presenceWriteAuthorized = (req: Request): boolean =>
     tokensEqual(req.headers.get("X-Samograph-Presence-Token"), opts.presenceWriteToken);
+  const transcriptLog = opts.transcriptLog ?? new TranscriptLog(transcriptPath);
+  const appendLine = (line: string): void => void transcriptLog.append(line);
   return Bun.serve({
     port,
     hostname: "127.0.0.1",
@@ -468,7 +544,7 @@ export function serve(
         } catch {
           payload = {};
         }
-        const transcriptLine = await handleWebhook(payload, transcriptPath);
+        const transcriptLine = await handleWebhook(payload, transcriptPath, appendLine);
         if (transcriptLine !== null) {
           const activity = activityFromTranscriptLine(transcriptLine);
           if (activity !== null) {
@@ -488,33 +564,117 @@ export function serve(
           marker: HEALTH_MARKER,
         });
       }
+      if (
+        req.method === "GET" &&
+        (url.pathname === "/transcript" || url.pathname === "/transcript/stream")
+      ) {
+        // Local-only: never served through the public tunnel, even with a
+        // valid token. 404 (not 403) so the tunnel does not reveal it exists.
+        if (!isDirectLocalRequest(req, server.requestIP(req)?.address)) {
+          return new Response("Not Found", { status: 404 });
+        }
+        if (!tokensEqual(req.headers.get("X-Samograph-Transcript-Token"), opts.transcriptToken)) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        const sinceRaw = url.searchParams.get("since") ?? req.headers.get("Last-Event-ID") ?? "0";
+        const since = Number(sinceRaw);
+        if (!/^\d+$/.test(sinceRaw) || !Number.isSafeInteger(since)) {
+          return Response.json({ error: "invalid since" }, { status: 400 });
+        }
+        const limitRaw = url.searchParams.get("limit");
+        const limit = limitRaw === null ? undefined : Number(limitRaw);
+        if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+          return Response.json({ error: "invalid limit" }, { status: 400 });
+        }
+        if (url.pathname === "/transcript/stream") {
+          // Server-Sent Events: one event per line, id = seq, so a client can
+          // reconnect with Last-Event-ID (or ?since=) and miss nothing.
+          server.timeout(req, 0);
+          let unsubscribe = (): void => {};
+          let keepalive: ReturnType<typeof setInterval> | undefined;
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              const enc = new TextEncoder();
+              const send = (s: string) => {
+                try { controller.enqueue(enc.encode(s)); } catch { unsubscribe(); }
+              };
+              send(": samograph transcript stream\n\n");
+              unsubscribe = transcriptLog.subscribe((e) => {
+                send(`id: ${e.seq}\ndata: ${JSON.stringify({ ...wireEntry(e), offset: e.offset })}\n\n`);
+              }, since, (error) => {
+                if (keepalive) clearInterval(keepalive);
+                controller.error(error);
+              });
+              keepalive = setInterval(() => send(": keepalive\n\n"), TRANSCRIPT_SSE_KEEPALIVE_MS);
+            },
+            cancel() {
+              unsubscribe();
+              if (keepalive) clearInterval(keepalive);
+            },
+          });
+          req.signal.addEventListener("abort", () => {
+            unsubscribe();
+            if (keepalive) clearInterval(keepalive);
+          });
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-store",
+            },
+          });
+        }
+        const waitRaw = url.searchParams.get("wait") ?? "0";
+        const waitSec = Number(waitRaw);
+        if (!Number.isFinite(waitSec) || waitSec < 0) {
+          return Response.json({ error: "invalid wait" }, { status: 400 });
+        }
+        const waitCapped = Math.min(waitSec, TRANSCRIPT_WAIT_CAP_SECONDS);
+        // Bun's default idle timeout (10s) would cut a long-poll short.
+        server.timeout(req, Math.ceil(waitCapped) + 10);
+        const page = await transcriptLog.wait(since, waitCapped * 1000, limit);
+        return Response.json(
+          {
+            lines: page.lines.map(wireEntry),
+            next: page.next,
+            offset: page.offset,
+            reset: page.reset,
+            ended: page.ended,
+          },
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      }
       if (req.method === "GET" && url.pathname === "/frame") {
         if (!frameAuthorized(req)) {
           return new Response("", { status: 403 });
         }
-        const frame = selectedFrame(latestVideoFrame, framesBySource, url.searchParams.get("source"));
-        if (frame.raw === null) {
+        const frame = await selectFrameWaiting(framesBySource, url);
+        if (frame === null) {
           return new Response("", { status: 404 });
         }
         return new Response(frame.raw, {
-          headers: { "Content-Type": "image/png" },
+          headers: {
+            "Content-Type": "image/png",
+            // Metadata of exactly this frame, so the client need not race a
+            // second /frame.json request that may pick a newer frame.
+            "X-Samograph-Frame-Metadata": Buffer.from(JSON.stringify(withAge(frame))).toString("base64"),
+          },
         });
       }
       if (req.method === "GET" && url.pathname === "/frame.json") {
         if (!frameAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
-        const frame = selectedFrame(latestVideoFrame, framesBySource, url.searchParams.get("source"));
-        if (frame.metadata === null) {
+        const frame = await selectFrameWaiting(framesBySource, url);
+        if (frame === null) {
           return Response.json({ error: "no frame" }, { status: 404 });
         }
-        return Response.json(frame.metadata);
+        return Response.json(withAge(frame));
       }
       if (req.method === "GET" && url.pathname === "/frames.json") {
         if (!frameAuthorized(req)) {
           return Response.json({ error: "forbidden" }, { status: 403 });
         }
-        return Response.json({ frames: frameInventory(framesBySource) });
+        return Response.json({ frames: inventory(framesBySource) });
       }
       if (req.method === "GET" && url.pathname === "/presence") {
         if (!presencePageAuthorized(req, url)) {
@@ -599,6 +759,9 @@ export function serve(
         } catch {
           payload = {};
         }
+        if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+          return Response.json({ error: "invalid reaction payload" }, { status: 400 });
+        }
         const rawPayload = payload as { emoji?: unknown; count?: unknown };
         const emoji = sanitizeReactionEmoji(rawPayload.emoji);
         if (emoji === null) {
@@ -643,12 +806,11 @@ export function serve(
           opts.currentCallId?.() ?? null,
         );
         if (decoded === null) return;
-        latestVideoFrame.raw = decoded.raw;
-        latestVideoFrame.metadata = decoded.metadata;
-        const frame = { raw: decoded.raw, metadata: decoded.metadata };
-        for (const alias of frameSourceAliases(decoded.metadata)) {
-          framesBySource.set(alias, frame);
-        }
+        framesBySource.set(decoded.metadata.source_key ?? "latest", {
+          raw: decoded.raw,
+          metadata: decoded.metadata,
+          receivedAt: Date.now(),
+        });
       },
     },
   });

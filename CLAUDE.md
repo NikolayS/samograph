@@ -42,6 +42,8 @@ Start `watch` immediately after `join` with your persistent monitor. Keep it run
 [timestamp] Speaker: utterance
 ```
 
+If you cannot keep a persistent monitor, read incrementally instead: `samograph transcript --since 0 --wait 60 --json` returns `{"lines":[...],"cursor":"...","ended":bool,"reset":bool}`; pass `cursor` back unchanged as `--since` on the next call (it is opaque: `s:...` from the live call server, `b:...` from the file). Stop when `ended` is true. Never filter by timestamp: lines can arrive slightly out of timestamp order.
+
 React in your agent session. Read every line. Use meeting chat only for deliberate call-visible messages (and never a blocking terminal prompt; see Hard Rules below):
 
 ```bash
@@ -142,7 +144,9 @@ samograph frame --out /tmp/call.png
 samograph frame --archive
 ```
 
-`samograph frames` lists source keys such as `type:screen_share` and `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
+`samograph frames` lists one row per (participant, stream) with its age, e.g. `participant:300:webcam` and `participant:300:screenshare` (a sharer has both). `frame --source` accepts those keys, `participant:300` (that person's fresh screenshare, else webcam), and aliases `screen` (newest screenshare from anyone) and `webcam`.
+
+When someone shares their screen, use `samograph frame --source screen` (plain `samograph frame` also prefers a screenshare received in the last 10s). `frame` waits up to 5s for a frame no older than 10s (including explicit sources), prints `FRAME_INFO: ... age=Ns` to stderr, and `FRAME_STALE` if the frame is older than 10s.
 
 `--archive` creates a timestamped filename with bot id, source type, and participant id.
 

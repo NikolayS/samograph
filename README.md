@@ -239,7 +239,9 @@ samograph frame --out /tmp/call.png
 samograph frame --archive
 ```
 
-`frames` lists buffered source keys such as `type:screen_share` or `participant:100`. `frame --source` accepts those keys, plus aliases like `screen`, `screen_share`, and `webcam`.
+`samograph frames` lists one row per (participant, stream) with its age, e.g. `participant:300:webcam` and `participant:300:screenshare` (a sharer has both). `frame --source` accepts those keys, `participant:300` (that person's fresh screenshare, else webcam), and aliases `screen` (newest screenshare from anyone) and `webcam`.
+
+When someone shares their screen, use `samograph frame --source screen` (plain `samograph frame` also prefers a screenshare received in the last 10s). `frame` waits up to 5s for a frame no older than 10s (including explicit sources), prints `FRAME_INFO: ... age=Ns` to stderr, and `FRAME_STALE` if the frame is older than 10s.
 
 Archive filenames include call id, UTC timestamp, source type, and participant id. Source type and participant id come from the Recall event metadata and may be `unknown` if Recall does not provide them.
 
@@ -250,7 +252,7 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `join --webhook-base URL` - use an existing public tunnel (localtunnel, cloudflared quick tunnel, etc.) pointing at `--port` instead of starting one. Mutually exclusive with `--tunnel`. E.g. run `npx localtunnel --port 8080`, then pass the printed `https://*.loca.lt` URL here. The join-time health round-trip still verifies it relays requests.
 - `join --variant web_4_core` - ask Recall to run the output-media webpage on a larger bot instance. Use this when the camera webpage reports low render FPS or looks choppy. `web` is the default Recall instance; `web_gpu` is available for WebGL-heavy pages.
 - `join --no-presence` - join without the presence camera page and skip the camera preflight (e.g. when the tunnel serves an interstitial).
-- `join --presence-bg MODE` - presence camera background: `sphere` (default), `field`, `static` (cheapest), or `cycle` (alternates field/sphere); fixed at join time.
+- `join --presence-bg MODE` - presence camera background: `robot` (default, the static samograph avatar from `docs/avatar.png`), `sphere`, `field`, `static` (cheapest), or `cycle`; fixed at join time.
 - `join --chime NAME` - default chat chime for the session (saved in state), played into the call audio when the bot posts a meeting-chat message. Defaults to `blip`. `chat --chime NAME` overrides it per message. Run `samograph chimes` for the list.
 - `join --enable-voice` - configure Recall `automatic_audio_output` (a silent clip) so `say` can play speech into the call. Recall requires it for `output_audio`.
 - `join --frame-dir DIR` - where on-demand frame files are written.
@@ -286,6 +288,21 @@ Archive filenames include call id, UTC timestamp, source type, and participant i
 - `frame [--source SOURCE] [--out FILE] [--archive]` - write an in-memory frame to disk on demand.
 - `status` - show bot id, name, Recall status code, transcript line count, transcript file path, and frame source metadata.
 - `transcript` - print the Recall post-call transcript if available, otherwise print the local transcript file.
+- `transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]` - incremental read for agents: print only the live transcript lines added after `CURSOR`, then exit. The next cursor goes to stderr as `SAMOGRAPH-CURSOR: <cursor>`; pass it back as `--since` on the next call, and start with `--since 0`. `--json` prints one object instead: `{"lines":[...],"cursor":"...","ended":bool,"reset":bool}`. `--wait` long-polls: it blocks until at least one new line exists, the call ends, or `SECONDS` pass (default 30), so a watcher needs no fixed sleep. Cursors are opaque and are never timestamps: lines can be appended slightly out of timestamp order and the end marker uses local time, so a timestamp filter would drop or repeat lines. There are two kinds:
+  - `s:<seq>:<offset>` - from the active call's local callback server (see `GET /transcript` below): `seq` numbers durable lines during this call, preserving sequence numbers across server restarts. With `--wait`, the call returns the moment a line arrives. If the server is gone (for example after `leave`), the CLI falls back to the file at `offset`.
+  - `b:<offset>` - a byte offset in the append-only transcript file. Used with `--file`, when no call server is reachable, and after a fallback. With `--wait`, the CLI polls the file. Only complete lines are returned (a half-written trailing line waits for the next call). If the offset is past the end of the file or not on a line boundary (the file was replaced), reading restarts at 0 with a `SAMOGRAPH-WARNING` on stderr and `"reset": true`.
+
+  After `leave`, every call reports `SAMOGRAPH-CALL-ENDED` on stderr (`"ended": true`). Example watcher loop:
+
+  ```bash
+  c=0
+  while out=$(samograph transcript --since "$c" --wait 60 --json); do
+    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq -r .cursor)
+    [ "$(echo "$out" | jq .ended)" = true ] && break
+  done
+  ```
+
+  The callback server that `join` starts also serves this directly, for agents that prefer HTTP: `GET http://127.0.0.1:<port>/transcript?since=<seq>&wait=<seconds>[&limit=N]` with header `X-Samograph-Transcript-Token: <transcript_token from state.json>` returns `{"lines":[{"seq","ts","speaker","text","line"}],"next":<seq>,"offset":<bytes>,"reset":bool,"ended":bool}`. If no line is newer than `since`, it waits up to `wait` seconds (maximum 60) and returns as soon as one arrives. Each client keeps its own `since`. `GET /transcript/stream?since=<seq>` is the same feed as Server-Sent Events (`id` = seq, so `Last-Event-ID` resumes). Both endpoints answer only direct local requests: a request that comes through the public tunnel (a non-local `Host` or any `X-Forwarded-*`, `Forwarded`, `Cf-Connecting-Ip`, `Cf-Ray`, `ngrok-*`, or `X-Real-IP` header) gets 404, even with a valid token. The URL and token are in `state.json` as `local_transcript_url` and `transcript_token`.
 - `screenshot [--out FILE]` - capture the local Mac screen with `screencapture`; use as a fallback when frame is not available.
 - `leave` - remove bot, stop local processes, and clean state.
 - `dicts` - list keyword dictionaries.
