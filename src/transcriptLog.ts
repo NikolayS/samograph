@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { SENTINEL_RE } from "./transcript.ts";
 
 /**
@@ -53,7 +53,8 @@ export class TranscriptLog {
   private offset = 0;
   private endedSeq: number | undefined;
   private pending = Buffer.alloc(0);
-  private snapshot: Buffer = Buffer.alloc(0);
+  private tail: Buffer = Buffer.alloc(0);
+  private fileIdentity = "";
   private fileVersion = "";
 
   constructor(readonly path: string) {
@@ -62,39 +63,57 @@ export class TranscriptLog {
 
   /** Pick up durable lines written by another process (notably `leave`). */
   private sync(): void {
-    let data: Buffer;
-    let version: string;
+    let fd: number | undefined;
     try {
-      const stat = statSync(this.path, { bigint: true });
-      version = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-      if (version === this.fileVersion) return;
-      data = readFileSync(this.path);
+      const versionOf = (stat: NonNullable<ReturnType<typeof statSync>>) =>
+        `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+      const stat = statSync(this.path);
+      if (versionOf(stat) === this.fileVersion) return;
+      fd = openSync(this.path, "r");
+      const current = fstatSync(fd);
+      const identity = `${current.dev}:${current.ino}`;
+      const readRange = (start: number, length: number): Buffer => {
+        const buffer = Buffer.alloc(length);
+        let bytes = 0;
+        while (bytes < length) {
+          const count = readSync(fd!, buffer, bytes, length - bytes, start + bytes);
+          if (!count) break;
+          bytes += count;
+        }
+        return buffer.subarray(0, bytes);
+      };
+      // Rotation, shrink, or a changed durable tail invalidates the mirror.
+      // Normal appends read only a bounded tail plus the newly appended bytes.
+      const tail = current.size >= this.offset
+        ? readRange(this.offset - this.tail.length, this.tail.length) : Buffer.alloc(0);
+      if (identity !== this.fileIdentity || current.size < this.offset || !tail.equals(this.tail)) {
+        this.entries = [];
+        this.offset = 0;
+        this.pending = Buffer.alloc(0);
+        this.endedSeq = undefined;
+      }
+      const startOffset = this.offset - this.pending.length;
+      const data = Buffer.concat([this.pending, readRange(this.offset, Math.max(0, current.size - this.offset))]);
+      let start = 0;
+      for (let end = data.indexOf(10); end !== -1; end = data.indexOf(10, start)) {
+        this.offset = startOffset + end + 1;
+        this.record(data.subarray(start, end).toString("utf-8"));
+        start = end + 1;
+      }
+      this.pending = Buffer.from(data.subarray(start));
+      this.offset = startOffset + data.length;
+      this.tail = readRange(Math.max(0, this.offset - 64), Math.min(64, this.offset));
+      this.fileIdentity = identity;
+      this.fileVersion = versionOf(current);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.fileVersion = "";
         return;
       }
       throw error;
+    } finally {
+      if (fd !== undefined) closeSync(fd);
     }
-    // The durable prefix must still be ours, even after an equal-size rewrite
-    // or replacement. Size alone cannot distinguish rotation from append.
-    if (data.length < this.offset || !data.subarray(0, this.offset).equals(this.snapshot)) {
-      this.entries = [];
-      this.offset = 0;
-      this.pending = Buffer.alloc(0);
-      this.endedSeq = undefined;
-    }
-    // Revisit the incomplete tail, never decode a split UTF-8 character early.
-    let start = this.offset - this.pending.length;
-    for (let end = data.indexOf(10, start); end !== -1; end = data.indexOf(10, start)) {
-      this.offset = end + 1;
-      this.record(data.subarray(start, end).toString("utf-8"));
-      start = end + 1;
-    }
-    this.pending = Buffer.from(data.subarray(start));
-    this.offset = data.length;
-    this.snapshot = data;
-    this.fileVersion = version;
   }
 
   get lastSeq(): number {

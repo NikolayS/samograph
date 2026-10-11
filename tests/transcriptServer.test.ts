@@ -140,6 +140,18 @@ describe("GET /transcript long-poll", () => {
     expect(page.offset).toBe(4);
   });
 
+  it("does not reread the complete transcript on each append", () => {
+    log.append("x".repeat(100_000));
+    const read = spyOn(fs, "readFileSync");
+    const ranges = spyOn(fs, "readSync");
+    try {
+      log.append("next");
+      expect(read).not.toHaveBeenCalled();
+      expect(ranges.mock.calls.reduce((sum, call) => sum + Number((call as unknown[])[3]), 0)).toBeLessThan(512);
+      expect(log.since(1).lines.map(l => l.line)).toEqual(["next"]);
+    } finally { read.mockRestore(); ranges.mockRestore(); }
+  });
+
   it("rehydrates equal-size and larger replacement files", () => {
     log.append("old");
     writeFileSync(tf + ".new", "new\n");
@@ -154,7 +166,7 @@ describe("GET /transcript long-poll", () => {
   it("recovers when the file disappears between stat and read", () => {
     log.append("old");
     appendFileSync(tf, "external\n");
-    const read = spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+    const read = spyOn(fs, "statSync").mockImplementationOnce(() => {
       fs.unlinkSync(tf);
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     });
@@ -345,6 +357,33 @@ describe("transcript --since via the live server", () => {
     );
     expect(second.out).toBe("[2026-10-06 16:46:17] Bob: two\n");
     expect(second.err).toContain("SAMOGRAPH-CURSOR: s:2:");
+  });
+
+  it("repolls empty pages and preserves the full cursor in reset warnings", async () => {
+    let calls = 0;
+    const result = await capture(() => cmdTranscript(
+      { command: "transcript", transcript_since: "s:8:88", transcript_wait: 120, transcript_json: true },
+      { fetchFn: async (url) => {
+        const query = new URL(url).searchParams;
+        expect(Number(query.get("wait"))).toBeLessThanOrEqual(60);
+        expect(query.get("since")).toBe(calls === 0 ? "8" : "0");
+        calls++;
+        return Response.json(calls === 1
+          ? { lines: [], next: 0, offset: 0, reset: true, ended: false }
+          : { lines: [{ line: "new" }], next: 1, offset: 4, reset: false, ended: false });
+      } },
+    ));
+    expect(calls).toBe(2);
+    expect(JSON.parse(result.out)).toEqual({ lines: ["new"], cursor: "s:1:4", ended: false, reset: true });
+    expect(result.err).toContain("cursor s:8:88 is not valid for the current transcript");
+  });
+
+  it("advances a limited sentinel-only server page without emitting the sentinel", async () => {
+    log.append("speech");
+    const offset = log.since(1).offset;
+    log.append("[2026-10-06 18:46:30] SAMOGRAPH_CALL_ENDED");
+    const result = await capture(() => cmdTranscript({ command: "transcript", transcript_since: `s:1:${offset}`, transcript_limit: 1, transcript_json: true }));
+    expect(JSON.parse(result.out)).toEqual({ lines: [], cursor: `s:2:${readFileSync(tf).length}`, ended: true, reset: false });
   });
 
   it("warns before falling back when the live server rejects a token", async () => {

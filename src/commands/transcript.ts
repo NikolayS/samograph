@@ -109,7 +109,7 @@ async function sinceViaServer(
         cursor: `s:${page.next}:${page.offset}`,
         ended: page.ended ?? false,
         reset,
-        warning: reset ? `cursor s:${seq} is ahead of the live server log (server restarted?); restarting from its first line` : undefined,
+        warning: reset ? `cursor ${args.transcript_since ?? "0"} is not valid for the current transcript (file replaced/truncated or log changed); restarting from its first line` : undefined,
       };
     }
   }
