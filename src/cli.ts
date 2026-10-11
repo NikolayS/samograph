@@ -255,8 +255,7 @@ examples:
   react: `usage: samograph react <emoji> [--count N]
 
 Burst floating emoji across the bot camera so everyone in the call sees it.
-Visible only on a dynamic presence background (--presence-bg sphere|field|
-static|cycle); the default robot background is a static image.
+Visible on every presence background, including the default robot image.
 
 --count N   how many emoji fly per burst (1-24, default 8)
 
