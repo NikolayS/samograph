@@ -23,6 +23,7 @@ import { cmdAsk, DEFAULT_ASK_TIMEOUT_SECONDS, MAX_ASK_TIMEOUT_SECONDS } from "./
 import { parseOptions, resolveDefault } from "./answer.ts";
 import { TTS_PROVIDERS } from "./tts.ts";
 import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
+import { parseSinceCursor } from "./transcript.ts";
 
 const USAGE = `usage: samograph <command> [options]
 
@@ -45,6 +46,7 @@ commands:
   chimes
   presence <listening|thinking|speaking|acting|idle> [message]
   transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
+  transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]
   dicts
   watch
   notes <init|point|decision|action|transcript> [options]
@@ -273,14 +275,40 @@ examples:
   samograph notes transcript --from-start
 `,
   transcript: `usage: samograph transcript [--local] [--file FILE] [--cursor N] [--limit N] [bot_id]
+       samograph transcript --since CURSOR [--wait [SECONDS]] [--json] [--limit N] [--file FILE]
 
 Print a finished Recall.ai transcript, falling back to the local live transcript.
 
+With --since, print only the live transcript lines added after CURSOR and exit
+(incremental reads for agents). The next cursor is printed on stderr as
+  SAMOGRAPH-CURSOR: <cursor>
+Pass it back as --since on the next call. Start with --since 0. Treat the
+cursor as opaque; it is never a timestamp (lines can arrive slightly out of
+timestamp order). Two kinds:
+  s:<seq>:<offset>  from the active call's local server (join's callback
+                    server): durable file line number, preserved across
+                    server restarts. --wait returns the moment a line arrives.
+                    If the server is gone (after leave), the CLI falls back
+                    to the file at <offset>.
+  b:<offset>        byte offset in the append-only transcript file. Used with
+                    --file, when no call server is reachable, and after a
+                    fallback. --wait polls the file.
+Only complete lines are returned. If a b: cursor is past the end of the file
+or not on a line boundary, reading restarts at 0 with a SAMOGRAPH-WARNING
+on stderr.
+When the call has ended, SAMOGRAPH-CALL-ENDED is printed on stderr (every
+later call reports it again).
+
 options:
-  --cursor N   Start at transcript line N (0-based)
-  --file FILE  Read a local transcript file instead of Recall
-  --limit N    Return at most N lines and print the next cursor
-  --local      Read the active/default local transcript instead of Recall
+  --cursor N        Start at transcript line N (0-based)
+  --file FILE       Read a local transcript file instead of Recall
+  --limit N         Return at most N lines and print the next cursor
+  --local           Read the active/default local transcript instead of Recall
+  --since CURSOR    Print only lines after CURSOR (0 = from the start)
+  --wait [SECONDS]  With --since: block until at least one new line exists,
+                    the call ends, or SECONDS pass (default 30)
+  --json            With --since: print one JSON object instead:
+                    {"lines":[...],"cursor":"...","ended":bool,"reset":bool}
 
 examples:
   samograph transcript
@@ -288,6 +316,14 @@ examples:
   samograph transcript --file ~/.samograph/20260604_022915_transcript.txt --cursor 0 --limit 20
   samograph transcript --cursor 0 --limit 20
   samograph transcript --cursor 20 --limit 20 <bot_id>
+  samograph transcript --since 0 --json
+
+watcher loop (long-polls; no fixed sleep):
+  c=0
+  while out=$(samograph transcript --since "$c" --wait 60 --json); do
+    echo "$out" | jq -r '.lines[]'; c=$(echo "$out" | jq -r .cursor)
+    [ "$(echo "$out" | jq .ended)" = true ] && break
+  done
 `,
 };
 
@@ -319,7 +355,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     chat: new Set(["--bot-id", "--chime"]),
     chimes: new Set(),
     presence: new Set(),
-    transcript: new Set(["--cursor", "--file", "--limit"]),
+    transcript: new Set(["--cursor", "--file", "--limit", "--since"]),
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--doc-id", "--credentials", "--title", "--section", "--speaker", "--owner", "--due"]),
@@ -339,7 +375,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     chat: new Set(["--list-chimes"]),
     chimes: new Set(),
     presence: new Set(),
-    transcript: new Set(["--local"]),
+    transcript: new Set(["--local", "--json"]),
     dicts: new Set(),
     watch: new Set(),
     notes: new Set(["--from-start"]),
@@ -365,7 +401,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (eq !== -1) {
         const flag = tok.slice(0, eq);
         const val = tok.slice(eq + 1);
-        if (vFlags.has(flag)) {
+        if (vFlags.has(flag) || (command === "transcript" && flag === "--wait")) {
           opts[flag] = val;
         } else {
           throw new ArgError(`unrecognized arguments: ${tok}`);
@@ -374,6 +410,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       if (bFlags.has(tok)) {
         opts[tok] = true;
+        continue;
+      }
+      // `transcript --wait [SECONDS]`: optional value. Consume the next token
+      // only when it is a number, so `--wait <bot_id>`-style input still works.
+      if (command === "transcript" && tok === "--wait") {
+        const next = rest[i + 1];
+        if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
+          opts[tok] = next;
+          i += 1;
+        } else {
+          opts[tok] = true;
+        }
         continue;
       }
       if (vFlags.has(tok)) {
@@ -488,6 +536,34 @@ export function parseArgs(argv: string[]): ParsedArgs {
           throw new ArgError(`argument --limit: invalid positive integer: '${rawLimit}'`);
         }
         result.transcript_limit = l;
+      }
+      const rawSince = opts["--since"];
+      if (rawSince !== undefined) {
+        if (parseSinceCursor(String(rawSince)) === null) {
+          throw new ArgError(`argument --since: invalid cursor: '${rawSince}' (use 0 or a value printed as SAMOGRAPH-CURSOR)`);
+        }
+        if (rawCursor !== undefined) {
+          throw new ArgError("argument --since: not allowed with --cursor (--since is a byte cursor, --cursor a line index)");
+        }
+        if (result.bot_id) {
+          throw new ArgError("argument --since: reads the local transcript; use --file FILE instead of a bot_id");
+        }
+        result.transcript_since = String(rawSince);
+      }
+      const rawWait = opts["--wait"];
+      if (rawWait !== undefined) {
+        if (rawSince === undefined) {
+          throw new ArgError("argument --wait: requires --since");
+        }
+        const w = rawWait === true ? 30 : Number(rawWait);
+        if (!Number.isFinite(w) || w < 0) {
+          throw new ArgError(`argument --wait: invalid number of seconds: '${rawWait}'`);
+        }
+        result.transcript_wait = w;
+      }
+      result.transcript_json = opts["--json"] === true;
+      if (result.transcript_json && rawSince === undefined) {
+        throw new ArgError("argument --json: requires --since");
       }
       break;
     }
