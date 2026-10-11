@@ -18,6 +18,10 @@ import { cmdDoctor } from "./commands/doctor.ts";
 import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 import { cmdChimes } from "./commands/chimes.ts";
+import { cmdSay } from "./commands/say.ts";
+import { cmdAsk, DEFAULT_ASK_TIMEOUT_SECONDS, MAX_ASK_TIMEOUT_SECONDS } from "./commands/ask.ts";
+import { parseOptions, resolveDefault } from "./answer.ts";
+import { TTS_PROVIDERS } from "./tts.ts";
 import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
 import { parseSinceCursor } from "./transcript.ts";
 
@@ -31,11 +35,13 @@ Requires: Bun, RECALL_API_KEY env var (get one at recall.ai), and a tunnel:
 ngrok (default), cloudflared (--tunnel cloudflared), or your own via --webhook-base.
 
 commands:
-  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE] [--intro] [--intro-text TEXT] [--chime NAME]
+  join <url> [--name N] [--dict D] [--port P] [--transcript-dir DIR] [--rtmp-url URL] [--rtmp] [--no-ws-video] [--frame-dir DIR] [--tunnel ngrok|cloudflared] [--webhook-base URL] [--variant web|web_4_core|web_gpu] [--no-presence] [--presence-bg MODE] [--intro] [--intro-text TEXT] [--chime NAME] [--enable-voice]
   leave [bot_id]
   status [bot_id]
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID] [--chime NAME] [--list-chimes]
+  say <text> [--voice NAME] [--lang ru|en|auto] [--also-chat] [--provider P] [--max-words N] [--priority high] | say --stop
+  ask <question> [--options "A|B|C"] [--timeout 60] [--voice] [--default A]
   intro [--intro-text TEXT] [--context] [--bot-id ID]
   chimes
   presence <listening|thinking|speaking|acting|idle> [message]
@@ -89,6 +95,9 @@ options:
                          Default text is English (no transcript yet to detect
                          the call language).
   --intro-text TEXT      Custom introduction text for --intro (overrides default)
+  --enable-voice         Configure Recall automatic_audio_output (a short silent
+                         clip) so 'samograph say' can play speech. Recall's
+                         output_audio endpoint requires it at bot creation.
 
 examples:
   samograph join "https://meet.google.com/abc-defg-hij" --name Leo
@@ -131,6 +140,90 @@ examples:
   samograph chat "Short message to the meeting"
   samograph chat "Done" --chime bell
   samograph chat --list-chimes
+`,
+  say: `usage: samograph say <text> [options]
+       samograph say --stop
+
+Speak into the call: synthesize text to speech (MP3) and play it into the call
+audio via Recall output_audio, one sentence at a time. Blocks until done.
+Recall requires automatic_audio_output at bot creation: join with --enable-voice.
+
+Don't over-talk (defaults):
+  - Text over --max-words (default 40, ~15 s) is not read out. The bot says a
+    one-line ask ("I have a longer note... want me to read it out?") and posts
+    the full text to chat. --truncate speaks the first sentence(s) instead.
+  - Cooldown: a normal-priority say within --cooldown seconds (default 15) of
+    the previous one is refused. --priority high bypasses the cooldown.
+  - Interruptible: 'say --stop' stops it; a new transcript line from a human
+    (barge-in) stops the remaining sentences.
+
+options:
+  --voice NAME       Voice: ElevenLabs voice ID, OpenAI voice (alloy, nova, ...),
+                     or a macOS/espeak-ng voice (env SAMOGRAPH_TTS_VOICE)
+  --provider P       auto|${TTS_PROVIDERS.join("|")} (env SAMOGRAPH_TTS_PROVIDER;
+                     auto: ElevenLabs if ELEVENLABS_API_KEY, else OpenAI if
+                     OPENAI_API_KEY, else macOS say, else espeak-ng)
+  --model M          TTS model (env SAMOGRAPH_TTS_MODEL)
+  --speed X          Speaking speed multiplier, default 1 (env SAMOGRAPH_TTS_SPEED)
+  --lang ru|en|auto  Language for local voices and the ask line (default auto)
+  --also-chat        Also post the text to meeting chat
+  --max-words N      Spoken-length limit in words; 0 = no limit
+                     (env SAMOGRAPH_SAY_MAX_WORDS, default 40)
+  --ask-first        Long text: speak a short ask, full text to chat (default)
+  --truncate         Long text: speak the first sentence(s), full text to chat
+  --topic T          Topic for the ask line ("I have a longer note on T...")
+  --ask-text TEXT    Custom ask line
+  --priority P       normal|high; high bypasses the cooldown
+  --cooldown S       Seconds between normal-priority utterances
+                     (env SAMOGRAPH_SAY_COOLDOWN, default 15; 0 disables)
+  --no-barge-in      Do not stop when a human starts speaking
+  --out FILE         Only synthesize to an MP3 file (no call, no chat)
+  --bot-id ID        Target a specific bot (defaults to the active bot)
+  --stop             Stop the running say and ask Recall to stop output audio
+
+examples:
+  samograph say "The migration finished. All checks passed."
+  samograph say "Миграция завершена." --lang ru --also-chat
+  samograph say "$LONG_SUMMARY" --topic "the rollback plan"
+  samograph say "That number is wrong: it's 5 TB, not 5 GB." --priority high
+  samograph say --stop
+  samograph say "Test" --provider macos --out /tmp/test.mp3
+`,
+  ask: `usage: samograph ask <question> [options]
+
+Ask the call a question and wait (bounded) for the answer. Use this instead of
+any blocking terminal prompt (e.g. Claude Code AskUserQuestion) while in a
+call: a blocked agent stops reading the transcript and goes deaf.
+
+Posts the question to meeting chat (and speaks it with --voice), then watches
+the live transcript, which carries both speech and incoming chat, for an
+answer: an option (by name, number, ordinal, letter, or yes/no) or, without
+--options, the first human reply. Lines from the bot itself, SAMOGRAPH
+warnings, and lines that started before the question are ignored.
+
+Prints one JSON line to stdout:
+  {"question":..,"options":[..],"answer":..,"by":..,"source":"voice|chat",
+   "timed_out":false,"text":..,"heard":[..]}
+On timeout: answer = --default (or null), timed_out = true, and the bot
+announces the choice in chat (and by voice with --voice).
+After an answer it posts a short "Got it: B (Alice)." to chat.
+
+Run it in the background (e.g. Bash run_in_background) and keep reading the
+transcript while it waits.
+
+options:
+  --options "A|B|C"  Answer options, separated by "|"
+  --timeout S        Seconds to wait (default ${DEFAULT_ASK_TIMEOUT_SECONDS}, max ${MAX_ASK_TIMEOUT_SECONDS})
+  --default X        Answer on timeout: an option name or its number
+  --voice            Also speak the question (and the timeout note) via 'say';
+                     needs 'join --enable-voice', else chat only
+  --lang ru|en|auto  Language of the chat/voice wording (default: auto by script)
+  --bot-id ID        Target a specific bot (defaults to the active bot)
+
+examples:
+  samograph ask "Run the migration on staging first?" --options "yes|no" --default yes
+  samograph ask "Какой вариант берём?" --options "A|B|C" --default A --voice
+  samograph ask "Who owns the follow-up?" --timeout 90
 `,
   chimes: `usage: samograph chimes
 
@@ -253,6 +346,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   // Define which flags take a value per command.
   const valueFlags: Record<string, Set<string>> = {
     join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--intro-text", "--chime"]),
+    say: new Set(["--bot-id", "--voice", "--lang", "--provider", "--model", "--speed", "--max-words", "--topic", "--ask-text", "--priority", "--cooldown", "--out"]),
+    ask: new Set(["--bot-id", "--options", "--timeout", "--default", "--lang"]),
     intro: new Set(["--bot-id", "--intro-text"]),
     leave: new Set(),
     status: new Set(),
@@ -270,7 +365,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     _serve: new Set(["--port", "--transcript-file", "--webhook-token", "--call-id-file", "--frame-token", "--presence-token", "--presence-write-token", "--public-base"]),
   };
   const boolFlags: Record<string, Set<string>> = {
-    join: new Set(["--rtmp", "--no-ws-video", "--no-presence", "--intro"]),
+    join: new Set(["--rtmp", "--no-ws-video", "--no-presence", "--intro", "--enable-voice"]),
+    say: new Set(["--also-chat", "--stop", "--ask-first", "--truncate", "--no-barge-in"]),
+    ask: new Set(["--voice"]),
     intro: new Set(["--context"]),
     leave: new Set(),
     status: new Set(),
@@ -392,6 +489,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         );
       }
       result.intro = opts["--intro"] === true;
+      result.enable_voice = opts["--enable-voice"] === true;
       result.intro_text = (opts["--intro-text"] as string) ?? null;
       // Session default chime. Validate eagerly (like --variant/--presence-bg)
       // so a typo fails at join rather than silently falling back per-message.
@@ -494,6 +592,96 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.chime = (opts["--chime"] as string) ?? null;
       break;
     }
+    case "say": {
+      result.say_stop = opts["--stop"] === true;
+      if (!result.say_stop && positionals.length < 1) {
+        throw new ArgError("the following arguments are required: text");
+      }
+      result.message = positionals.join(" ");
+      result.bot_id = (opts["--bot-id"] as string) ?? null;
+      result.voice = (opts["--voice"] as string) ?? null;
+      result.tts_model = (opts["--model"] as string) ?? null;
+      result.topic = (opts["--topic"] as string) ?? null;
+      result.ask_text = (opts["--ask-text"] as string) ?? null;
+      result.out = (opts["--out"] as string) ?? null;
+      result.also_chat = opts["--also-chat"] === true;
+      result.no_barge_in = opts["--no-barge-in"] === true;
+      const lang = (opts["--lang"] as string) ?? null;
+      if (lang !== null && !["ru", "en", "auto"].includes(lang)) {
+        throw new ArgError(`argument --lang: invalid choice: '${lang}' (choose from ru, en, auto)`);
+      }
+      result.lang = lang;
+      const provider = (opts["--provider"] as string) ?? null;
+      if (provider !== null && !["auto", ...TTS_PROVIDERS].includes(provider)) {
+        throw new ArgError(
+          `argument --provider: invalid choice: '${provider}' (choose from auto, ${TTS_PROVIDERS.join(", ")})`,
+        );
+      }
+      result.tts_provider = provider;
+      const priority = (opts["--priority"] as string) ?? "normal";
+      if (priority !== "normal" && priority !== "high") {
+        throw new ArgError(`argument --priority: invalid choice: '${priority}' (choose from normal, high)`);
+      }
+      result.priority = priority;
+      if (opts["--ask-first"] === true && opts["--truncate"] === true) {
+        throw new ArgError("argument --truncate: not allowed with --ask-first");
+      }
+      result.long_mode = opts["--truncate"] === true ? "truncate" : "ask";
+      const num = (flag: string, positive: boolean): number | null => {
+        const raw = opts[flag];
+        if (raw === undefined) return null;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0 || (positive && n === 0)) {
+          throw new ArgError(`argument ${flag}: invalid ${positive ? "positive" : "non-negative"} number: '${raw}'`);
+        }
+        return n;
+      };
+      result.tts_speed = num("--speed", true);
+      const mw = num("--max-words", false);
+      if (mw !== null && !Number.isInteger(mw)) {
+        throw new ArgError(`argument --max-words: invalid non-negative integer: '${opts["--max-words"]}'`);
+      }
+      result.max_words = mw;
+      result.cooldown = num("--cooldown", false);
+      break;
+    }
+    case "ask": {
+      if (positionals.length < 1) {
+        throw new ArgError("the following arguments are required: question");
+      }
+      result.message = positionals.join(" ");
+      result.bot_id = (opts["--bot-id"] as string) ?? null;
+      result.ask_voice = opts["--voice"] === true;
+      const rawOptions = opts["--options"] as string | undefined;
+      result.ask_options = parseOptions(rawOptions);
+      if (rawOptions !== undefined && result.ask_options.length < 2) {
+        throw new ArgError(`argument --options: need at least two options separated by "|": '${rawOptions}'`);
+      }
+      const rawTimeout = opts["--timeout"];
+      if (rawTimeout !== undefined) {
+        const t = Number(rawTimeout);
+        if (!Number.isFinite(t) || t <= 0 || t > MAX_ASK_TIMEOUT_SECONDS) {
+          throw new ArgError(
+            `argument --timeout: invalid number of seconds (1-${MAX_ASK_TIMEOUT_SECONDS}): '${rawTimeout}'`,
+          );
+        }
+        result.ask_timeout = t;
+      } else {
+        result.ask_timeout = DEFAULT_ASK_TIMEOUT_SECONDS;
+      }
+      result.ask_default = (opts["--default"] as string) ?? null;
+      if (result.ask_default !== null && resolveDefault(result.ask_default, result.ask_options) === null) {
+        throw new ArgError(
+          `argument --default: '${result.ask_default}' is not one of the options (${result.ask_options.join(", ")})`,
+        );
+      }
+      const askLang = (opts["--lang"] as string) ?? null;
+      if (askLang !== null && !["ru", "en", "auto"].includes(askLang)) {
+        throw new ArgError(`argument --lang: invalid choice: '${askLang}' (choose from ru, en, auto)`);
+      }
+      result.lang = askLang;
+      break;
+    }
     case "intro": {
       result.bot_id = (opts["--bot-id"] as string) ?? null;
       result.intro_text = (opts["--intro-text"] as string) ?? null;
@@ -580,6 +768,11 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdChat(args);
     case "intro":
       return cmdIntro(args);
+    case "say":
+      return cmdSay(args);
+    case "ask":
+      await cmdAsk(args);
+      return;
     case "chimes":
       return cmdChimes();
     case "presence":
