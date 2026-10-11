@@ -129,7 +129,7 @@ samograph ask "Run the migration on staging first?" --options "yes|no" --default
 # -> {"question":"...","options":["yes","no"],"answer":"yes","by":"Alice","source":"voice","timed_out":false,"text":"Yes, staging first","heard":[]}
 ```
 
-`ask` posts the question to chat (and speaks it with `--voice`), waits up to `--timeout` seconds (default 60, max 600) for an answer in the live transcript (speech and incoming chat), and prints one JSON line. An option counts by name, number, ordinal ("second", "второй"), letter ("B", "вариант Б"), or yes/no synonym ("да", "ok", "нет"); without `--options` the first human reply is the answer. On timeout it returns `--default` with `"timed_out":true` and announces the choice in the call.
+`ask` posts the question to chat (and speaks it with `--voice`), waits up to `--timeout` seconds (default 60, max 600) for an answer in the live transcript (speech and incoming chat), and prints one JSON line. An option counts by name, number, ordinal ("second", "второй"), letter ("B", "вариант Б"), or yes/no synonym ("да", "ok", "нет"); without `--options` the first human reply is the answer. On timeout it returns `--default` with `"timed_out":true` and announces the choice in the call. Negated or tentative option mentions (for example, "not okay", "I am not sure", or "не согласен") are left unmatched and listening continues; an explicit "no" remains a negative answer. Matching uses conservative English/Russian word rules, not general natural-language understanding.
 
 ## Voice (`say`)
 

@@ -84,6 +84,20 @@ describe("matchOption: yes/no", () => {
     expect(pick("да", ["yes", "no"])).toBe("yes");
     expect(pick("ok", ["да", "нет"])).toBe("да");
   });
+  it.each([
+    "not okay", "I am not sure", "не согласен", "не согласна",
+    "I'm not saying yes", "isn't okay", "isn’t okay", "never agreed",
+    "maybe yes", "perhaps no", "probably yes", "возможно да", "наверное нет",
+  ])("does not turn a negated or uncertain reply into a decision: %s", (reply) => {
+    expect(matchOption(reply, ["yes", "no"])).toEqual({ kind: "none" });
+    expect(matchOption(reply, ["нет", "да"])).toEqual({ kind: "none" });
+  });
+  it("does not choose a negated numbered, lettered, or named option", () => {
+    expect(matchOption("not option 1", ["yes", "no"])).toEqual({ kind: "none" });
+    expect(matchOption("не второй", ["A", "B"])).toEqual({ kind: "none" });
+    expect(matchOption("not option B", ["A", "B"])).toEqual({ kind: "none" });
+    expect(matchOption("do not deploy", ["deploy", "wait"])).toEqual({ kind: "none" });
+  });
   it("'не знаю' is not a no", () => {
     expect(pick("не знаю", ["да", "нет"])).toBe("none");
   });

@@ -120,6 +120,36 @@ describe("cmdAsk", () => {
     expect(r).toMatchObject({ answer: "B", by: "Alice", source: "chat", timed_out: false, text: "B" });
   });
 
+  it("keeps listening after negated or uncertain replies instead of acknowledging yes", async () => {
+    const chat: string[] = [];
+    const recall = makeRecall(chat, () => {
+      if (chat.length === 1) {
+        appendFileSync(transcript, "[2026-10-08 12:00:01] Alice: not okay\n");
+        appendFileSync(transcript, "[2026-10-08 12:00:02] Bob: I am not sure\n");
+        appendFileSync(transcript, "[2026-10-08 12:00:03] Nik: не согласен\n");
+      }
+    });
+    const clock = fakeClock();
+    let polls = 0;
+    const sleep = async (ms: number) => {
+      await clock.sleep(ms);
+      if (++polls === 1) appendFileSync(transcript, "[2026-10-08 12:00:04] Alice: no\n");
+    };
+    const q = quietStderr();
+    let result;
+    try {
+      result = await cmdAsk(
+        { command: "ask", message: "Deploy?", ask_options: ["yes", "no"], ask_timeout: 10 },
+        { recall, now: clock.now, sleep, write: () => {} },
+      );
+    } finally { q.restore(); }
+    expect(result).toMatchObject({ answer: "no", by: "Alice", timed_out: false });
+    expect(result.heard.map((entry) => entry.text)).toEqual(["not okay", "I am not sure", "не согласен"]);
+    expect(polls).toBe(1);
+    expect(chat).toHaveLength(2);
+    expect(chat[1]).toBe("Got it: no (Alice).");
+  });
+
   it("without options, the first human reply is the answer", async () => {
     const chat: string[] = [];
     const recall = makeRecall(chat);

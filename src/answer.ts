@@ -9,6 +9,14 @@ const YES = new Set([
 ]);
 const NO = new Set(["no", "nope", "nah", "negative", "нет", "неа"]);
 
+// This is a conservative option matcher, not a natural-language polarity
+// parser. A negated or tentative mention must not authorize a decision.
+const NEGATION = new Set(["not", "never", "neither", "nor", "without", "не", "ни", "нельзя"]);
+const UNCERTAINTY = new Set([
+  "maybe", "perhaps", "probably", "possibly", "unsure", "uncertain", "might",
+  "возможно", "наверное", "наверно", "может", "пожалуй",
+]);
+
 // Words that make a following single letter or number an explicit option pick.
 const OPTION_WORDS = new Set([
   "option", "variant", "choice", "number",
@@ -79,7 +87,8 @@ export type OptionMatch =
  * ("2", "option 2", "two"); an ordinal ("second", "второй", "last");
  * a letter ("B", "вариант Б", "би"); and yes/no synonyms when the options are
  * yes/no ("да", "ok", "нет"). A reply that names two different options is
- * ambiguous, not a match.
+ * ambiguous, not a match. Negated or tentative single-option mentions are
+ * rejected so the caller can keep listening for an unambiguous answer.
  */
 export function matchOption(reply: string, options: string[]): OptionMatch {
   const tokens = normalizeReply(reply);
@@ -132,7 +141,15 @@ export function matchOption(reply: string, options: string[]): OptionMatch {
   });
 
   const list = [...hits].sort((a, b) => a - b);
-  if (list.length === 1) return { kind: "match", index: list[0]! };
+  if (list.length === 1) {
+    const uncertain = tokens.some((t) => UNCERTAINTY.has(t));
+    const negated = tokens.some((t) => NEGATION.has(t)) || /n['’]t\b/iu.test(reply);
+    // An explicit leading "no" remains a rejection ("Нет, не надо", "no,
+    // don't do it"). Do not infer yes/no by reversing a negated phrase.
+    const explicitNo = NO.has(tokens[0]!) && NO.has(normOptions[list[0]!]!);
+    if (uncertain || (negated && !explicitNo)) return { kind: "none" };
+    return { kind: "match", index: list[0]! };
+  }
   if (list.length > 1) return { kind: "ambiguous", indexes: list };
   return { kind: "none" };
 }
