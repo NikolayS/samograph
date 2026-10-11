@@ -918,6 +918,22 @@ describe("webhook handler", () => {
       expect(waited.status).toBe(200);
       expect(new Uint8Array(await waited.arrayBuffer())).toEqual(new Uint8Array([4, 4, 4]));
 
+      // An existing stale frame must be replaced while a freshness request waits.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const freshPending = fetch(`http://localhost:${server.port}/frame?source=participant:p2:screenshare&max_age_ms=20&wait_ms=1000`, {
+        headers: { "X-Samograph-Frame-Token": "frame-token" },
+      });
+      const refresher = setInterval(() => ws.send(JSON.stringify({
+        event: "video_separate_png.data",
+        data: { data: { buffer: Buffer.from([5, 5, 5]).toString("base64"), type: "screenshare", participant: { id: "p2" } } },
+      })), 10);
+      try {
+        const refreshed = await freshPending;
+        expect(new Uint8Array(await refreshed.arrayBuffer())).toEqual(new Uint8Array([5, 5, 5]));
+      } finally {
+        clearInterval(refresher);
+      }
+
       const missing = await fetch(`http://localhost:${server.port}/frame?source=participant:p9&wait_ms=150`, {
         headers: { "X-Samograph-Frame-Token": "frame-token" },
       });

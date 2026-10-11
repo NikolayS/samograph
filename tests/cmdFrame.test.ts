@@ -236,7 +236,7 @@ describe("cmdFrame — no RTMP", () => {
     );
 
     expect(calls).toEqual([
-      "http://127.0.0.1:18080/frame?source=screen&max_age_ms=3000&wait_ms=5000",
+      "http://127.0.0.1:18080/frame?source=screen&max_age_ms=10000&wait_ms=5000",
       "http://127.0.0.1:18080/frame.json?source=screen",
     ]);
     expect(new Uint8Array(readFileSync(out))).toEqual(new Uint8Array([9, 8, 7]));

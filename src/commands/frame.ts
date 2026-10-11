@@ -28,7 +28,7 @@ function defaultRun(cmd: string[]): { returncode: number; stderr: Uint8Array } {
 }
 
 /** Ask the server for a frame no older than this... */
-export const FRAME_MAX_AGE_MS = 3000;
+export const FRAME_MAX_AGE_MS = SCREENSHARE_PREFER_MS;
 /** ...waiting at most this long for one to arrive. */
 export const FRAME_WAIT_MS = 5000;
 /** Warn when the returned frame is older than this. */
@@ -44,11 +44,9 @@ function withFrameSource(url: string, source?: string | null): string {
 
 function withFreshness(url: string): string {
   const u = new URL(url);
-  // Default selection prefers screenshares up to this age; do not wait for
-  // a newer frame while the selected static screenshare is still preferred.
-  const maxAge = normalizeFrameSource(u.searchParams.get("source"))
-    ? FRAME_MAX_AGE_MS : SCREENSHARE_PREFER_MS;
-  u.searchParams.set("max_age_ms", String(maxAge));
+  // Static screens arrive less frequently than webcam frames. Use the same
+  // freshness window for explicit sources and default screen preference.
+  u.searchParams.set("max_age_ms", String(FRAME_MAX_AGE_MS));
   u.searchParams.set("wait_ms", String(FRAME_WAIT_MS));
   return u.toString();
 }
