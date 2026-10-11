@@ -723,6 +723,7 @@ export function presencePageHtml(): string {
     // Each glyph gets randomized launch column, horizontal drift, spin, and
     // duration so a burst reads as confetti rather than a rigid column.
     let lastReactionAt = "";
+    let reactionSnapshotSeen = false;
     const reactionLayer = document.getElementById("reactions");
     // The headless browser that renders this page (Recall's compositor) has no
     // color-emoji font, so a bare emoji glyph shows as a tofu box. Render each
@@ -740,14 +741,20 @@ export function presencePageHtml(): string {
       return id ? TWEMOJI_BASE + id + ".svg" : "";
     }
     function spawnReaction(reaction) {
-      if (!reactionLayer || !reaction) return;
+      if (!reactionLayer) return;
+      // Seed from the first successful snapshot, even when it has no reaction.
+      // Do not compare clocks across the local server and Recall renderer.
+      if (!reactionSnapshotSeen) {
+        reactionSnapshotSeen = true;
+        lastReactionAt = String(reaction?.at || "");
+        return;
+      }
+      if (!reaction) return;
       const emoji = String(reaction.emoji || "").trim();
       if (!emoji) return;
       const at = String(reaction.at || "");
       if (!at || at === lastReactionAt) return;
       lastReactionAt = at;
-      const age = Date.now() - Date.parse(at);
-      if (!Number.isFinite(age) || age > 10000 || age < -10000) return;
       const count = Math.max(1, Math.min(24, Number(reaction.count) || 1));
       // A single reaction emoji field may hold several glyphs; cycle through
       // them so a multi-emoji burst mixes all of them.
@@ -911,7 +918,7 @@ export function presencePageHtml(): string {
           lastSignature = signature;
           lastActivityAt = Date.now();
         }
-        if (data.reaction) spawnReaction(data.reaction);
+        spawnReaction(data.reaction);
         const state = String(data.state || "listening");
         document.getElementById("live").textContent = state;
         const buckets = { heard: [], comment: [] };

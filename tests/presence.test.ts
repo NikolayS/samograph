@@ -349,11 +349,25 @@ describe("reaction graphemes and page rendering", () => {
 
   it("emitted page keeps compound emoji together in image URLs", () => {
     const { nodes, spawn } = renderer();
+    spawn(null); // Initial empty snapshot; subsequent reactions animate.
     spawn({ emoji: "👨‍👩‍👧👍🏽🇺🇸1️⃣❤️", count: 5, at: new Date().toISOString() });
     expect(nodes.map((n) => n.alt)).toEqual(["👨‍👩‍👧", "👍🏽", "🇺🇸", "1️⃣", "❤️"]);
     expect(nodes.map((n) => n.src?.split("/").pop())).toEqual([
       "1f468-200d-1f469-200d-1f467.svg", "1f44d-1f3fd.svg", "1f1fa-1f1f8.svg", "31-20e3.svg", "2764.svg",
     ]);
+  });
+
+  it("does not require renderer and server clocks to agree", () => {
+    const { nodes, spawn } = renderer();
+    spawn(null);
+    spawn({ emoji: "🎉", count: 5, at: new Date(Date.now() - 60_000).toISOString() });
+    expect(nodes).toHaveLength(5);
+  });
+
+  it("seeds the first snapshot without replaying even a recent reaction", () => {
+    const { nodes, spawn } = renderer();
+    spawn({ emoji: "🎉", count: 5, at: new Date().toISOString() });
+    expect(nodes).toHaveLength(0);
   });
 
   it("does not replay an old reaction after page reload", () => {
