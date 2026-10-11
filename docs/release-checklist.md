@@ -30,6 +30,30 @@ Use this checklist for each npm release.
 - Create and publish a GitHub release tag matching the package version, for example `v0.4.1`.
 - Wait for the `Publish to npm` GitHub Actions workflow to pass.
 
+## Release candidates (manual testing before final)
+
+- Use a SemVer RC package version, for example `0.9.0-rc.1`, and a matching
+  `v0.9.0-rc.1` tag. Check both npm versions and GitHub tags for collisions first.
+- Merge the reviewed preparation PR and all intended changes, then confirm CI is
+  green on the exact final `main` SHA. Run the pre-release checks above.
+- Create a GitHub **prerelease**, targeting that verified SHA (not the moving
+  branch):
+
+  ```bash
+  gh release create v0.9.0-rc.1 --target <verified-sha> \
+    --prerelease --latest=false --generate-notes
+  ```
+- The npm workflow requires the tag to match `package.json` and GitHub's
+  prerelease flag to agree with the version. RCs publish with **`--tag rc`**;
+  stable releases use `--tag latest`. Production dated tags never publish npm.
+- A manual workflow retry requires an **existing release tag** and an explicit
+  matching `rc` or `latest` channel. Missing or inconsistent inputs fail closed.
+- Verify `npm view samograph dist-tags --json`: `rc` must name the candidate and
+  `latest` must remain on the previous stable release. Install the exact RC
+  version into a clean prefix for smoke/manual testing.
+- Stop for owner manual testing. Do not publish a stable version or cut a dated
+  production deploy tag until separately authorized.
+
 ## After Publish
 
 - Verify npm has the new version:
