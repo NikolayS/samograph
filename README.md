@@ -22,8 +22,23 @@ Install the CLI from npm:
 
 ```bash
 npm install -g samograph
-export RECALL_API_KEY=...
+```
+
+### Setting the API key
+
+Store your Recall.ai API key once in `~/.samograph/config.json` — samograph picks it up automatically on every invocation:
+
+```bash
+samograph config set recall-api-key <your-key>
 samograph join "https://meet.google.com/..." --name Leo
+```
+
+The `RECALL_API_KEY` environment variable still works and takes precedence over the config file, but storing it via `samograph config set` means you never need to export it per session or inline it in shell commands (which would expose it in shell history and AI conversation transcripts).
+
+Verify the stored key at any time:
+
+```bash
+samograph config get recall-api-key
 ```
 
 During development use `bun install`, `bun run build`, then `bun run samograph ...`.
