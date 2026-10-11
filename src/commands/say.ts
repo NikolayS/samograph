@@ -416,6 +416,10 @@ export async function cmdSay(args: ParsedArgs, deps: SayDeps = {}): Promise<void
             `audio chunk too large for Recall output_audio (${b64.length} > ${RECALL_OUTPUT_AUDIO_MAX_B64} base64 chars)`,
           );
         }
+        const duration = durationOf(mp3);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          throw new Error("cannot determine audio duration; refusing playback to avoid overlapping speech");
+        }
         const resp = await recall.outputAudio(bid, b64);
         if (!resp.ok) {
           const body = await resp.text().catch(() => "");
@@ -427,7 +431,7 @@ export async function cmdSay(args: ParsedArgs, deps: SayDeps = {}): Promise<void
           );
         }
         played += 1;
-        const until = now() + durationOf(mp3) * 1000 + GAP_MS;
+        const until = now() + duration * 1000 + GAP_MS;
         while (now() < until) {
           interrupted = interruption();
           if (interrupted) break;

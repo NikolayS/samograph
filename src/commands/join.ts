@@ -1,9 +1,9 @@
-import { SILENT_MP3_B64 } from "../silentMp3.ts";
 import { formatInCallRules } from "../agentRules.ts";
 import { writeFileSync } from "node:fs";
 import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { SILENT_MP3_B64 } from "../silentMp3.ts";
 import { RECALL_BASE, ExitError, stateFile } from "../config.ts";
 import { resolveNewTranscriptFile } from "../transcript.ts";
 import { resolveVideoFrameDir, resolveVideoFrameFile } from "../frameStore.ts";
