@@ -276,7 +276,7 @@ Runtime files live under `~/.samograph/` by default:
 - `state.json` - active bot id, process ids, URLs, paths.
 - `YYYYMMDD_HHMMSS_transcript.txt` - per-call live transcript; `join` never overwrites older transcripts.
 - `frames/latest.png` and `frames/latest.json` - written only by `samograph frame`.
-- `say.lock.json`, `say.stop`, `say.json` - `say` playback lock, stop request, and last-utterance time (for the cooldown).
+- `say.lock/`, `say.stop.<owner>`, `say.json` - atomic `say` playback lock, owner-scoped stop request, and last-utterance time (for the cooldown). Active legacy `say.lock.json` locks are still respected, but mutual exclusion between old and new CLI versions is not guaranteed; finish old `say` processes before upgrading.
 
 Generated runtime files are ignored by git. Do not point `--frame-dir` or `--out` into the repo unless you intentionally want a local artifact.
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cmdSay, BargeInWatcher, RECALL_OUTPUT_AUDIO_MAX_B64 } from "../src/commands/say.ts";
 import type { RecallClient } from "../src/recall.ts";
@@ -343,6 +343,93 @@ describe("cmdSay", () => {
       );
     } catch (e) { err = (e as Error).message; }
     expect(err).toContain("already speaking (pid 999999)");
+  });
+
+  it("refuses overlapping calls in the same process before posting chat", async () => {
+    const clock = fakeClock();
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    const recall = makeRecall(log);
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    recall.sendChat = async () => { await barrier; return new Response("{}"); };
+    const deps = { recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 };
+    const cap = capture();
+    const first = cmdSay({ command: "say", message: "First.", also_chat: true }, deps);
+    try {
+      await expect(cmdSay({ command: "say", message: "Second." }, deps)).rejects.toThrow("already speaking");
+    } finally { release(); await first; cap.restore(); }
+    expect(log.audio).toEqual(["First."]);
+  });
+
+  it("does not reclaim a live lock when checking its PID returns EPERM", async () => {
+    const dir = join(tmp, ".samograph", "say.lock");
+    const owner = "12345678-1234-1234-1234-123456789abc";
+    mkdirSync(dir, { recursive: true });
+    const record = JSON.stringify({ pid: 999999, owner });
+    writeFileSync(join(dir, `owner-${owner}.json`), record);
+    const kill = process.kill;
+    process.kill = (() => { throw Object.assign(new Error("not permitted"), { code: "EPERM" }); }) as typeof process.kill;
+    const clock = fakeClock();
+    const cap = capture();
+    try {
+      await expect(cmdSay({ command: "say", message: "Hi." }, {
+        recall: makeRecall({ events: [], audio: [], chat: [] }), tts: makeTts().deps,
+        now: clock.now, sleep: clock.sleep, durationOf: () => 0,
+      })).rejects.toThrow("already speaking");
+      expect(readFileSync(join(dir, `owner-${owner}.json`), "utf8")).toBe(record);
+    } finally { process.kill = kill; cap.restore(); }
+  });
+
+  it("releases the lock when sending chat fails", async () => {
+    const clock = fakeClock();
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    const recall = makeRecall(log);
+    recall.sendChat = async () => { throw new Error("chat unavailable"); };
+    const deps = { recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0 };
+    await expect(cmdSay({ command: "say", message: "Fail.", also_chat: true }, deps)).rejects.toThrow("chat unavailable");
+    expect(existsSync(join(tmp, ".samograph", "say.lock"))).toBe(false);
+    const cap = capture();
+    try { await cmdSay({ command: "say", message: "Retry." }, deps); }
+    finally { cap.restore(); }
+    expect(log.audio).toEqual(["Retry."]);
+  });
+
+  it("does not remove a successor's lock or stop marker during cleanup", async () => {
+    const dir = join(tmp, ".samograph");
+    const lockDir = join(dir, "say.lock");
+    const successor = "12345678-1234-1234-1234-123456789abc";
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    const recall = makeRecall(log);
+    recall.sendChat = async () => {
+      // Emulate ownership replacement while the old call is still unwinding.
+      renameSync(lockDir, join(dir, "old-lock"));
+      mkdirSync(lockDir);
+      writeFileSync(join(lockDir, `owner-${successor}.json`), JSON.stringify({ pid: process.pid, owner: successor }));
+      writeFileSync(join(dir, `say.stop.${successor}`), "stop successor");
+      throw new Error("old owner failed");
+    };
+    await expect(cmdSay({ command: "say", message: "Hi.", also_chat: true }, { recall, tts: makeTts().deps })).rejects.toThrow("old owner failed");
+    expect(readdirSync(lockDir)).toEqual([`owner-${successor}.json`]);
+    expect(readFileSync(join(dir, `say.stop.${successor}`), "utf8")).toBe("stop successor");
+  });
+
+  it("honors a stop sent while chat is in flight before playback starts", async () => {
+    const clock = fakeClock();
+    const log: RecallLog = { events: [], audio: [], chat: [] };
+    const recall = makeRecall(log);
+    recall.sendChat = async () => {
+      await cmdSay({ command: "say", say_stop: true }, { recall, now: clock.now });
+      clock.advance(1000);
+      return new Response("{}");
+    };
+    const cap = capture();
+    try {
+      await cmdSay({ command: "say", message: "Do not play.", also_chat: true }, {
+        recall, tts: makeTts().deps, now: clock.now, sleep: clock.sleep, durationOf: () => 0,
+      });
+    } finally { cap.restore(); }
+    expect(log.audio).toEqual([]);
+    expect(cap.out.join("")).toContain("Interrupted (say --stop)");
   });
 
   it("sets presence to speaking while playing, then back to listening", async () => {

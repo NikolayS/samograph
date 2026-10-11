@@ -4,11 +4,15 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
   readSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { samographDir } from "../config.ts";
 import { botIdFromArgsOrState, loadState } from "../state.ts";
@@ -59,6 +63,79 @@ function lockFile(): string {
 function stopFile(): string {
   return join(samographDir(), "say.stop");
 }
+// Publish a populated directory atomically: an empty/partially written lock is
+// never visible. Each owner has a unique filename, so two stale-lock reapers
+// can only unlink the dead owner's record. rmdir cannot remove a newly
+// published (nonempty) lock. A read/check/unlink of a shared lock file cannot
+// provide that guarantee.
+interface SpeechLock { pid: number; owner: string }
+function lockDir(): string { return join(samographDir(), "say.lock"); }
+function ownerFile(lock: SpeechLock): string { return join(lockDir(), `owner-${lock.owner}.json`); }
+function ownerStopFile(lock: SpeechLock): string { return join(samographDir(), `say.stop.${lock.owner}`); }
+function readSpeechLock(): SpeechLock | null {
+  let entries: string[];
+  try { entries = readdirSync(lockDir()); }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+  for (const entry of entries) {
+    if (!/^owner-[0-9a-f-]+\.json$/.test(entry)) throw new Error("unrecognized speaking lock; inspect say.lock");
+    const record = readJson(join(lockDir(), entry));
+    // Another reaper may have removed this particular owner's record.
+    if (!record) {
+      if (!existsSync(join(lockDir(), entry))) continue;
+      throw new Error("invalid speaking lock; inspect say.lock");
+    }
+    if (typeof record.pid !== "number" || !Number.isInteger(record.pid) || record.pid <= 0 ||
+        typeof record.owner !== "string" || entry !== `owner-${record.owner}.json`) {
+      throw new Error("invalid speaking lock; inspect say.lock");
+    }
+    return record as unknown as SpeechLock;
+  }
+  return null;
+}
+function removeEmptyLockDir(): void {
+  try { rmdirSync(lockDir()); }
+  catch (e) {
+    if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((e as NodeJS.ErrnoException).code ?? "")) throw e;
+  }
+}
+function ownsLock(lock: SpeechLock): boolean { return existsSync(ownerFile(lock)); }
+function releaseSpeechLock(lock: SpeechLock): void {
+  rmSync(ownerStopFile(lock), { force: true });
+  // Never recursively remove the shared directory: it may now hold a successor.
+  rmSync(ownerFile(lock), { force: true });
+  removeEmptyLockDir();
+}
+function alreadySpeaking(pid: number): Error {
+  return new Error(`already speaking (pid ${pid}); run 'samograph say --stop' first, or use 'samograph chat'`);
+}
+function acquireSpeechLock(pidAlive: (pid: number) => boolean): SpeechLock {
+  mkdirSync(samographDir(), { recursive: true, mode: 0o700 });
+  const lock = { pid: process.pid, owner: randomUUID() };
+  const candidate = join(samographDir(), `say.lock.${lock.owner}`);
+  mkdirSync(candidate, { mode: 0o700 });
+  try {
+    writeFileSync(join(candidate, `owner-${lock.owner}.json`), JSON.stringify(lock), { mode: 0o600 });
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        renameSync(candidate, lockDir());
+        return lock;
+      } catch (e) {
+        if (!["ENOTEMPTY", "EEXIST"].includes((e as NodeJS.ErrnoException).code ?? "")) throw e;
+      }
+      const current = readSpeechLock();
+      if (current) {
+        if (pidAlive(current.pid)) throw alreadySpeaking(current.pid);
+        releaseSpeechLock(current);
+      } else {
+        removeEmptyLockDir();
+      }
+    }
+    throw new Error("speaking lock is busy; retry shortly");
+  } finally {
+    // Private candidate only; publication moved it out of this path.
+    rmSync(candidate, { recursive: true, force: true });
+  }
+}
 function historyFile(): string {
   return join(samographDir(), "say.json");
 }
@@ -67,8 +144,10 @@ function defaultPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    // EPERM means the process exists but is not signalable. Fail closed on
+    // other unexpected errors too; only ESRCH establishes a dead owner.
+    return (e as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -205,10 +284,12 @@ export class BargeInWatcher {
 /** `samograph say --stop`: stop the running `say` and any audio Recall is playing. */
 async function cmdSayStop(args: ParsedArgs, deps: SayDeps): Promise<void> {
   const now = deps.now ?? Date.now;
-  writePrivate(stopFile(), String(now()));
-  const lock = readJson(lockFile());
+  const ownedLock = readSpeechLock();
+  const lock = ownedLock ?? readJson(lockFile()); // legacy say processes
   const pidAlive = deps.pidAlive ?? defaultPidAlive;
   const running = typeof lock?.pid === "number" && pidAlive(lock.pid);
+  const signalPath = ownedLock ? ownerStopFile(ownedLock) : stopFile();
+  if (running) writePrivate(signalPath, String(now()));
   let recallResult = "skipped (no active bot)";
   const state = loadState();
   const bid = args.bot_id || (typeof state.bot_id === "string" ? state.bot_id : null);
@@ -216,7 +297,7 @@ async function cmdSayStop(args: ParsedArgs, deps: SayDeps): Promise<void> {
     const recall = deps.recall ?? makeRecallClient();
     recallResult = await stopRecallAudio(recall, bid);
   }
-  if (!running) rmSync(stopFile(), { force: true });
+
   process.stdout.write(
     `Stop: ${running ? `signalled say (pid ${lock!.pid})` : "no say in progress"}; ` +
       `Recall stop output audio: ${recallResult}\n`,
@@ -292,115 +373,120 @@ export async function cmdSay(args: ParsedArgs, deps: SayDeps = {}): Promise<void
   const bid = botIdFromArgsOrState(args.bot_id);
   const pidAlive = deps.pidAlive ?? defaultPidAlive;
 
-  const lock = readJson(lockFile());
-  if (typeof lock?.pid === "number" && lock.pid !== process.pid && pidAlive(lock.pid)) {
-    throw new Error(
-      `already speaking (pid ${lock.pid}); run 'samograph say --stop' first, or use 'samograph chat'`,
-    );
-  }
-  const priority = args.priority === "high" ? "high" : "normal";
-  const lastEnd = readJson(historyFile())?.last_end_ms;
-  if (priority === "normal" && typeof lastEnd === "number" && cooldownSec > 0) {
-    const elapsed = (now() - lastEnd) / 1000;
-    if (elapsed < cooldownSec) {
-      throw new Error(
-        `cooldown: the bot spoke ${elapsed.toFixed(0)}s ago (cooldown ${cooldownSec}s). ` +
-          "Use 'samograph chat' instead, wait, or pass --priority high for something important",
-      );
-    }
-  }
-
-  // Post to chat first, so a spoken "I posted it in the chat" is true.
-  if (plan.chat !== null) {
-    const resp = await recall.sendChat(bid, plan.chat);
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      throw new Error(`send_chat_message failed: ${resp.status} ${body}`);
-    }
-  }
-
-  const startMs = now();
-  writePrivate(lockFile(), JSON.stringify({ pid: process.pid, started_at: startMs }));
-  rmSync(stopFile(), { force: true });
-
-  const state = loadState();
-  const transcriptPath = typeof state.transcript_file === "string" ? state.transcript_file : null;
-  const botName = typeof state.bot_name === "string" ? state.bot_name : null;
-  const watcher =
-    args.no_barge_in || !transcriptPath ? null : new BargeInWatcher(transcriptPath, startMs, botName);
-
-  let signalled = false;
-  const onSignal = () => {
-    signalled = true;
-  };
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
-
-  const interruption = (): string | null => {
-    if (signalled) return "signal";
-    const stopTs = Number(existsSync(stopFile()) ? readFileSync(stopFile(), "utf-8") : NaN);
-    if (Number.isFinite(stopTs) && stopTs >= startMs) return "say --stop";
-    const who = watcher?.poll();
-    return who ? `barge-in by ${who}` : null;
-  };
-
+  const ownedLock = acquireSpeechLock(pidAlive);
   let played = 0;
   let interrupted: string | null = null;
-  await setPresence(presenceFetch, "speaking");
+  let presenceStarted = false;
   try {
-    let next: Promise<Uint8Array> | null = synthesize(provider, chunks[0]!, cfg, lang, ttsDeps);
-    for (let i = 0; i < chunks.length; i++) {
-      const mp3 = await next!;
-      // Prefetch the next sentence while this one plays.
-      next = i + 1 < chunks.length ? synthesize(provider, chunks[i + 1]!, cfg, lang, ttsDeps) : null;
-      next?.catch(() => {}); // surfaced when awaited
-      interrupted = interruption();
-      if (interrupted) break;
-      const b64 = Buffer.from(mp3).toString("base64");
-      if (b64.length > RECALL_OUTPUT_AUDIO_MAX_B64) {
+    const legacyLock = readJson(lockFile());
+    if (typeof legacyLock?.pid === "number" && pidAlive(legacyLock.pid)) {
+      throw alreadySpeaking(legacyLock.pid);
+    }
+    const priority = args.priority === "high" ? "high" : "normal";
+    const lastEnd = readJson(historyFile())?.last_end_ms;
+    if (priority === "normal" && typeof lastEnd === "number" && cooldownSec > 0) {
+      const elapsed = (now() - lastEnd) / 1000;
+      if (elapsed < cooldownSec) {
         throw new Error(
-          `audio chunk too large for Recall output_audio (${b64.length} > ${RECALL_OUTPUT_AUDIO_MAX_B64} base64 chars)`,
+          `cooldown: the bot spoke ${elapsed.toFixed(0)}s ago (cooldown ${cooldownSec}s). ` +
+            "Use 'samograph chat' instead, wait, or pass --priority high for something important",
         );
-      }
-      const resp = await recall.outputAudio(bid, b64);
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        throw new Error(
-          `output_audio failed: ${resp.status} ${body}` +
-            (resp.status === 400
-              ? " (Recall requires automatic_audio_output at bot creation; rejoin with 'samograph join --enable-voice')"
-              : ""),
-        );
-      }
-      played += 1;
-      const until = now() + durationOf(mp3) * 1000 + GAP_MS;
-      while (now() < until) {
-        interrupted = interruption();
-        if (interrupted) break;
-        await sleep(Math.min(POLL_MS, Math.max(0, until - now())));
-      }
-      if (interrupted) {
-        await stopRecallAudio(recall, bid);
-        break;
       }
     }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(redactSecrets(msg, env));
-  } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-    rmSync(lockFile(), { force: true });
-    rmSync(stopFile(), { force: true });
-    if (played > 0) writePrivate(historyFile(), JSON.stringify({ last_end_ms: now() }));
-    await setPresence(presenceFetch, "listening");
-  }
 
-  const summary = `${played}/${chunks.length} chunk(s), provider ${provider}, policy ${plan.policy}`;
-  if (interrupted) {
-    process.stdout.write(`Interrupted (${interrupted}) after ${summary}\n`);
-  } else {
-    process.stdout.write(`Said (${summary}): ${plan.spoken}\n`);
+    // Post to chat first, so a spoken "I posted it in the chat" is true.
+    if (plan.chat !== null) {
+      const resp = await recall.sendChat(bid, plan.chat);
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        throw new Error(`send_chat_message failed: ${resp.status} ${body}`);
+      }
+    }
+
+    const startMs = now();
+
+    const state = loadState();
+    const transcriptPath = typeof state.transcript_file === "string" ? state.transcript_file : null;
+    const botName = typeof state.bot_name === "string" ? state.bot_name : null;
+    const watcher =
+      args.no_barge_in || !transcriptPath ? null : new BargeInWatcher(transcriptPath, startMs, botName);
+
+    let signalled = false;
+    const onSignal = () => {
+      signalled = true;
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+
+    const interruption = (): string | null => {
+      if (signalled) return "signal";
+      if (existsSync(ownerStopFile(ownedLock))) return "say --stop";
+      const who = watcher?.poll();
+      return who ? `barge-in by ${who}` : null;
+    };
+
+    presenceStarted = true;
+    await setPresence(presenceFetch, "speaking");
+    try {
+      let next: Promise<Uint8Array> | null = synthesize(provider, chunks[0]!, cfg, lang, ttsDeps);
+      for (let i = 0; i < chunks.length; i++) {
+        const mp3 = await next!;
+        // Prefetch the next sentence while this one plays.
+        next = i + 1 < chunks.length ? synthesize(provider, chunks[i + 1]!, cfg, lang, ttsDeps) : null;
+        next?.catch(() => {}); // surfaced when awaited
+        interrupted = interruption();
+        if (interrupted) break;
+        const b64 = Buffer.from(mp3).toString("base64");
+        if (b64.length > RECALL_OUTPUT_AUDIO_MAX_B64) {
+          throw new Error(
+            `audio chunk too large for Recall output_audio (${b64.length} > ${RECALL_OUTPUT_AUDIO_MAX_B64} base64 chars)`,
+          );
+        }
+        const resp = await recall.outputAudio(bid, b64);
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => "");
+          throw new Error(
+            `output_audio failed: ${resp.status} ${body}` +
+              (resp.status === 400
+                ? " (Recall requires automatic_audio_output at bot creation; rejoin with 'samograph join --enable-voice')"
+                : ""),
+          );
+        }
+        played += 1;
+        const until = now() + durationOf(mp3) * 1000 + GAP_MS;
+        while (now() < until) {
+          interrupted = interruption();
+          if (interrupted) break;
+          await sleep(Math.min(POLL_MS, Math.max(0, until - now())));
+        }
+        if (interrupted) {
+          await stopRecallAudio(recall, bid);
+          break;
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(redactSecrets(msg, env));
+    } finally {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+    }
+
+    const summary = `${played}/${chunks.length} chunk(s), provider ${provider}, policy ${plan.policy}`;
+    if (interrupted) {
+      process.stdout.write(`Interrupted (${interrupted}) after ${summary}\n`);
+    } else {
+      process.stdout.write(`Said (${summary}): ${plan.spoken}\n`);
+    }
+    if (plan.chat !== null) process.stdout.write(`Posted to chat: ${plan.chat}\n`);
+  } finally {
+    try {
+      if (ownsLock(ownedLock)) {
+        if (played > 0) writePrivate(historyFile(), JSON.stringify({ last_end_ms: now() }));
+        if (presenceStarted) await setPresence(presenceFetch, "listening");
+      }
+    } finally {
+      releaseSpeechLock(ownedLock);
+    }
   }
-  if (plan.chat !== null) process.stdout.write(`Posted to chat: ${plan.chat}\n`);
 }
