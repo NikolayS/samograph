@@ -19,6 +19,8 @@ import { cmdNotes } from "./commands/notes.ts";
 import { cmdPresence } from "./commands/presence.ts";
 import { cmdChimes } from "./commands/chimes.ts";
 import { cmdSay } from "./commands/say.ts";
+import { cmdAsk, DEFAULT_ASK_TIMEOUT_SECONDS, MAX_ASK_TIMEOUT_SECONDS } from "./commands/ask.ts";
+import { parseOptions, resolveDefault } from "./answer.ts";
 import { TTS_PROVIDERS } from "./tts.ts";
 import { chimeNames, isChimeName, normalizeChimeName } from "./chime.ts";
 
@@ -38,6 +40,7 @@ commands:
   screenshot [--out FILE] [bot_id]
   chat <message> [--bot-id ID] [--chime NAME] [--list-chimes]
   say <text> [--voice NAME] [--lang ru|en|auto] [--also-chat] [--provider P] [--max-words N] [--priority high] | say --stop
+  ask <question> [--options "A|B|C"] [--timeout 60] [--voice] [--default A]
   intro [--intro-text TEXT] [--context] [--bot-id ID]
   chimes
   presence <listening|thinking|speaking|acting|idle> [message]
@@ -184,6 +187,42 @@ examples:
   samograph say --stop
   samograph say "Test" --provider macos --out /tmp/test.mp3
 `,
+  ask: `usage: samograph ask <question> [options]
+
+Ask the call a question and wait (bounded) for the answer. Use this instead of
+any blocking terminal prompt (e.g. Claude Code AskUserQuestion) while in a
+call: a blocked agent stops reading the transcript and goes deaf.
+
+Posts the question to meeting chat (and speaks it with --voice), then watches
+the live transcript, which carries both speech and incoming chat, for an
+answer: an option (by name, number, ordinal, letter, or yes/no) or, without
+--options, the first human reply. Lines from the bot itself, SAMOGRAPH
+warnings, and lines that started before the question are ignored.
+
+Prints one JSON line to stdout:
+  {"question":..,"options":[..],"answer":..,"by":..,"source":"voice|chat",
+   "timed_out":false,"text":..,"heard":[..]}
+On timeout: answer = --default (or null), timed_out = true, and the bot
+announces the choice in chat (and by voice with --voice).
+After an answer it posts a short "Got it: B (Alice)." to chat.
+
+Run it in the background (e.g. Bash run_in_background) and keep reading the
+transcript while it waits.
+
+options:
+  --options "A|B|C"  Answer options, separated by "|"
+  --timeout S        Seconds to wait (default ${DEFAULT_ASK_TIMEOUT_SECONDS}, max ${MAX_ASK_TIMEOUT_SECONDS})
+  --default X        Answer on timeout: an option name or its number
+  --voice            Also speak the question (and the timeout note) via 'say';
+                     needs 'join --enable-voice', else chat only
+  --lang ru|en|auto  Language of the chat/voice wording (default: auto by script)
+  --bot-id ID        Target a specific bot (defaults to the active bot)
+
+examples:
+  samograph ask "Run the migration on staging first?" --options "yes|no" --default yes
+  samograph ask "Какой вариант берём?" --options "A|B|C" --default A --voice
+  samograph ask "Who owns the follow-up?" --timeout 90
+`,
   chimes: `usage: samograph chimes
 
 List the available chat chime sounds. The library default is marked "default";
@@ -272,6 +311,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const valueFlags: Record<string, Set<string>> = {
     join: new Set(["--name", "--dict", "--port", "--transcript-dir", "--rtmp-url", "--frame-dir", "--webhook-base", "--tunnel", "--variant", "--presence-bg", "--intro-text", "--chime"]),
     say: new Set(["--bot-id", "--voice", "--lang", "--provider", "--model", "--speed", "--max-words", "--topic", "--ask-text", "--priority", "--cooldown", "--out"]),
+    ask: new Set(["--bot-id", "--options", "--timeout", "--default", "--lang"]),
     intro: new Set(["--bot-id", "--intro-text"]),
     leave: new Set(),
     status: new Set(),
@@ -291,6 +331,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const boolFlags: Record<string, Set<string>> = {
     join: new Set(["--rtmp", "--no-ws-video", "--no-presence", "--intro", "--enable-voice"]),
     say: new Set(["--also-chat", "--stop", "--ask-first", "--truncate", "--no-barge-in"]),
+    ask: new Set(["--voice"]),
     intro: new Set(["--context"]),
     leave: new Set(),
     status: new Set(),
@@ -528,6 +569,43 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.cooldown = num("--cooldown", false);
       break;
     }
+    case "ask": {
+      if (positionals.length < 1) {
+        throw new ArgError("the following arguments are required: question");
+      }
+      result.message = positionals.join(" ");
+      result.bot_id = (opts["--bot-id"] as string) ?? null;
+      result.ask_voice = opts["--voice"] === true;
+      const rawOptions = opts["--options"] as string | undefined;
+      result.ask_options = parseOptions(rawOptions);
+      if (rawOptions !== undefined && result.ask_options.length < 2) {
+        throw new ArgError(`argument --options: need at least two options separated by "|": '${rawOptions}'`);
+      }
+      const rawTimeout = opts["--timeout"];
+      if (rawTimeout !== undefined) {
+        const t = Number(rawTimeout);
+        if (!Number.isFinite(t) || t <= 0 || t > MAX_ASK_TIMEOUT_SECONDS) {
+          throw new ArgError(
+            `argument --timeout: invalid number of seconds (1-${MAX_ASK_TIMEOUT_SECONDS}): '${rawTimeout}'`,
+          );
+        }
+        result.ask_timeout = t;
+      } else {
+        result.ask_timeout = DEFAULT_ASK_TIMEOUT_SECONDS;
+      }
+      result.ask_default = (opts["--default"] as string) ?? null;
+      if (result.ask_default !== null && resolveDefault(result.ask_default, result.ask_options) === null) {
+        throw new ArgError(
+          `argument --default: '${result.ask_default}' is not one of the options (${result.ask_options.join(", ")})`,
+        );
+      }
+      const askLang = (opts["--lang"] as string) ?? null;
+      if (askLang !== null && !["ru", "en", "auto"].includes(askLang)) {
+        throw new ArgError(`argument --lang: invalid choice: '${askLang}' (choose from ru, en, auto)`);
+      }
+      result.lang = askLang;
+      break;
+    }
     case "intro": {
       result.bot_id = (opts["--bot-id"] as string) ?? null;
       result.intro_text = (opts["--intro-text"] as string) ?? null;
@@ -616,6 +694,9 @@ async function dispatch(args: ParsedArgs): Promise<void> {
       return cmdIntro(args);
     case "say":
       return cmdSay(args);
+    case "ask":
+      await cmdAsk(args);
+      return;
     case "chimes":
       return cmdChimes();
     case "presence":
