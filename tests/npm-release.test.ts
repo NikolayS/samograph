@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 import { classifyNpmRelease } from "../scripts/npm-release";
 
@@ -32,5 +33,32 @@ describe("npm release channel guard", () => {
   });
   it("never publishes production deployment tags", () => {
     expect(classifyNpmRelease(rc, "release", "v20261011.1", "false", "")).toEqual({ publish: false });
+  });
+});
+
+
+describe("npm release workflow wiring", () => {
+  const workflow = Bun.YAML.parse(readFileSync(new URL("../.github/workflows/npm-publish.yml", import.meta.url), "utf8")) as any;
+  it("grants publication identity only to the publish job", () => {
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(workflow.jobs.guard.permissions?.["id-token"]).not.toBe("write");
+    expect(workflow.jobs.publish.permissions).toEqual({ contents: "read", "id-token": "write" });
+  });
+  it("pins publishing actions and Bun", () => {
+    for (const job of Object.values(workflow.jobs) as any[]) {
+      for (const step of job.steps) {
+        if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
+        if (step.uses?.startsWith("oven-sh/setup-bun@")) expect(step.with["bun-version"]).toBe("1.3.8");
+      }
+    }
+  });
+  it("publishes only a validated commit and skips deploy tags", () => {
+    const { guard, publish } = workflow.jobs;
+    expect(publish.needs).toBe("guard");
+    expect(publish.if).toBe("needs.guard.outputs.publish == 'true'");
+    expect(guard.outputs.publish).toBe("${{ steps.check.outputs.publish }}");
+    expect(guard.outputs.sha).toBe("${{ steps.resolve.outputs.sha }}");
+    expect(publish.steps[0].with.ref).toBe("${{ needs.guard.outputs.sha }}");
+    expect(guard.steps.find((s: any) => s.id === "check").if).toBe("steps.deploy.outputs.skip != 'true'");
   });
 });
