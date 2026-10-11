@@ -36,6 +36,7 @@ jobs:
     outputs:
       publish: ${{ steps.check.outputs.publish }}
       sha: ${{ steps.resolve.outputs.sha }}
+      dist_tag: ${{ steps.check.outputs.dist_tag }}
     steps:
       # Skip only the exact production-deploy grammar: ^v[0-9]{8}\.[1-9][0-9]*$
       - name: Reject missing tags and skip production deploys
@@ -49,7 +50,7 @@ jobs:
           fi
       - name: Checkout release tag
         if: steps.deploy.outputs.skip != 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
       - name: Pin release commit
@@ -66,37 +67,65 @@ jobs:
         id: check
         run: bun scripts/npm-release.ts
 
-  publish:
-    permissions:
-      contents: read
-      id-token: write
-    name: Publish package
+  build:
+    name: Build immutable package
     needs: guard
     if: needs.guard.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout validated commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.8
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install dependencies without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Build
+        run: bun run build
+      - name: Pack without lifecycle scripts
+        run: mkdir package && npm pack --ignore-scripts --pack-destination package
+      - name: Upload immutable package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-package
+          path: package/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish package
+    needs: [guard, build]
+    if: needs.guard.outputs.publish == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-package
+          path: package
       - name: Setup Node registry
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Revalidate publish channel
-        id: validate
-        run: bun scripts/npm-release.ts
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Build
-        run: bun run build
-      - name: Publish
-        run: npm publish --access public --provenance --tag "$DIST_TAG"
+      - name: Publish without lifecycle scripts
+        run: |
+          set -euo pipefail
+          set -- package/*.tgz
+          test "$#" -eq 1
+          test -f "$1"
+          npm publish "$1" --ignore-scripts --access public --provenance --tag "$DIST_TAG"
         env:
-          DIST_TAG: ${{ steps.validate.outputs.dist_tag }}
+          DIST_TAG: ${{ needs.guard.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
