@@ -108,6 +108,14 @@ describe("deploy-tag grammar (samohost app.ts:1212)", () => {
     expect(wf).toContain("github.event.release.tag_name");
   });
 
+  it("npm publication always uses a validated explicit dist-tag", () => {
+    const wf = readFileSync(join(WORKFLOW_DIR, "npm-publish.yml"), "utf8");
+    expect(wf).toContain('npm publish "$1" --ignore-scripts --access public --provenance --tag "$DIST_TAG"');
+    expect(wf).toContain("needs.guard.outputs.dist_tag");
+    expect(wf).toContain("bun scripts/npm-release.ts");
+    expect(wf).toContain("needs.guard.outputs.sha");
+  });
+
   it("release.yml cuts dated tags only after checking CI is green", () => {
     const wf = readFileSync(join(WORKFLOW_DIR, "release.yml"), "utf8");
     expect(wf).toMatch(/workflow_dispatch:/);
