@@ -309,7 +309,11 @@ export function readTranscriptSince(
   cursor: number,
   limit?: number,
 ): TranscriptSinceResult {
-  if (!existsSync(path)) {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return {
       lines: [],
       cursor: 0,
@@ -319,7 +323,6 @@ export function readTranscriptSince(
       missing: true,
     };
   }
-  const fd = openSync(path, "r");
   try {
     const size = fstatSync(fd).size;
     let start = cursor;

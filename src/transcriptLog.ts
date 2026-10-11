@@ -34,7 +34,7 @@ export interface TranscriptLogPage {
   lines: TranscriptLogEntry[];
   /** Pass back as `since` to get only later lines. */
   next: number;
-  /** Byte offset in the transcript file after the last returned line. */
+  /** File fallback offset: after returned speech, but before the end sentinel. */
   offset: number;
   /** True when `since` was ahead of this log (server restarted): read from 1. */
   reset: boolean;
@@ -162,12 +162,16 @@ export class TranscriptLog {
     const end = limit === undefined ? this.entries.length : Math.min(this.entries.length, from + limit);
     const lines = this.entries.slice(from, end);
     const next = from + lines.length;
+    const ended = this.endedSeq !== undefined && next >= this.endedSeq;
+    // Keep file fallback before the sentinel so ended remains sticky after
+    // the server stops. Sequence cursors still advance for live polling.
+    const offsetSeq = ended ? this.endedSeq! - 1 : next;
     return {
       lines,
       next,
-      offset: next > 0 ? this.entries[next - 1]!.offset : 0,
+      offset: offsetSeq > 0 ? this.entries[offsetSeq - 1]!.offset : 0,
       reset,
-      ended: this.endedSeq !== undefined && next >= this.endedSeq,
+      ended,
     };
   }
 

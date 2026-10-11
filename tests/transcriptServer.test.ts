@@ -5,6 +5,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { isDirectLocalRequest, serve } from "../src/server.ts";
 import { TranscriptLog } from "../src/transcriptLog.ts";
+import { readTranscriptSince } from "../src/transcript.ts";
 import { cmdTranscript } from "../src/commands/transcript.ts";
 import { makeTmpDir, cleanupTmpDir, saveEnv, restoreEnv } from "./helpers.ts";
 
@@ -383,7 +384,27 @@ describe("transcript --since via the live server", () => {
     const offset = log.since(1).offset;
     log.append("[2026-10-06 18:46:30] SAMOGRAPH_CALL_ENDED");
     const result = await capture(() => cmdTranscript({ command: "transcript", transcript_since: `s:1:${offset}`, transcript_limit: 1, transcript_json: true }));
-    expect(JSON.parse(result.out)).toEqual({ lines: [], cursor: `s:2:${readFileSync(tf).length}`, ended: true, reset: false });
+    expect(JSON.parse(result.out)).toEqual({ lines: [], cursor: `s:2:${offset}`, ended: true, reset: false });
+  });
+
+  it("keeps ended sticky when a completed server cursor falls back to the file", async () => {
+    log.append("speech");
+    log.append("[2026-10-06 18:46:30] SAMOGRAPH_CALL_ENDED");
+    const args = { command: "transcript", transcript_since: "0", transcript_json: true };
+    const first = JSON.parse((await capture(() => cmdTranscript(args))).out);
+    expect(first.ended).toBe(true);
+    server.stop(true);
+    const second = JSON.parse((await capture(() => cmdTranscript({ ...args, transcript_since: first.cursor }))).out);
+    expect(second.ended).toBe(true);
+    expect(second.lines).toEqual([]);
+  });
+
+  it("maps an ENOENT open race to a missing file result", () => {
+    const open = spyOn(fs, "openSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    });
+    try { expect(readTranscriptSince(tf, 10)).toMatchObject({ missing: true, reset: true, cursor: 0, lines: [] }); }
+    finally { open.mockRestore(); }
   });
 
   it("warns before falling back when the live server rejects a token", async () => {
