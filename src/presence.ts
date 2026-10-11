@@ -445,9 +445,9 @@ export function presencePageHtml(): string {
           <div class="lane-title">Heard</div>
           <div class="activity" id="heard"></div>
         </section>
-      <div class="mind" aria-label="samoagent avatar">
+      <div class="mind" aria-label="samograph avatar">
         <canvas class="plasma-canvas" id="plasma" aria-hidden="true"></canvas>
-        <img class="robot-img" id="robot" src="${ROBOT_DATA_URI}" alt="samoagent" aria-hidden="true">
+        <img class="robot-img" id="robot" src="${ROBOT_DATA_URI}" alt="samograph robot" aria-hidden="true">
       </div>
         <section class="lane" data-kind="comment">
           <div class="lane-title">Comments</div>
