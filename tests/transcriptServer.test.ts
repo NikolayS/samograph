@@ -140,6 +140,29 @@ describe("GET /transcript long-poll", () => {
     expect(page.offset).toBe(4);
   });
 
+  it("rehydrates equal-size and larger replacement files", () => {
+    log.append("old");
+    writeFileSync(tf + ".new", "new\n");
+    fs.renameSync(tf + ".new", tf);
+    expect(log.since(0).lines.map(l => l.line)).toEqual(["new"]);
+    writeFileSync(tf, "replacement longer\n");
+    log.append("latest");
+    expect(log.since(0).lines.map(l => l.line)).toEqual(["replacement longer", "latest"]);
+    expect(log.since(0).offset).toBe(readFileSync(tf).length);
+  });
+
+  it("recovers when the file disappears between stat and read", () => {
+    log.append("old");
+    appendFileSync(tf, "external\n");
+    const read = spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+      fs.unlinkSync(tf);
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    });
+    try { expect(() => log.since(0)).not.toThrow(); } finally { read.mockRestore(); }
+    log.append("new");
+    expect(log.since(0).lines.map(l => l.line)).toEqual(["new"]);
+  });
+
   it("resyncs durable bytes when another writer races with append", () => {
     const original = fs.appendFileSync;
     const append = spyOn(fs, "appendFileSync").mockImplementation((path, data, options) => {
@@ -322,6 +345,16 @@ describe("transcript --since via the live server", () => {
     );
     expect(second.out).toBe("[2026-10-06 16:46:17] Bob: two\n");
     expect(second.err).toContain("SAMOGRAPH-CURSOR: s:2:");
+  });
+
+  it("warns before falling back when the live server rejects a token", async () => {
+    log.append("speech");
+    const result = await capture(() => cmdTranscript(
+      { command: "transcript", transcript_since: "0", transcript_json: true },
+      { fetchFn: (async () => new Response("not found", { status: 404 })) },
+    ));
+    expect(JSON.parse(result.out).lines).toEqual(["speech"]);
+    expect(result.err).toContain("SAMOGRAPH-WARNING: transcript server returned HTTP 404");
   });
 
   it("falls back to the transcript file when the server is gone (after leave)", async () => {

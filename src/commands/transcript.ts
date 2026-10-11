@@ -92,7 +92,10 @@ async function sinceViaServer(
         headers: { "X-Samograph-Transcript-Token": token },
         signal: AbortSignal.timeout((wait + 10) * 1000),
       });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        process.stderr.write(`SAMOGRAPH-WARNING: transcript server returned HTTP ${r.status}; falling back to the transcript file\n`);
+        return null;
+      }
       page = (await r.json()) as ServerPage;
     } catch {
       // Server gone (call ended / leave) or not running: use the file.

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { SENTINEL_RE } from "./transcript.ts";
 
 /**
@@ -53,6 +53,8 @@ export class TranscriptLog {
   private offset = 0;
   private endedSeq: number | undefined;
   private pending = Buffer.alloc(0);
+  private snapshot: Buffer = Buffer.alloc(0);
+  private fileVersion = "";
 
   constructor(readonly path: string) {
     this.sync();
@@ -60,9 +62,23 @@ export class TranscriptLog {
 
   /** Pick up durable lines written by another process (notably `leave`). */
   private sync(): void {
-    if (!existsSync(this.path) || statSync(this.path).size === this.offset) return;
-    const data = readFileSync(this.path);
-    if (data.length < this.offset) {
+    let data: Buffer;
+    let version: string;
+    try {
+      const stat = statSync(this.path, { bigint: true });
+      version = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+      if (version === this.fileVersion) return;
+      data = readFileSync(this.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.fileVersion = "";
+        return;
+      }
+      throw error;
+    }
+    // The durable prefix must still be ours, even after an equal-size rewrite
+    // or replacement. Size alone cannot distinguish rotation from append.
+    if (data.length < this.offset || !data.subarray(0, this.offset).equals(this.snapshot)) {
       this.entries = [];
       this.offset = 0;
       this.pending = Buffer.alloc(0);
@@ -77,6 +93,8 @@ export class TranscriptLog {
     }
     this.pending = Buffer.from(data.subarray(start));
     this.offset = data.length;
+    this.snapshot = data;
+    this.fileVersion = version;
   }
 
   get lastSeq(): number {
