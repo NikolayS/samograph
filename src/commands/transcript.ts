@@ -1,6 +1,7 @@
 import { botIdFromArgsOrState, loadState } from "../state.ts";
 import {
   localTranscriptLines,
+  SENTINEL_RE,
   parseSinceCursor,
   printLocalTranscript,
   readTranscriptSince,
@@ -45,6 +46,7 @@ interface SinceOutput {
 }
 
 interface ServerPage {
+  ended?: boolean;
   lines: Array<{ line: string }>;
   next: number;
   offset: number;
@@ -98,11 +100,11 @@ async function sinceViaServer(
     }
     reset ||= page.reset;
     since = page.next;
-    if (page.lines.length || Date.now() >= deadline) {
+    if (page.lines.length || page.ended || Date.now() >= deadline) {
       return {
-        lines: page.lines.map((l) => l.line),
+        lines: page.lines.map((l) => l.line).filter(l => !SENTINEL_RE.test(l)),
         cursor: `s:${page.next}:${page.offset}`,
-        ended: false,
+        ended: page.ended ?? false,
         reset,
         warning: reset ? `cursor s:${seq} is ahead of the live server log (server restarted?); restarting from its first line` : undefined,
       };

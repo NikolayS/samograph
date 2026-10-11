@@ -617,6 +617,7 @@ export function serve(
             next: page.next,
             offset: page.offset,
             reset: page.reset,
+            ended: page.ended,
           },
           { headers: { "Cache-Control": "no-store" } },
         );

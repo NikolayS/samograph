@@ -113,20 +113,44 @@ describe("GET /transcript long-poll", () => {
     expect(new TranscriptLog(tf).since(0)).toEqual(log.since(0));
   });
 
-  it("keeps an incomplete persisted UTF-8 line behind the cursor until completed", () => {
+  it("seals an incomplete persisted line before appending a new logical line", () => {
     const prefix = Buffer.from("complete\nБоб: 🌍");
     writeFileSync(tf, prefix.subarray(0, prefix.length - 2));
     const reopened = new TranscriptLog(tf);
     expect(reopened.since(0).lines.map(l => l.line)).toEqual(["complete"]);
     expect(reopened.since(1).offset).toBe(Buffer.byteLength("complete\n"));
-    // A subsequent append completes the durable byte stream, including a
-    // multibyte character split by the interrupted write.
+    // Complete the interrupted UTF-8 character, then append an unrelated line.
     appendFileSync(tf, prefix.subarray(prefix.length - 2));
     const completed = new TranscriptLog(tf);
-    completed.append(" done");
-    expect(completed.since(1).lines.map(l => l.line)).toEqual(["Боб: 🌍 done"]);
-    expect(completed.since(2).offset).toBe(readFileSync(tf).length);
+    completed.append("watchdog warning");
+    expect(completed.since(1).lines.map(l => l.line)).toEqual(["Боб: 🌍", "watchdog warning"]);
+    expect(completed.since(3).offset).toBe(readFileSync(tf).length);
     expect(new TranscriptLog(tf).since(0)).toEqual(completed.since(0));
+  });
+
+  it("includes external writes before a later log append with accurate cursors", () => {
+    log.append("one");
+    appendFileSync(tf, "external 🌍\n");
+    log.append("three");
+    expect(log.since(1).lines.map(l => l.line)).toEqual(["external 🌍", "three"]);
+    expect(log.since(3).offset).toBe(readFileSync(tf).length);
+    expect(new TranscriptLog(tf).since(0)).toEqual(log.since(0));
+  });
+
+  it("does not report ended before paginated unread speech is consumed", () => {
+    log.append("one");
+    log.append("two");
+    appendFileSync(tf, "[2026-10-06 18:46:30] SAMOGRAPH_CALL_ENDED\n");
+    expect(log.since(0, 1).ended).toBe(false);
+    expect(log.since(1, 1).ended).toBe(false);
+    expect(log.since(2, 1).ended).toBe(true);
+    expect(log.since(3).ended).toBe(true);
+  });
+
+  it("wakes a long poll for a line written outside the log", async () => {
+    setTimeout(() => appendFileSync(tf, "external\n"), 50);
+    const page = await log.wait(0, 1000);
+    expect(page.lines.map(l => l.line)).toEqual(["external"]);
   });
 
   it("returns as soon as a new line arrives", async () => {
@@ -284,6 +308,17 @@ describe("transcript --since via the live server", () => {
     expect(j2.lines).toEqual(["[2026-10-06 16:46:19] Bob: bye"]);
     expect(j2.ended).toBe(true);
     expect(j2.cursor).toMatch(/^b:\d+$/);
+  });
+
+  it("reports an externally written end sentinel while the server is still alive", async () => {
+    log.append("speech");
+    const first = JSON.parse((await capture(() => cmdTranscript({ command: "transcript", transcript_since: "0", transcript_json: true }))).out);
+    appendFileSync(tf, "[2026-10-06 18:46:30] SAMOGRAPH_CALL_ENDED\n");
+    const next = JSON.parse((await capture(() => cmdTranscript({ command: "transcript", transcript_since: first.cursor, transcript_json: true }))).out);
+    expect(next.lines).toEqual([]);
+    expect(next.ended).toBe(true);
+    const again = JSON.parse((await capture(() => cmdTranscript({ command: "transcript", transcript_since: next.cursor, transcript_json: true }))).out);
+    expect(again.ended).toBe(true);
   });
 
   it("b: cursors always read the file, even with a server running", async () => {
