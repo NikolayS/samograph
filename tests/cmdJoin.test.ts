@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { SILENT_MP3_B64 } from "../src/silentMp3.ts";
 import {
   writeFileSync,
   readFileSync,
@@ -193,6 +194,19 @@ describe("cmdJoin payload + saved state", () => {
 
     const state = JSON.parse(readFileSync(sf, "utf8"));
     expect(state.variant).toBe("web_4_core");
+  });
+
+  it("--enable-voice adds automatic_audio_output (silent clip) for say; off by default", async () => {
+    const captured: { payload?: any } = {};
+    await cmdJoin(joinArgs({ enable_voice: true }), makeDeps(captured));
+    const aao = captured.payload.automatic_audio_output;
+    expect(aao.in_call_recording.data.kind).toBe("mp3");
+    expect(aao.in_call_recording.data.b64_data).toBe(SILENT_MP3_B64);
+    expect(JSON.parse(readFileSync(sf, "utf8")).voice_enabled).toBe(true);
+
+    const off: { payload?: any } = {};
+    await cmdJoin(joinArgs({}), makeDeps(off));
+    expect(off.payload.automatic_audio_output).toBeUndefined();
   });
 
   it("--dict with an existing dict file adds keyterms", async () => {
