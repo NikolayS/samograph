@@ -47,6 +47,6 @@ or platform blocked recording.
   still present, treat it as a bot-worker fault (`SAMO-WORKER-503`, see
   [ingest-degraded.md](./ingest-degraded.md#bot-worker-unreachable-samo-worker-503)).
 
-`COULD_NOT_RECORD` is terminal. Any transcript rows are not produced (the bot was
+`COULD_NOT_RECORD` is terminal. No transcript rows are produced (the bot was
 not recording), and `ingest_degraded` is reset to false on the terminal
 transition (§5.10).

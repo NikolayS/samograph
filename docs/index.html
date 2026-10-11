@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>samocall - put your AI agent in the meeting</title>
-  <meta name="description" content="samocall gives engineers and AI builders a small CLI toolset for AI agents that need to join Zoom and Google Meet calls, read the transcript, send chat, and inspect frames.">
+  <meta name="description" content="samocall is a small open-source CLI that lets AI agents join Zoom and Google Meet calls, stream the live transcript, send chat, and inspect call frames. Built for engineers and AI builders.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -899,7 +899,7 @@
           </div>
           <div class="tool">
             <code>leave</code>
-            <span>Exit the call and stop local runtime state.</span>
+            <span>Exit the call and clean up local runtime state.</span>
           </div>
         </div>
       </div>
@@ -909,16 +909,16 @@
       <div class="wrap">
         <div class="section-head">
           <h2>Why it exists</h2>
-          <p>Agents need live meeting context, but they need a narrow interface, not desktop scraping or chat spam.</p>
+          <p>Agents need live meeting context through a narrow interface, not desktop scraping or chat spam.</p>
         </div>
         <div class="grid">
           <div class="item">
             <h3>Observe safely</h3>
-            <p>Transcript and selected frame access are explicit tool calls.</p>
+            <p>Transcript streaming and frame capture are explicit tool calls.</p>
           </div>
           <div class="item">
             <h3>Act deliberately</h3>
-            <p>Meeting chat only happens through <code>samocall chat</code>.</p>
+            <p>Meeting chat goes out only through <code>samocall chat</code>.</p>
           </div>
           <div class="item">
             <h3>Build faster</h3>
@@ -932,10 +932,10 @@
       <div class="wrap split">
         <div>
           <h2>How it works</h2>
-          <p class="lead">Your agent runs <code>samocall</code> as a local tool. samocall starts the callback server. Recall.ai joins the meeting and streams events back.</p>
+          <p class="lead">Your agent runs <code>samocall</code> as a local tool. samocall starts a local callback server, and a Recall.ai bot joins the meeting and streams events back.</p>
           <div class="notes">
-            <div class="note">Default video path uses WebSocket frames, so personal use should be fine with free ngrok HTTP.</div>
-            <div class="note">RTMP is still available for mixed video, but that optional path uses ngrok TCP.</div>
+            <div class="note">The default video path uses WebSocket frames, so free ngrok HTTP typically covers personal use.</div>
+            <div class="note">RTMP remains available for mixed video, but that optional path requires ngrok TCP.</div>
             <div class="note">Webhook, frame, and runtime files are token-protected and kept under <code>~/.samocall/</code> by default.</div>
           </div>
         </div>
