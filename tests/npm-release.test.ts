@@ -101,3 +101,25 @@ it.each([
     expect(readFileSync(out, "utf8")).toBe(String(output));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+describe("npm publish step", () => {
+  // Regression: `npm publish package/x.tgz` is parsed as the GitHub shorthand
+  // `package/x.tgz` (owner/repo) and fails with a git ls-remote error, as in
+  // the v0.9.0-rc.1 run. The tarball must be passed as an explicit local path.
+  it("passes npm a local tarball path, not an owner/repo spec", () => {
+    const workflow = Bun.YAML.parse(readFileSync(new URL("../.github/workflows/npm-publish.yml", import.meta.url), "utf8")) as any;
+    const step = workflow.jobs.publish.steps.find((s: any) => s.name === "Publish without lifecycle scripts");
+    const dir = mkdtempSync(join(tmpdir(), "npm-publish-step-"));
+    try {
+      const bin = join(dir, "bin");
+      Bun.spawnSync(["mkdir", "-p", bin, join(dir, "package")]);
+      writeFileSync(join(dir, "package", "samograph-0.9.0-rc.2.tgz"), "");
+      writeFileSync(join(bin, "npm"), `#!/bin/sh\nprintf '%s\\n' "$2" > "${join(dir, "args")}"\n`, { mode: 0o755 });
+      const result = Bun.spawnSync(["bash", "-c", step.run], {
+        cwd: dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DIST_TAG: "rc" },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(join(dir, "args"), "utf8").trim()).toMatch(/^(\.\/|\/)package\/samograph-0\.9\.0-rc\.2\.tgz$/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
