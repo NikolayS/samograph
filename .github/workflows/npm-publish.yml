@@ -123,7 +123,8 @@ jobs:
       - name: Publish without lifecycle scripts
         run: |
           set -euo pipefail
-          set -- package/*.tgz
+          # ./ prefix: a bare dir/file.tgz is parsed by npm as a GitHub owner/repo spec.
+          set -- ./package/*.tgz
           test "$#" -eq 1
           test -f "$1"
           npm publish "$1" --ignore-scripts --access public --provenance --tag "$DIST_TAG"
