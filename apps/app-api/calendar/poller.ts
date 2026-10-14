@@ -57,9 +57,9 @@ export async function runCalendarAutoJoin(connection: AutoJoinConnection, deps: 
       continue;
     }
     try {
-      const result = await deps.createCall({ tenantId: connection.tenantId, actor: "calendar-autojoin", meetingUrl: event.meetingUrl, source: "calendar", sourceEventId: `${connection.id}:${event.providerEventId}` });
+      const result = await deps.createCall({ tenantId: connection.tenantId, actor: "calendar-autojoin", meetingUrl: event.meetingUrl, source: "calendar", connectionId: connection.id, sourceEventId: `${connection.id}:${event.providerEventId}` });
       deps.metrics?.incCalendarAutoJoin(result.kind);
-      if (result.kind !== "created" && result.kind !== "duplicate" && result.kind !== "already_active") deps.logger?.warn(`[calendar-autojoin] connection ${connection.id} event ${event.providerEventId} result: ${result.kind}`);
+      if (result.kind !== "created" && result.kind !== "duplicate" && result.kind !== "already_active" && result.kind !== "consent_revoked") deps.logger?.warn(`[calendar-autojoin] connection ${connection.id} event ${event.providerEventId} result: ${result.kind}`);
     } catch (error) {
       deps.metrics?.incCalendarAutoJoin("unexpected");
       deps.logger?.warn(`[calendar-autojoin] connection ${connection.id} event ${event.providerEventId} result: unexpected sqlstate=${sqlstate(error) ?? "unknown"}`);

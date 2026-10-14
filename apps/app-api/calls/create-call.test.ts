@@ -9,7 +9,7 @@ const tenantId = "22222222-2222-4222-8222-222222222222";
 interface QueryRecord { query: string; values: unknown[] }
 
 function fakeSql(
-  options: { callError?: Error; activeCall?: { id: string } } = {},
+  options: { callError?: Error; activeCall?: { id: string }; consent?: boolean } = {},
   queries: QueryRecord[] = [],
 ): SQL {
   // Bun's SQL callable has richer Query/transaction overloads than this small
@@ -19,6 +19,7 @@ function fakeSql(
     const query = strings.join(" ");
     queries.push({ query, values });
     if (query.includes("FROM tenants")) return Promise.resolve([{ ok: 1 }]);
+    if (query.includes("FROM calendar_connections")) return Promise.resolve(options.consent === false ? [] : [{ status: "connected", auto_join: true }]);
     if (query.includes("FROM calls") && query.includes("meeting_url")) {
       return Promise.resolve(options.activeCall ? [options.activeCall] : []);
     }
@@ -46,6 +47,8 @@ function deps(sql = fakeSql()): CreateCallDeps & { jobs: OrchestratorJob[] } {
 }
 
 if (false) {
+  // @ts-expect-error calendar creation requires authoritative connection identity
+  void createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", sourceEventId: "connection:event" }, deps());
   // @ts-expect-error manual calls cannot carry a calendar event identity
   void createCallForTenant({
     tenantId,
@@ -57,6 +60,22 @@ if (false) {
 }
 
 describe("createCallForTenant", () => {
+  it("rejects revoked consent without creating or enqueueing and refunds the budget", async () => {
+    const queries: QueryRecord[] = [], d = deps(fakeSql({ consent: false }, queries));
+    expect(await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", connectionId: "connection", sourceEventId: "connection:event" }, d))
+      .toEqual({ kind: "consent_revoked" });
+    expect(queries.some(({ query }) => query.includes("INSERT INTO calls"))).toBe(false);
+    expect(d.jobs).toEqual([]);
+    expect((await d.rateLimiter.hit(`bot-create:auto:${tenantId}`, 1, BOT_CREATE_WINDOW_MS, 1234)).allowed).toBe(true);
+  });
+
+  it("rejects an event identity outside its consent connection", async () => {
+    const d = deps();
+    expect(await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", connectionId: "connection", sourceEventId: "other:event" }, d))
+      .toEqual({ kind: "consent_revoked" });
+    expect(d.jobs).toEqual([]);
+  });
+
   it("locks and returns already_active for a calendar call with an active normalized URL", async () => {
     const queries: QueryRecord[] = [];
     const d = deps(fakeSql({ activeCall: { id: "active-call" } }, queries));
@@ -65,7 +84,7 @@ describe("createCallForTenant", () => {
       tenantId,
       actor: "calendar-autojoin",
       meetingUrl: " HTTPS://ZOOM.US/j/123 ",
-      source: "calendar",
+      source: "calendar", connectionId: "connection",
       sourceEventId: "connection:event-1",
     }, d);
 
@@ -110,7 +129,7 @@ describe("createCallForTenant", () => {
     const d = deps(fakeSql({}, queries));
     const result = await createCallForTenant({
       tenantId, actor: "user:u1", meetingUrl: "https://meet.google.com/abc-defg-hij",
-      source: "calendar", sourceEventId: "event-1",
+      source: "calendar", connectionId: "connection", sourceEventId: "connection:event-1",
     }, d);
     expect(result).toEqual({ kind: "created", call: { id: "call-1", status: "PENDING" } });
     expect(queries).toContainEqual({
@@ -139,7 +158,7 @@ describe("createCallForTenant", () => {
     d.now = () => now;
     for (let i = 0; i < 30; i++) {
       now = 1234 + Math.floor(i / AUTO_CREATE_PER_TENANT_LIMIT) * BOT_CREATE_WINDOW_MS;
-      expect((await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", sourceEventId: `connection:event-${i}` }, d)).kind).toBe("created");
+      expect((await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", connectionId: "connection", sourceEventId: `connection:event-${i}` }, d)).kind).toBe("created");
     }
     expect((await createCallForTenant({ tenantId, actor: "user:u1", meetingUrl: "https://zoom.us/j/123", source: "manual" }, d)).kind).toBe("created");
     expect(await d.rateLimiter.peek(`bot-create:${tenantId}`, BOT_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, now)).toBe(true);
@@ -148,9 +167,9 @@ describe("createCallForTenant", () => {
   it("caps the eleventh calendar auto-join creation in an hour", async () => {
     const d = deps();
     for (let i = 0; i < AUTO_CREATE_PER_TENANT_LIMIT; i++) {
-      expect((await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", sourceEventId: `connection:event-${i}` }, d)).kind).toBe("created");
+      expect((await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", connectionId: "connection", sourceEventId: `connection:event-${i}` }, d)).kind).toBe("created");
     }
-    expect((await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", sourceEventId: "connection:event-11" }, d)).kind).toBe("cost_cap");
+    expect((await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", connectionId: "connection", sourceEventId: "connection:event-11" }, d)).kind).toBe("cost_cap");
   });
 
   it("returns duplicate for a repeated source event and refunds the cost slot", async () => {
@@ -159,7 +178,7 @@ describe("createCallForTenant", () => {
       constraint: "calls_tenant_source_event_unique_idx",
     });
     const d = deps(fakeSql({ callError: duplicate }));
-    const result = await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", sourceEventId: "event-1" }, d);
+    const result = await createCallForTenant({ tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123", source: "calendar", connectionId: "connection", sourceEventId: "connection:event-1" }, d);
     expect(result).toEqual({ kind: "duplicate" });
     expect(await d.rateLimiter.peek(`bot-create:auto:${tenantId}`, AUTO_CREATE_PER_TENANT_LIMIT, BOT_CREATE_WINDOW_MS, 1234)).toBe(true);
     expect(d.jobs).toEqual([]);
@@ -174,7 +193,7 @@ describe("createCallForTenant", () => {
 
     await expect(createCallForTenant({
       tenantId, actor: "calendar", meetingUrl: "https://zoom.us/j/123",
-      source: "calendar", sourceEventId: "event-1",
+      source: "calendar", connectionId: "connection", sourceEventId: "connection:event-1",
     }, d)).rejects.toBe(unrelated);
     expect(d.jobs).toEqual([]);
   });

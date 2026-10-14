@@ -31,9 +31,11 @@ export class PostgresCalendarConnectionStore implements CalendarConnectionStore,
     return rows[0] ? map(rows[0]) : null;
   }
   async excludeMeeting(userId: string, tenantId: string, eventId: string, excluded: boolean) {
-    const connections = await this.sql`SELECT id FROM calendar_connections WHERE user_id=${userId} AND tenant_id=${tenantId} AND provider='google'` as unknown as Row[];
-    if (!connections[0]) return false;
     const rows = await this.sql.begin(async (tx) => {
+      // Serialize skips with the authoritative creation check, including when
+      // no exclusion row exists yet. Lock before switching to the tenant role.
+      const connections = await tx`SELECT id FROM calendar_connections WHERE user_id=${userId} AND tenant_id=${tenantId} AND provider='google' FOR UPDATE` as unknown as Row[];
+      if (!connections[0]) return [];
       await tx.unsafe("SET LOCAL ROLE samograph_app");
       await setTenant(tx, tenantId);
       if (excluded) return tx`WITH target AS (

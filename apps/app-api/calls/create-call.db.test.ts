@@ -13,6 +13,7 @@ d("createCallForTenant calendar concurrency", () => {
   let secondSql: ReturnType<typeof connect>;
   const userId = randomUUID();
   const tenantId = randomUUID();
+  const connectionId = randomUUID();
 
   beforeAll(async () => {
     setupSql = connect();
@@ -21,6 +22,8 @@ d("createCallForTenant calendar concurrency", () => {
     await migrate(setupSql);
     await setupSql`INSERT INTO users (id, email) VALUES (${userId}, ${`${userId}@test.invalid`})`;
     await setupSql`INSERT INTO tenants (id, owner_user_id) VALUES (${tenantId}, ${userId})`;
+    await setupSql`INSERT INTO calendar_connections(id,user_id,tenant_id,encrypted_refresh_token,refresh_token_iv,refresh_token_tag,encryption_key_version,granted_scopes,auto_join)
+      VALUES (${connectionId},${userId},${tenantId},${Buffer.alloc(32)},${Buffer.alloc(12)},${Buffer.alloc(16)},1,ARRAY['scope'],true)`;
   });
 
   afterAll(async () => {
@@ -68,7 +71,8 @@ d("createCallForTenant calendar concurrency", () => {
       actor: "calendar-autojoin",
       meetingUrl,
       source: "calendar",
-      sourceEventId: `waiting:${randomUUID()}`,
+      connectionId,
+      sourceEventId: `${connectionId}:waiting:${randomUUID()}`,
     }, {
       sql: secondSql,
       enqueue: () => {},
@@ -128,7 +132,8 @@ d("createCallForTenant calendar concurrency", () => {
     const meetingUrl = `https://zoom.us/j/${Date.now()}-${randomUUID()}`;
     const calendar = await createCallForTenant({
       tenantId, actor: "calendar-autojoin", meetingUrl, source: "calendar",
-      sourceEventId: `sequential:${randomUUID()}`,
+      connectionId,
+      sourceEventId: `${connectionId}:sequential:${randomUUID()}`,
     }, { sql: firstSql, enqueue: () => {}, rateLimiter: new InMemoryRateLimiter(), now: Date.now });
     expect(calendar.kind).toBe("created");
 
@@ -147,7 +152,8 @@ d("createCallForTenant calendar concurrency", () => {
         actor: "calendar-autojoin",
         meetingUrl,
         source: "calendar",
-        sourceEventId,
+        connectionId,
+        sourceEventId: `${connectionId}:${sourceEventId}`,
       }, {
         sql,
         enqueue: (job) => { jobs.push(job.callId); },
