@@ -24,15 +24,18 @@ Both must be clean locally before you open a PR, and green in CI before it merge
 ## PR lifecycle
 
 1. **CI green** on the head commit (`bun test`, `bunx tsc --noEmit`, integration tests).
-2. **samorev review posted** as a PR comment. BLOCKING findings must be fixed and
-   re-reviewed; NON-BLOCKING / POTENTIAL / INFO count as a pass.
+2. **samorev review posted** as a PR comment, or the explicitly owner-authorized
+   [GPT review substitution](CLAUDE.md#gpt-review-substitution-under-owner-instruction).
+   BLOCKING findings must be fixed and re-reviewed; NON-BLOCKING / POTENTIAL / INFO
+   count as a pass. A substituted review must never be labeled `samorev PASS`.
 3. **Evidence posted** — exercise the change for real (commands + output, screenshots
    for UI) as a PR comment.
 4. **Re-review after ANY post-review commit.** A review is bound to the head SHA it ran
    against; a fix, rebase, or conflict-resolution merge voids it. Green CI is not a
    review.
-5. **Squash-merge** and delete the branch, once the latest PASS is on the exact SHA
-   being merged. **Human owner approval is required for merge.**
+5. **Squash-merge** and delete the branch, once the latest passing review (both
+   Security and Bug Hunter for a substitution) is on the exact SHA being merged.
+   **Human owner approval is required for merge.**
 
 ## Bugfixes are red/green TDD — no exceptions
 
