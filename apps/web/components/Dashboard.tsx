@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AddToCallForm } from "./AddToCallForm.tsx";
 import { PageHeader } from "./PageHeader.tsx";
 import { AccountDangerZone } from "./AccountDangerZone.tsx";
 import { UpcomingMeetings } from "./UpcomingMeetings.tsx";
-import { AppApiError, type AppApiClient, type Call } from "../lib/appApiClient.ts";
+import { type AppApiClient, type Call } from "../lib/appApiClient.ts";
 import { statusView, type StatusView } from "../lib/callStatusView.ts";
 import { displayMeetingUrl, meetingTitle } from "../lib/meetingUrl.ts";
 import { relativeTime } from "../lib/relativeTime.ts";
+import { isSessionInvalid } from "../lib/apiError.ts";
+import { useSnapshotRefresh } from "../lib/useSnapshotRefresh.tsx";
 
 export interface DashboardProps {
   client: AppApiClient;
@@ -138,31 +140,33 @@ function CallRow({ call, now }: { call: Call; now: number }) {
 export function Dashboard({ client, redirect, retryCallId }: DashboardProps) {
   const [status, setStatus] = useState<Status>("loading");
   const [calls, setCalls] = useState<Call[]>([]);
+  const signedOut = useRef(false);
   const calendarAuthFailure = useCallback(() => {
+    signedOut.current = true;
     setStatus("redirecting");
     redirect("/auth");
   }, [redirect]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (isCurrent: () => boolean) => {
     try {
       const list = await client.listCalls();
+      if (!isCurrent() || signedOut.current) return;
       setCalls(list);
       setStatus("ready");
     } catch (err) {
-      if (err instanceof AppApiError && err.status === 401) {
+      if (!isCurrent() || signedOut.current) return;
+      if (isSessionInvalid(err)) {
+        signedOut.current = true;
         setStatus("redirecting");
         redirect("/auth");
-        return;
+        return false;
       }
-      // Non-auth failure: don't trap the user — show the form with an empty list.
-      setCalls([]);
+      // A temporary failure must not erase the last usable snapshot.
       setStatus("ready");
     }
   }, [client, redirect]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const refresh = useSnapshotRefresh(load, status !== "redirecting");
 
   if (status === "loading") {
     return (
@@ -198,8 +202,8 @@ export function Dashboard({ client, redirect, retryCallId }: DashboardProps) {
         title="Your calls"
         description="Every call samograph has joined, live and finished. Open one to watch or read its transcript."
       />
-      <AddToCallForm client={client} initialUrl={retryUrl} autoFocus={calls.length === 0} onCreated={() => void load()} />
-      <UpcomingMeetings client={client} onAuthFailure={calendarAuthFailure} onCreated={() => void load()} />
+      <AddToCallForm client={client} initialUrl={retryUrl} autoFocus={calls.length === 0} onCreated={refresh} />
+      <UpcomingMeetings client={client} calls={calls} onAuthFailure={calendarAuthFailure} onCreated={refresh} />
       {calls.length === 0 ? (
         <section aria-label="Your calls" className="samograph-empty-state">
           <p className="samograph-empty-title">No calls yet.</p>

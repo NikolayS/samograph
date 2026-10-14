@@ -1,11 +1,56 @@
 import { describe, expect, it, mock } from "bun:test";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { Dashboard } from "./Dashboard.tsx";
 import { UpcomingMeetings } from "./UpcomingMeetings.tsx";
 import { createFakeAppApiClient } from "../lib/fakeAppApiClient.ts";
 import { AppApiError } from "../lib/appApiClient.ts";
+import type { Call, CallStatus } from "../lib/appApiClient.ts";
 import { installDom } from "../test/setup.tsx";
 installDom();
+
+describe("Upcoming meetings active calls (#314)", () => {
+  const meetingUrl = "https://zoom.us/j/123?pwd=correct";
+  const clientFor = (autoJoin: boolean) => createFakeAppApiClient({ seedCalendarMeetings: {
+    connectionState: "connected", autoJoin, lastSyncAt: null, meetings: [{
+      id: "event", title: "Client review", startsAt: "2026-10-07T12:00:00Z", endsAt: "2026-10-07T13:00:00Z",
+      allDay: false, meetingUrl, meetingProvider: "zoom", organizerEmail: null, attendeeResponse: "accepted",
+    }],
+  } });
+  for (const autoJoin of [true, false]) {
+    for (const status of ["PENDING", "JOINING", "IN_CALL"] as CallStatus[]) {
+      it(`shows View call instead of ${autoJoin ? "Skip" : "Add"} for ${status}`, async () => {
+        const calls: Call[] = [{ id: "active/id", meetingUrl, provider: "zoom", status }];
+        const view = render(<UpcomingMeetings client={clientFor(autoJoin)} calls={calls} onAuthFailure={() => {}} />);
+        const link = await view.findByRole("link", { name: "View Client review call" });
+        expect(link.getAttribute("href")).toBe("/calls/active%2Fid");
+        expect(view.queryByRole("button", { name: /Skip auto-record|Add samograph/ })).toBeNull();
+        expect(view.getByText(status === "IN_CALL" ? "Live" : status === "JOINING" ? "Joining" : "Starting")).toBeDefined();
+      });
+    }
+  }
+  it("keeps future controls for terminal calls and different Zoom passcodes", async () => {
+    for (const status of ["ENDED", "COULD_NOT_JOIN", "COULD_NOT_RECORD", "BOT_REMOVED"] as CallStatus[]) {
+      const view = render(<UpcomingMeetings client={clientFor(true)} calls={[
+        { id: "terminal", meetingUrl, provider: "zoom", status },
+        { id: "other-password", meetingUrl: "https://zoom.us/j/123?pwd=different", provider: "zoom", status: "IN_CALL" },
+      ]} onAuthFailure={() => {}} />);
+      expect(await view.findByRole("button", { name: "Skip auto-record for Client review" })).toBeDefined();
+      expect(view.queryByRole("link", { name: "View Client review call" })).toBeNull();
+      view.unmount();
+    }
+  });
+  it("explains Skip and preserves the calendar snapshot after a failed foreground refresh", async () => {
+    const client = clientFor(true);
+    const view = render(<UpcomingMeetings client={client} onAuthFailure={() => {}} />);
+    await view.findByText("Client review");
+    expect(view.getByText("Skip prevents a future join; it does not remove a bot already in the call.")).toBeDefined();
+    client.listCalendarMeetings = mock(async () => { throw new Error("offline"); });
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await view.findByRole("alert");
+    expect(view.getByText("Client review")).toBeDefined();
+    expect(view.getByRole("button", { name: "Skip auto-record for Client review" })).toBeDefined();
+  });
+});
 
 describe("Dashboard upcoming meetings", () => {
   it("shows auto state and toggles a meeting exclusion", async () => {
